@@ -1,0 +1,18 @@
+export const state = {
+  lang: "zh",
+  user: null,
+  accounts: [],
+  auditLogs: [],
+  workspaces: [],
+  workspacesLoaded: false,
+  selectedWorkspace: 0,
+  selectedSession: 0,
+  selectedArtifacts: new Set(),
+  selectedUploadFiles: [],
+  collapsedFileFolders: new Set(),
+  collapsedArtifactFolders: new Set(),
+  sessionPanelWidth: 280,
+  filePanelWidth: 300,
+  isSessionPanelCollapsed: false,
+  isFileExplorerCollapsed: true,
+};

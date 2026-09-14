@@ -1,0 +1,204 @@
+.app-shell {
+  min-height: 100vh;
+  display: grid;
+  grid-template-columns: 264px minmax(0, 1fr);
+  background: var(--bg);
+}
+
+.app-shell.sidebar-collapsed {
+  grid-template-columns: 76px minmax(0, 1fr);
+}
+
+.sidebar {
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  display: flex;
+  flex-direction: column;
+  gap: 22px;
+  padding: 18px;
+  background: #17232d;
+  color: #f7fafc;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+}
+
+.brand strong {
+  display: block;
+  font-size: 18px;
+}
+
+.brand span {
+  display: block;
+  color: #b7c3cf;
+  font-size: 13px;
+}
+
+.brand-mark {
+  display: grid;
+  place-items: center;
+  width: 40px;
+  height: 40px;
+  border-radius: 8px;
+  background: #e6fbff;
+  color: var(--primary-dark);
+  font-weight: 800;
+}
+
+.collapse-btn {
+  margin-left: auto;
+  display: grid;
+  place-items: center;
+  width: 30px;
+  height: 30px;
+  border: 1px solid #365062;
+  border-radius: 8px;
+  background: #243542;
+  color: #ffffff;
+  font-size: 20px;
+}
+
+.nav-list {
+  display: grid;
+  gap: 6px;
+}
+
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 40px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #dce6ee;
+  text-align: left;
+}
+
+.nav-item:hover,
+.nav-item.active {
+  background: #243542;
+  border-color: #365062;
+  color: #ffffff;
+}
+
+.icon {
+  width: 20px;
+  text-align: center;
+  color: #9ec8ce;
+}
+
+.session-card {
+  margin-top: auto;
+  padding: 12px;
+  border-top: 1px solid #334a59;
+}
+
+.session-row {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 9px;
+  color: #d5e2ea;
+  font-size: 13px;
+}
+
+.session-row.small {
+  margin: 7px 0 0;
+  color: #aebdca;
+}
+
+.app-shell.sidebar-collapsed .sidebar {
+  padding: 16px 12px;
+}
+
+.app-shell.sidebar-collapsed .brand {
+  justify-content: center;
+}
+
+.app-shell.sidebar-collapsed .brand > div:not(.brand-mark),
+.app-shell.sidebar-collapsed .nav-item span:not(.icon),
+.app-shell.sidebar-collapsed .session-card {
+  display: none;
+}
+
+.app-shell.sidebar-collapsed .collapse-btn {
+  position: absolute;
+  left: 48px;
+  top: 18px;
+  width: 24px;
+  height: 24px;
+  font-size: 16px;
+  transform: rotate(180deg);
+}
+
+.app-shell.sidebar-collapsed .nav-item {
+  justify-content: center;
+  padding: 0;
+}
+
+.main {
+  min-width: 0;
+  padding: 16px 18px;
+}
+
+.topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 20px;
+  margin-bottom: 14px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.eyebrow {
+  margin: 0 0 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.topbar-actions,
+.toolbar-actions,
+.composer-actions {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+}
+
+.segmented {
+  display: inline-flex;
+  padding: 3px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+
+.segment {
+  min-width: 52px;
+  height: 30px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.segment.active {
+  background: var(--primary);
+  color: #ffffff;
+}
+
+.view {
+  display: none;
+}
+
+.view.active {
+  display: block;
+}

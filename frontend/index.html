@@ -1,0 +1,330 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI Audit</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <section class="auth-screen" id="auth-screen">
+      <form class="login-panel" id="login-form">
+        <div class="brand login-brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <strong>AI Audit</strong>
+            <span data-i18n="brand.subtitle">审计智能体平台</span>
+          </div>
+        </div>
+        <h1 data-i18n="auth.title">登录</h1>
+        <p data-i18n="auth.help">使用内部账号进入审计工作台。</p>
+        <label class="field">
+          <span data-i18n="auth.username">用户名</span>
+          <input name="username" autocomplete="username" value="chen.audit" required />
+        </label>
+        <label class="field">
+          <span data-i18n="auth.password">密码</span>
+          <input name="password" type="password" autocomplete="current-password" value="audit123" required />
+        </label>
+        <button class="btn primary" type="submit" data-i18n="auth.login">登录</button>
+        <p class="form-error" id="login-error"></p>
+        <p class="login-hint" data-i18n="auth.demo">演示账号：chen.audit / audit123</p>
+      </form>
+    </section>
+
+    <div class="app-shell hidden" id="app-shell">
+      <aside class="sidebar" aria-label="Primary">
+        <div class="brand">
+          <div class="brand-mark">AI</div>
+          <div>
+            <strong>AI Audit</strong>
+            <span data-i18n="brand.subtitle">审计智能体平台</span>
+          </div>
+          <button class="collapse-btn" id="collapse-sidebar" aria-label="Collapse sidebar" title="Collapse sidebar">&lsaquo;</button>
+        </div>
+
+        <nav class="nav-list" aria-label="Sections">
+          <button class="nav-item active" data-view="workspace">
+            <span class="icon" aria-hidden="true">□</span>
+            <span data-i18n="nav.workspace">工作区</span>
+          </button>
+          <button class="nav-item" data-view="chat">
+            <span class="icon" aria-hidden="true">▣</span>
+            <span data-i18n="nav.chat">实时会话</span>
+          </button>
+          <button class="nav-item" data-view="admin">
+            <span class="icon" aria-hidden="true">⚙</span>
+            <span data-i18n="nav.admin">管理</span>
+          </button>
+        </nav>
+
+        <div class="session-card">
+          <div class="session-row">
+            <span data-i18n="session.user">当前用户</span>
+            <strong id="current-username">-</strong>
+          </div>
+          <div class="meter" aria-label="Budget used">
+            <span id="current-budget-meter" style="width: 0%"></span>
+          </div>
+          <div class="session-row small">
+            <span data-i18n="session.budget">预算使用</span>
+            <span id="current-budget-label">0%</span>
+          </div>
+        </div>
+      </aside>
+
+      <main class="main">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow" data-i18n="topbar.eyebrow">私有集群 · 受控工作流</p>
+            <h1 data-i18n="topbar.title">审计工作台</h1>
+          </div>
+          <div class="topbar-actions">
+            <div class="segmented" role="group" aria-label="Language">
+              <button class="segment active" data-lang="zh">中文</button>
+              <button class="segment" data-lang="en">EN</button>
+            </div>
+            <button class="btn ghost" data-i18n="actions.auditLog">审计日志</button>
+            <button class="btn primary" data-open-workspace-modal data-i18n="actions.newWorkspace">新建工作区</button>
+            <button class="btn" id="logout-button" data-i18n="actions.logout">退出</button>
+          </div>
+        </header>
+
+        <section class="view active" id="workspace-view">
+          <div class="toolbar">
+            <div class="search">
+              <span aria-hidden="true">⌕</span>
+              <input type="search" data-i18n-placeholder="workspace.search" placeholder="搜索工作区、成员或文件" />
+            </div>
+            <div class="toolbar-actions">
+              <button class="btn" data-open-workspace-modal data-i18n="workspace.upload">上传文件夹</button>
+            </div>
+          </div>
+
+          <div class="dashboard-grid workspace-overview-grid">
+            <section class="panel wide">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="workspace.title">工作区</h2>
+                  <p data-i18n="workspace.help">创建、打开、共享或复刻审计任务目录。</p>
+                </div>
+                <span class="pill success" data-i18n="workspace.lockFree">无写入锁</span>
+              </div>
+              <div class="workspace-list" id="workspace-list"></div>
+            </section>
+
+          </div>
+
+          <section class="panel workspace-management">
+            <div class="panel-head">
+              <div>
+                <h2 data-i18n="artifacts.title">成果文件</h2>
+                <p id="workspace-management-title">2026-Q3-收入测试</p>
+              </div>
+              <div class="toolbar-actions">
+                <button class="btn primary" id="download-selected" data-i18n="artifacts.downloadSelected">下载所选</button>
+                <button class="btn danger" id="delete-selected-files" data-i18n="artifacts.deleteSelected">删除所选</button>
+                <button class="btn ghost" id="sync-folder" data-i18n="artifacts.sync">同步到本地</button>
+                <button type="button" class="btn icon-btn primary" id="workspace-add-menu-button" data-i18n-title="files.add" title="添加文件">
+                  <span aria-hidden="true">+</span>
+                </button>
+              </div>
+            </div>
+            <div class="workspace-file-toolbar hidden" id="workspace-add-menu">
+              <button type="button" class="btn" id="workspace-add-files-button" data-i18n="files.addFiles">上传文件</button>
+              <button type="button" class="btn" id="workspace-add-folder-button" data-i18n="files.addFolder">上传文件夹</button>
+            </div>
+            <label class="select-all-row">
+              <input type="checkbox" id="select-all-artifacts" aria-label="Select all" />
+              <span data-i18n="artifacts.selectAll">全选文件</span>
+            </label>
+            <div class="file-tree artifact-tree" id="artifact-tree"></div>
+            <input type="file" id="workspace-add-files-input" class="hidden" multiple />
+            <input type="file" id="workspace-add-folder-input" class="hidden" multiple webkitdirectory />
+          </section>
+        </section>
+
+        <section class="view" id="chat-view">
+          <div class="chat-layout">
+            <aside class="panel sessions-panel">
+              <div class="resize-handle resize-handle-right" data-resize-panel="sessions" aria-hidden="true"></div>
+              <div class="panel-head compact-head">
+                <div>
+                  <h2 data-i18n="chat.sessions">会话列表</h2>
+                  <p id="chat-workspace-name">2026-Q3-收入测试</p>
+                </div>
+                <button class="rail-toggle" data-toggle-panel="sessions" data-i18n-title="chat.collapseSessions" title="收起会话列表">‹</button>
+              </div>
+              <div class="session-list" id="chat-session-list"></div>
+            </aside>
+
+            <button class="panel-rail session-rail" data-toggle-panel="sessions">
+              <span aria-hidden="true">▣</span>
+              <span data-i18n="chat.sessions">会话列表</span>
+            </button>
+
+            <section class="panel chat-panel">
+              <div class="panel-head chat-head">
+                <div>
+                  <h2 data-i18n="chat.title">实时会话</h2>
+                  <p id="chat-session-title">收入确认异常分析</p>
+                </div>
+                <div class="run-state">
+                  <span class="status-dot running"></span>
+                  <span id="run-state-label" data-i18n="chat.running">运行中</span>
+                </div>
+              </div>
+
+              <div class="runtime-strip" aria-label="Runtime details">
+                <span><strong data-i18n="chat.worker">节点</strong> worker-03</span>
+                <span><strong data-i18n="chat.container">容器</strong> codex-run-a41f</span>
+                <span><strong data-i18n="chat.lock">工作区锁</strong> <span data-i18n="chat.locked">已占用</span></span>
+                <span><strong data-i18n="chat.tokens">本次消耗</strong> <span id="token-count">128,420</span></span>
+              </div>
+
+              <div class="event-stream" id="event-stream" aria-live="polite"></div>
+
+              <form class="composer" id="composer">
+                <textarea data-i18n-placeholder="chat.placeholder" placeholder="输入审计任务，例如：检查收入确认底稿并生成异常清单"></textarea>
+                <div class="composer-actions">
+                  <label>
+                    <span data-i18n="chat.model">模型</span>
+                    <select>
+                      <option>GPT-5 Codex</option>
+                      <option>GPT-5 Mini</option>
+                    </select>
+                  </label>
+                  <label>
+                    <span data-i18n="chat.reasoning">推理强度</span>
+                    <select>
+                      <option data-i18n="chat.reasoning.high">高</option>
+                      <option data-i18n="chat.reasoning.medium">中</option>
+                    </select>
+                  </label>
+                  <button type="button" class="btn danger" id="stop-run" data-i18n="chat.stop">停止</button>
+                  <button type="submit" class="btn primary" data-i18n="chat.send">发送</button>
+                </div>
+              </form>
+            </section>
+
+            <button class="panel-rail file-rail" data-toggle-panel="files">
+              <span aria-hidden="true">☰</span>
+              <span data-i18n="files.title">文件</span>
+            </button>
+
+            <aside class="panel file-panel">
+              <div class="resize-handle resize-handle-left" data-resize-panel="files" aria-hidden="true"></div>
+              <div class="panel-head compact-head">
+                <div>
+                  <h2 data-i18n="files.title">文件</h2>
+                  <p data-i18n="files.help">当前工作区</p>
+                </div>
+                <button class="rail-toggle" data-toggle-panel="files" data-i18n-title="files.collapse" title="收起文件">›</button>
+              </div>
+              <div class="file-tree" id="file-tree"></div>
+            </aside>
+          </div>
+        </section>
+
+        <section class="view" id="admin-view">
+          <div class="dashboard-grid">
+            <section class="panel wide">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="admin.users">用户与小组</h2>
+                  <p data-i18n="admin.usersHelp">批量创建账号、分组并设置预算。</p>
+                </div>
+                <button class="btn primary" data-i18n="admin.batchCreate">批量创建</button>
+              </div>
+              <div class="admin-grid" id="admin-grid"></div>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="admin.audit">审计事件</h2>
+                  <p data-i18n="admin.auditHelp">关键操作记录会写入审计日志。</p>
+                </div>
+              </div>
+              <ol class="audit-list" id="audit-list"></ol>
+            </section>
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="workspace.capacity">资源与预算</h2>
+                  <p data-i18n="workspace.capacityHelp">运行前进行权限、锁和预算检查。</p>
+                </div>
+              </div>
+              <div class="quota-list">
+                <div class="quota-item">
+                  <span data-i18n="quota.user">个人 Token</span>
+                  <strong>1.9M / 3.0M</strong>
+                  <div class="meter"><span style="width: 62%"></span></div>
+                </div>
+                <div class="quota-item">
+                  <span data-i18n="quota.group">小组 Token</span>
+                  <strong>8.4M / 12.0M</strong>
+                  <div class="meter"><span style="width: 70%"></span></div>
+                </div>
+                <div class="quota-item">
+                  <span data-i18n="quota.workers">计算节点</span>
+                  <strong>4 / 6</strong>
+                  <div class="meter green"><span style="width: 67%"></span></div>
+                </div>
+              </div>
+            </section>
+          </div>
+        </section>
+      </main>
+    </div>
+    <div class="modal-backdrop hidden" id="workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
+      <form class="modal-panel" id="workspace-create-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="workspace-modal-title" data-i18n="workspace.createTitle">新建工作区</h2>
+            <p data-i18n="workspace.createHelp">命名工作区并添加一个或多个待上传文件夹。</p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-workspace-modal aria-label="Close">×</button>
+        </div>
+        <label class="field">
+          <span data-i18n="workspace.name">工作区名称</span>
+          <input name="workspaceName" id="workspace-name-input" data-i18n-placeholder="workspace.namePlaceholder" placeholder="例如：2026-Q3 收入测试" required />
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="workspace-shared-input" checked />
+          <span data-i18n="workspace.shareWithGroup">创建后与小组共享</span>
+        </label>
+        <div class="folder-picker-row">
+          <button type="button" class="btn" id="add-folder-button" data-i18n="workspace.addFolder">添加文件夹</button>
+          <span id="workspace-upload-summary" data-i18n="workspace.noFolders">尚未选择文件夹</span>
+          <input type="file" id="workspace-upload-input" class="hidden" multiple webkitdirectory />
+        </div>
+        <div class="selected-folder-list" id="selected-folder-list"></div>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-workspace-modal data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" data-i18n="workspace.create">创建</button>
+        </div>
+      </form>
+    </div>
+    <div class="modal-backdrop hidden" id="preview-modal" role="dialog" aria-modal="true" aria-labelledby="preview-title">
+      <section class="modal-panel preview-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="preview-title" data-i18n="preview.title">文件预览</h2>
+            <p id="preview-meta"></p>
+          </div>
+          <div class="toolbar-actions">
+            <button type="button" class="btn" id="preview-download" data-i18n="preview.download">下载</button>
+            <button type="button" class="rail-toggle" data-close-preview-modal aria-label="Close">×</button>
+          </div>
+        </div>
+        <div class="preview-content" id="preview-content"></div>
+      </section>
+    </div>
+    <div class="file-context-menu hidden" id="file-context-menu">
+      <button type="button" data-file-menu-action="download" data-i18n="files.download">下载</button>
+      <button type="button" class="danger" data-file-menu-action="delete" data-i18n="files.delete">删除</button>
+    </div>
+    <div class="toast" id="toast" role="status" aria-live="polite"></div>
+    <script type="module" src="app.js"></script>
+  </body>
+</html>

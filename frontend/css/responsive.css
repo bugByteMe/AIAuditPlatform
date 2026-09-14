@@ -1,0 +1,112 @@
+@media (max-width: 980px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 1fr;
+  }
+
+  .sidebar {
+    position: static;
+    height: auto;
+  }
+
+  .nav-list {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .nav-item {
+    justify-content: center;
+  }
+
+  .session-card {
+    display: none;
+  }
+
+  .app-shell.sidebar-collapsed .brand > div:not(.brand-mark),
+  .app-shell.sidebar-collapsed .nav-item span:not(.icon) {
+    display: block;
+  }
+
+  .app-shell.sidebar-collapsed .collapse-btn {
+    position: static;
+    width: 30px;
+    height: 30px;
+    transform: none;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .chat-layout,
+  .chat-layout:not(.files-collapsed),
+  .chat-layout.sessions-collapsed,
+  .chat-layout.sessions-collapsed:not(.files-collapsed) {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "sessions"
+      "sessionsRail"
+      "chat"
+      "filesRail"
+      "files";
+    height: auto;
+    min-height: 0;
+  }
+
+  .sessions-panel,
+  .file-panel,
+  .chat-panel {
+    border: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .resize-handle {
+    display: none;
+  }
+
+  .sessions-collapsed .session-rail,
+  .files-collapsed .file-rail {
+    display: flex;
+    min-height: 34px;
+    writing-mode: horizontal-tb;
+    border: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .event-stream {
+    max-height: 58vh;
+  }
+}
+
+@media (max-width: 700px) {
+  .main {
+    padding: 12px;
+  }
+
+  .topbar,
+  .toolbar,
+  .panel-head {
+    display: grid;
+  }
+
+  .topbar-actions,
+  .toolbar-actions,
+  .composer-actions {
+    justify-content: stretch;
+  }
+
+  .workspace-item,
+  .admin-item {
+    grid-template-columns: 1fr;
+  }
+
+  .event {
+    grid-template-columns: 1fr;
+  }
+
+  .composer-actions .btn,
+  .composer-actions label,
+  .composer-actions select,
+  .segmented {
+    width: 100%;
+  }
+}
