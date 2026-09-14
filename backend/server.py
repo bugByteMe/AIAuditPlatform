@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
+from chat_runtime import ChatRuntime
 from workspace_store import StorageError, WorkspaceStore, parse_multipart, parse_query, parse_urlencoded_paths
 
 
@@ -68,6 +69,8 @@ USERS = {
     "passwordHash": hash_password("review123", "ffeeddccbbaa99887766554433221100"),
   },
 }
+
+CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=int(os.environ.get("AI_AUDIT_LOCAL_RUN_CAPACITY", "1")))
 
 SESSIONS: dict[str, dict] = {}
 AUDIT_LOGS = [
@@ -178,6 +181,10 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.NOT_FOUND
     if exc.code == "forbidden":
       return HTTPStatus.FORBIDDEN
+    if exc.code in {"workspace_locked"}:
+      return HTTPStatus.CONFLICT
+    if exc.code in {"budget_exhausted"}:
+      return HTTPStatus.PAYMENT_REQUIRED
     if exc.code in {"file_too_large", "workspace_too_large", "too_many_files"}:
       return HTTPStatus.REQUEST_ENTITY_TOO_LARGE
     return HTTPStatus.BAD_REQUEST
@@ -288,6 +295,10 @@ class Handler(BaseHTTPRequestHandler):
     workspace_id = parts[2]
     action = parts[3] if len(parts) > 3 else ""
     subaction = parts[4] if len(parts) > 4 else ""
+    tail = parts[5] if len(parts) > 5 else ""
+    if action == "chat":
+      self.chat_api(method, workspace_id, subaction, tail, query)
+      return
     if method == "GET" and not action:
       workspace = WORKSPACE_STORE.get_workspace(workspace_id, user)
       self.write_json({"workspace": WORKSPACE_STORE.public_workspace(workspace)})
@@ -365,6 +376,74 @@ class Handler(BaseHTTPRequestHandler):
       )
     else:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+  def chat_api(self, method: str, workspace_id: str, action: str, tail: str, query: str) -> None:
+    user = self.require_user()
+    if method == "GET" and action == "sessions" and not tail:
+      self.write_json({"sessions": CHAT_RUNTIME.list_sessions(workspace_id, user)})
+    elif method == "POST" and action == "sessions" and not tail:
+      payload = self.read_json()
+      session = CHAT_RUNTIME.create_session(workspace_id, user, str(payload.get("title") or "") or None)
+      add_audit(user["username"], "chat session created", f"{workspace_id} {session['id']}")
+      self.write_json({"session": session}, HTTPStatus.CREATED)
+    elif method == "POST" and action == "runs" and not tail:
+      result = CHAT_RUNTIME.start_run(workspace_id, user, self.read_json())
+      add_audit(user["username"], "chat run queued", f"{workspace_id} {result['run']['id']}")
+      self.write_json(result, HTTPStatus.CREATED)
+    elif method == "POST" and action == "runs" and tail:
+      parts = [unquote(part) for part in urlparse(self.path).path.split("/") if part]
+      if len(parts) == 7 and parts[6] == "stop":
+        result = CHAT_RUNTIME.stop_run(workspace_id, parts[5], user)
+        add_audit(user["username"], "chat run stop requested", f"{workspace_id} {parts[5]}")
+        self.write_json(result)
+      else:
+        self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+    elif method == "GET" and action == "events" and not tail:
+      params = parse_query(query)
+      session_id = (params.get("sessionId") or [""])[0]
+      after = int((params.get("after") or ["0"])[0] or 0)
+      self.write_json({"events": CHAT_RUNTIME.events(workspace_id, session_id, after, user)})
+    elif method == "GET" and action == "stream" and not tail:
+      params = parse_query(query)
+      session_id = (params.get("sessionId") or [""])[0]
+      after = int((params.get("after") or ["0"])[0] or 0)
+      self.write_sse(workspace_id, session_id, after, user)
+    else:
+      self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+
+  def write_sse(self, workspace_id: str, session_id: str, after: int, user: dict) -> None:
+    self.send_response(HTTPStatus.OK)
+    self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+    self.send_header("Cache-Control", "no-store")
+    self.send_header("Connection", "keep-alive")
+    origin = self.headers.get("Origin")
+    if origin:
+      self.send_header("Access-Control-Allow-Origin", origin)
+      self.send_header("Access-Control-Allow-Credentials", "true")
+    self.end_headers()
+    last_id = after
+    idle_rounds = 0
+    while idle_rounds < 24:
+      events = CHAT_RUNTIME.wait_events(workspace_id, session_id, last_id, user, timeout=5)
+      if not events:
+        idle_rounds += 1
+        try:
+          self.wfile.write(b": keepalive\n\n")
+          self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+          return
+        continue
+      idle_rounds = 0
+      for event in events:
+        last_id = int(event["id"])
+        payload = json.dumps(event, ensure_ascii=False)
+        try:
+          self.wfile.write(f"id: {last_id}\nevent: {event['type']}\ndata: {payload}\n\n".encode("utf-8"))
+          self.wfile.flush()
+        except (BrokenPipeError, ConnectionResetError):
+          return
+      if events[-1]["type"] in {"completed", "stopped", "failed"}:
+        return
 
   def require_session_response(self) -> None:
     user = self.current_user()

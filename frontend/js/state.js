@@ -11,6 +11,7 @@ export const state = {
   selectedUploadFiles: [],
   collapsedFileFolders: new Set(),
   collapsedArtifactFolders: new Set(),
+  chatLastEventIds: {},
   sessionPanelWidth: 280,
   filePanelWidth: 300,
   isSessionPanelCollapsed: false,

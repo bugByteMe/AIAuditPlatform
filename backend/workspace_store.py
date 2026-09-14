@@ -153,7 +153,7 @@ class WorkspaceStore:
   def public_workspace(self, workspace: dict, metadata: dict | None = None) -> dict:
     metadata = metadata or self.load_metadata()
     workspace_id = workspace["id"]
-    sessions = workspace.get("sessions") or [
+    sessions = self.public_workspace_sessions(workspace, metadata) or [
       {
         "id": f"session_{workspace_id}",
         "title": "Workspace setup",
@@ -179,6 +179,30 @@ class WorkspaceStore:
       "artifacts": self.workspace_artifacts(workspace_id, metadata),
       "files": self.file_tree(workspace_id),
     }
+
+  def public_workspace_sessions(self, workspace: dict, metadata: dict) -> list[dict]:
+    chat_sessions = metadata.get("chatSessions", {})
+    events_by_session = metadata.get("events", {})
+    sessions = []
+    for item in workspace.get("sessions", []):
+      session_id = item.get("id")
+      if session_id in chat_sessions:
+        session = chat_sessions[session_id]
+        events = events_by_session.get(session_id, [])
+        sessions.append(
+          {
+            "id": session["id"],
+            "title": session["title"],
+            "status": session["status"],
+            "updated": session["updated"],
+            "tokens": session.get("tokens", "0"),
+            "latestRunId": session.get("latestRunId"),
+            "events": [[event["type"], event["message"], event["message"]] for event in events],
+          }
+        )
+      elif {"title", "status", "updated", "tokens", "events"}.issubset(item):
+        sessions.append(item)
+    return sessions
 
   def workspace_path(self, workspace_id: str) -> Path:
     return ensure_under_root(self.active_dir, self.active_dir / workspace_id)

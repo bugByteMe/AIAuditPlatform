@@ -189,16 +189,16 @@
                 <div class="composer-actions">
                   <label>
                     <span data-i18n="chat.model">模型</span>
-                    <select>
-                      <option>GPT-5 Codex</option>
-                      <option>GPT-5 Mini</option>
+                    <select name="model">
+                      <option value="gpt-5-codex">GPT-5 Codex</option>
+                      <option value="gpt-5-mini">GPT-5 Mini</option>
                     </select>
                   </label>
                   <label>
                     <span data-i18n="chat.reasoning">推理强度</span>
-                    <select>
-                      <option data-i18n="chat.reasoning.high">高</option>
-                      <option data-i18n="chat.reasoning.medium">中</option>
+                    <select name="reasoning">
+                      <option value="high" data-i18n="chat.reasoning.high">高</option>
+                      <option value="medium" data-i18n="chat.reasoning.medium">中</option>
                     </select>
                   </label>
                   <button type="button" class="btn danger" id="stop-run" data-i18n="chat.stop">停止</button>

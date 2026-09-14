@@ -87,3 +87,26 @@ Failures should preserve as much recoverable state as possible:
 - If the container exits unexpectedly, mark the run failed and checkpoint the workspace if possible.
 - If the worker disappears, mark active runs as uncertain until heartbeat timeout handling resolves them.
 - If budget is exhausted, stop the run and record the stop reason as budget-related.
+
+## V1 Implementation Surface
+
+The prototype backend exposes chat runtime APIs under the workspace boundary:
+
+- `GET /api/workspaces/{workspace_id}/chat/sessions`
+- `POST /api/workspaces/{workspace_id}/chat/sessions`
+- `POST /api/workspaces/{workspace_id}/chat/runs`
+- `POST /api/workspaces/{workspace_id}/chat/runs/{run_id}/stop`
+- `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`
+- `GET /api/workspaces/{workspace_id}/chat/stream?sessionId={session_id}&after={event_id}`
+
+The first implementation uses a local scheduler with configurable capacity. It persists chat sessions, runs, and events in the existing workspace metadata store, locks the workspace before queueing a run, releases the lock on terminal states, and records a checkpoint/artifact refresh after completion, stop, or failure.
+
+Live updates use Server-Sent Events. The event-list endpoint remains available for reload and polling fallback.
+
+The production runner launches one Docker container per run from the `docker/codex-runner/Dockerfile` image and executes:
+
+```text
+codex exec --json --skip-git-repo-check --ask-for-approval never -C /workspace -m <model> <prompt>
+```
+
+Docker is not required for unit tests. Tests use a fake runner so lifecycle, lock, budget, and event behavior can be validated on machines where Docker is unavailable or broken.

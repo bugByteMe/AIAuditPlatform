@@ -15,6 +15,9 @@ import {
 import { currentWorkspace } from "./js/selectors.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "admin"]);
+const LIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
+let activeChatStream = null;
+let activePollTimer = null;
 
 export function renderDynamic() {
   renderCurrentUser();
@@ -44,6 +47,106 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function stopChatStream() {
+  if (activeChatStream) activeChatStream.close();
+  activeChatStream = null;
+  if (activePollTimer) window.clearTimeout(activePollTimer);
+  activePollTimer = null;
+}
+
+function mergeSessionEvents(session, events) {
+  if (!session || !events.length) return false;
+  session.events = session.events || [];
+  const existingCount = state.chatLastEventIds[session.id] || 0;
+  events
+    .filter((event) => Number(event.id) > existingCount)
+    .forEach((event) => {
+      session.events.push([event.type, event.message, event.message]);
+      state.chatLastEventIds[session.id] = Number(event.id);
+      if (["queued", "starting", "running", "stopping", "stopped", "completed", "failed"].includes(event.type)) {
+        session.status = event.type === "running" ? "running" : event.type;
+      }
+      session.updated = event.time || session.updated;
+    });
+  return true;
+}
+
+function replaceWorkspace(updatedWorkspace) {
+  const index = workspaceIndexById(updatedWorkspace.id);
+  if (index >= 0) state.workspaces[index] = updatedWorkspace;
+}
+
+async function refreshCurrentWorkspace() {
+  const workspace = safeCurrentWorkspace();
+  if (!workspace) return;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`);
+    replaceWorkspace(result.workspace);
+    renderDynamic();
+  } catch (error) {
+    showToast(error.message || t("toast.workspaceLoadFailed"));
+  }
+}
+
+function currentSessionObject() {
+  const workspace = safeCurrentWorkspace();
+  return workspace?.sessions?.[state.selectedSession] || workspace?.sessions?.[0] || null;
+}
+
+async function pollChatEvents(workspaceId, sessionId) {
+  const after = state.chatLastEventIds[sessionId] || 0;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({ sessionId, after }).toString()}`);
+    const session = currentSessionObject();
+    const changed = mergeSessionEvents(session, result.events || []);
+    if (changed) renderDynamic();
+    if (!session || !LIVE_CHAT_STATES.has(session.status)) {
+      await refreshCurrentWorkspace();
+      stopChatStream();
+      return;
+    }
+  } catch (error) {
+    showToast(error.message);
+  }
+  activePollTimer = window.setTimeout(() => pollChatEvents(workspaceId, sessionId), 2000);
+}
+
+function startChatStreamForSession(workspaceId, sessionId) {
+  if (!workspaceId || !sessionId) return;
+  stopChatStream();
+  const after = state.chatLastEventIds[sessionId] || 0;
+  const url = authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/stream?${new URLSearchParams({ sessionId, after }).toString()}`);
+  activeChatStream = new EventSource(url, { withCredentials: true });
+  const handleEvent = (event) => {
+    const payload = JSON.parse(event.data);
+    const session = currentSessionObject();
+    if (mergeSessionEvents(session, [payload])) renderDynamic();
+    if (["completed", "stopped", "failed"].includes(payload.type)) {
+      refreshCurrentWorkspace();
+      stopChatStream();
+    }
+  };
+  activeChatStream.onmessage = handleEvent;
+  ["user", "queued", "starting", "running", "stopping", "assistant", "tool", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
+    activeChatStream.addEventListener(type, handleEvent);
+  });
+  activeChatStream.onerror = () => {
+    if (activeChatStream) activeChatStream.close();
+    activeChatStream = null;
+    if (!activePollTimer) pollChatEvents(workspaceId, sessionId);
+  };
+}
+
+function maybeStartChatStream() {
+  const workspace = safeCurrentWorkspace();
+  const session = currentSessionObject();
+  if (!workspace || !session || !LIVE_CHAT_STATES.has(session.status)) {
+    stopChatStream();
+    return;
+  }
+  startChatStreamForSession(workspace.id, session.id);
+}
+
 async function loadWorkspaces() {
   try {
     const result = await api("/api/workspaces");
@@ -64,6 +167,7 @@ async function loadWorkspaces() {
     showToast(error.message || t("toast.workspaceLoadFailed"));
   }
   renderDynamic();
+  maybeStartChatStream();
 }
 
 function startNativeDownload(url) {
@@ -137,6 +241,7 @@ function selectWorkspace(index) {
       .map((file) => file.path),
   );
   renderDynamic();
+  maybeStartChatStream();
 }
 
 function workspaceIndexById(id) {
@@ -342,6 +447,7 @@ function bindGlobalClicks() {
     if (sessionButton) {
       state.selectedSession = Number(sessionButton.dataset.session);
       renderDynamic();
+      maybeStartChatStream();
       return;
     }
 
@@ -672,19 +778,39 @@ function bindForms() {
     showToast(t("toast.logout"));
   });
 
-  document.querySelector("#composer").addEventListener("submit", (event) => {
+  document.querySelector("#composer").addEventListener("submit", async (event) => {
     event.preventDefault();
     const workspace = safeCurrentWorkspace();
     if (!workspace) return;
     const textarea = event.currentTarget.querySelector("textarea");
     if (!textarea.value.trim()) return;
-    const session = workspace.sessions[state.selectedSession];
-    session.events.push(["user", textarea.value.trim(), textarea.value.trim()]);
-    session.events.push(["queued", "新任务已提交，等待预算和锁检查。", "New task submitted. Waiting for budget and lock checks."]);
-    session.status = "running";
+    const model = event.currentTarget.querySelector('[name="model"]').value;
+    const reasoning = event.currentTarget.querySelector('[name="reasoning"]').value;
+    const session = currentSessionObject();
+    const prompt = textarea.value.trim();
     textarea.value = "";
-    renderDynamic();
-    showToast(t("toast.send"));
+    try {
+      const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs`, {
+        method: "POST",
+        body: JSON.stringify({ prompt, sessionId: session?.id, model, reasoning }),
+      });
+      const workspaceIndex = workspaceIndexById(workspace.id);
+      if (workspaceIndex >= 0) {
+        const sessions = [...(workspace.sessions || [])];
+        const existingIndex = sessions.findIndex((item) => item.id === result.session.id);
+        if (existingIndex >= 0) sessions[existingIndex] = result.session;
+        else sessions.unshift(result.session);
+        state.workspaces[workspaceIndex] = { ...workspace, locked: true, sessions };
+        state.selectedSession = Math.max(0, sessions.findIndex((item) => item.id === result.session.id));
+      }
+      state.chatLastEventIds[result.session.id] = result.session.events?.length || 0;
+      renderDynamic();
+      startChatStreamForSession(workspace.id, result.session.id);
+      showToast(t("toast.send"));
+    } catch (error) {
+      textarea.value = prompt;
+      showToast(error.message);
+    }
   });
 
   document.querySelector("#workspace-create-form").addEventListener("submit", (event) => {
@@ -707,14 +833,21 @@ function bindInputs() {
     selectWorkspaceFromElement(workspaceCard);
   });
 
-  document.querySelector("#stop-run").addEventListener("click", () => {
+  document.querySelector("#stop-run").addEventListener("click", async () => {
     const workspace = safeCurrentWorkspace();
     if (!workspace) return;
-    const session = workspace.sessions[state.selectedSession];
-    session.status = "stopped";
-    session.events.push(["stopped", "用户已请求停止，正在创建可恢复检查点。", "Stop requested. Creating a resumable checkpoint."]);
-    renderDynamic();
-    showToast(t("toast.stop"));
+    const session = currentSessionObject();
+    const runId = session?.latestRunId;
+    if (!runId) return;
+    try {
+      await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
+      session.status = "stopping";
+      renderDynamic();
+      startChatStreamForSession(workspace.id, session.id);
+      showToast(t("toast.stop"));
+    } catch (error) {
+      showToast(error.message);
+    }
   });
 
   document.querySelector("#artifact-tree").addEventListener("change", (event) => {
