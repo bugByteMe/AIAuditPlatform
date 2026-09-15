@@ -151,7 +151,7 @@ class DockerCodexRunner(CodexRunner):
       *base,
       "--json",
       "--skip-git-repo-check",
-      "-- --ask-for-approval",
+      "--ask-for-approval",
       "never",
       "-C",
       "/workspace",
