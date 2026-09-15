@@ -14,7 +14,7 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     ripgrep \
   && npm install -g "@openai/codex@${CODEX_VERSION}" --registry="${NPM_REGISTRY}" \
   && useradd --create-home --shell /bin/bash codex \
-  && mkdir -p /workspace \
+  && mkdir -p /workspace /home/codex/.codex \
   && chown -R codex:codex /workspace /home/codex \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
