@@ -198,6 +198,8 @@ class DockerCodexRunner(CodexRunner):
       "/workspace",
       "-m",
       run["model"],
+      "--sandbox",
+      "danger-full-access"
       run["prompt"],
     ]
 
