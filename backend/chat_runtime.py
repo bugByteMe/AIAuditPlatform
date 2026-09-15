@@ -91,6 +91,9 @@ class DockerCodexRunner(CodexRunner):
       payload = json.loads(line)
     except json.JSONDecodeError:
       return {"type": "progress", "message": line.strip()}
+    item_event = self.parse_item_event(payload)
+    if item_event:
+      return item_event
     if "message" in payload and isinstance(payload["message"], str):
       return {"type": "assistant", "message": payload["message"]}
     if "text" in payload and isinstance(payload["text"], str):
@@ -108,6 +111,28 @@ class DockerCodexRunner(CodexRunner):
       total = usage.get("total_tokens") or usage.get("totalTokens") or 0
       if total:
         result["tokens"] = int(total)
+    return result
+
+  def parse_item_event(self, payload: dict) -> dict | None:
+    item = payload.get("item")
+    if not isinstance(item, dict):
+      return None
+    text = item.get("text")
+    if not isinstance(text, str) or not text:
+      return None
+    item_type = str(item.get("type") or payload.get("type") or "progress")
+    event_type = {
+      "agent_message": "assistant",
+      "assistant_message": "assistant",
+      "tool_call": "tool",
+      "tool_output": "tool",
+      "reasoning": "progress",
+      "agent_reasoning": "progress",
+    }.get(item_type, item_type)
+    result = {"type": event_type, "message": text, "raw": payload}
+    native_id = self.extract_codex_session_id(payload)
+    if native_id:
+      result["codexSessionId"] = native_id
     return result
 
   def prepare_codex_home(self, run: dict) -> Path:

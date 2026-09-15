@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import sys
 import tempfile
 import time
@@ -139,6 +140,24 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertIn("resume", runner.codex_command_args(followup))
     self.assertIn("019abc", runner.codex_command_args(followup))
     self.assertIn("--last", runner.codex_command_args(fallback))
+
+  def test_docker_runner_parses_completed_agent_message_item(self) -> None:
+    runner = DockerCodexRunner()
+    event = runner.parse_json_event(
+      json.dumps(
+        {
+          "type": "item.completed",
+          "item": {
+            "id": "item_0",
+            "text": "Hello. What would you like to work on?",
+            "type": "agent_message",
+          },
+        }
+      )
+    )
+    self.assertEqual(event["type"], "assistant")
+    self.assertEqual(event["message"], "Hello. What would you like to work on?")
+    self.assertEqual(event["raw"]["type"], "item.completed")
 
   def test_followup_run_marks_native_resume(self) -> None:
     workspace = self.create_workspace()
