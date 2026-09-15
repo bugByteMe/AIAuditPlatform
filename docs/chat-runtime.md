@@ -109,4 +109,19 @@ The production runner launches one Docker container per run from the `docker/cod
 codex exec --json --skip-git-repo-check --ask-for-approval never -C /workspace -m <model> <prompt>
 ```
 
+For follow-up prompts in an existing chat session, the runner uses Codex native resume:
+
+```text
+codex exec resume --json --skip-git-repo-check -m <model> <codex_session_id> <prompt>
+```
+
+If Codex does not expose a session id in JSON events, the backend falls back to `codex exec resume --last` within that chat session's isolated `CODEX_HOME`.
+
+Each user account stores its own Codex `baseUrl` and API key. Before every run, the backend generates a writable session-scoped `CODEX_HOME` under `workspace_storage/codex_homes/<username>/<chat_session_id>/` with:
+
+- `config.toml`: model provider, base URL, model, reasoning effort, and trusted `/workspace`.
+- `auth.json`: API key authentication for the selected user.
+
+The API key is write-only through the backend API and is never returned in public account/session responses.
+
 Docker is not required for unit tests. Tests use a fake runner so lifecycle, lock, budget, and event behavior can be validated on machines where Docker is unavailable or broken.

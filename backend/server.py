@@ -54,8 +54,12 @@ USERS = {
     "budgetTokens": 3_000_000,
     "usedTokens": 1_900_000,
     "enabled": True,
-    "maxSessions": 2,
-    "passwordHash": hash_password("audit123", "00112233445566778899aabbccddeeff"),
+      "maxSessions": 2,
+      "codex": {
+        "baseUrl": os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL", "https://api.openai.com/v1"),
+        "apiKey": os.environ.get("AI_AUDIT_DEFAULT_CODEX_API_KEY", ""),
+      },
+      "passwordHash": hash_password("audit123", "00112233445566778899aabbccddeeff"),
   },
   "li.review": {
     "username": "li.review",
@@ -65,8 +69,12 @@ USERS = {
     "budgetTokens": 2_000_000,
     "usedTokens": 940_000,
     "enabled": True,
-    "maxSessions": 1,
-    "passwordHash": hash_password("review123", "ffeeddccbbaa99887766554433221100"),
+      "maxSessions": 1,
+      "codex": {
+        "baseUrl": os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL", "https://api.openai.com/v1"),
+        "apiKey": os.environ.get("AI_AUDIT_DEFAULT_CODEX_API_KEY", ""),
+      },
+      "passwordHash": hash_password("review123", "ffeeddccbbaa99887766554433221100"),
   },
 }
 
@@ -83,7 +91,13 @@ class RequestStopped(Exception):
 
 
 def public_user(user: dict) -> dict:
-  return {key: value for key, value in user.items() if key != "passwordHash"}
+  public = {key: value for key, value in user.items() if key not in {"passwordHash", "codex"}}
+  codex = user.get("codex") or {}
+  public["codex"] = {
+    "baseUrl": codex.get("baseUrl", ""),
+    "apiKeyConfigured": bool(codex.get("apiKey")),
+  }
+  return public
 
 
 def add_audit(actor: str, event: str, detail: str = "") -> None:
@@ -161,6 +175,10 @@ class Handler(BaseHTTPRequestHandler):
         self.update_account(path.rsplit("/", 1)[-1])
       elif method == "GET" and path == "/api/audit-logs":
         self.audit_logs()
+      elif method == "GET" and path == "/api/codex-settings":
+        self.codex_settings()
+      elif method == "PATCH" and path == "/api/codex-settings":
+        self.update_codex_settings()
       elif method == "GET" and path == "/api/workspaces":
         self.list_workspaces()
       elif method == "POST" and path == "/api/workspaces":
@@ -185,6 +203,8 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
       return HTTPStatus.PAYMENT_REQUIRED
+    if exc.code in {"codex_auth_required"}:
+      return HTTPStatus.PRECONDITION_REQUIRED
     if exc.code in {"file_too_large", "workspace_too_large", "too_many_files"}:
       return HTTPStatus.REQUEST_ENTITY_TOO_LARGE
     return HTTPStatus.BAD_REQUEST
@@ -244,6 +264,7 @@ class Handler(BaseHTTPRequestHandler):
       "usedTokens": 0,
       "enabled": bool(payload.get("enabled", True)),
       "maxSessions": int(payload.get("maxSessions") or 1),
+      "codex": self.codex_payload_from_request(payload, {}),
       "passwordHash": hash_password(password),
     }
     add_audit(actor["username"], "account created", username)
@@ -260,6 +281,8 @@ class Handler(BaseHTTPRequestHandler):
     for key in ["displayName", "role", "group", "enabled", "budgetTokens", "maxSessions"]:
       if key in payload:
         user[key] = payload[key]
+    if "codexBaseUrl" in payload or "codexApiKey" in payload or "clearCodexApiKey" in payload:
+      user["codex"] = self.codex_payload_from_request(payload, user.get("codex") or {})
     if "password" in payload and payload["password"]:
       user["passwordHash"] = hash_password(str(payload["password"]))
     add_audit(actor["username"], "account updated", username)
@@ -268,6 +291,29 @@ class Handler(BaseHTTPRequestHandler):
   def audit_logs(self) -> None:
     self.require_admin()
     self.write_json({"logs": AUDIT_LOGS})
+
+  def codex_settings(self) -> None:
+    user = self.require_user()
+    codex = user.get("codex") or {}
+    self.write_json({"settings": {"baseUrl": codex.get("baseUrl", ""), "apiKeyConfigured": bool(codex.get("apiKey"))}})
+
+  def update_codex_settings(self) -> None:
+    user = self.require_user()
+    payload = self.read_json()
+    user["codex"] = self.codex_payload_from_request(payload, user.get("codex") or {})
+    add_audit(user["username"], "codex settings updated", "api key configured" if user["codex"].get("apiKey") else "api key cleared")
+    self.write_json({"settings": {"baseUrl": user["codex"].get("baseUrl", ""), "apiKeyConfigured": bool(user["codex"].get("apiKey"))}})
+
+  def codex_payload_from_request(self, payload: dict, current: dict) -> dict:
+    base_url = str(payload.get("codexBaseUrl") or payload.get("baseUrl") or current.get("baseUrl") or os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL") or "https://api.openai.com/v1").strip()
+    api_key = str(current.get("apiKey") or "")
+    if payload.get("clearCodexApiKey"):
+      api_key = ""
+    if "codexApiKey" in payload or "apiKey" in payload:
+      api_key = str(payload.get("codexApiKey") or payload.get("apiKey") or "").strip()
+    if not base_url.startswith(("http://", "https://")):
+      raise ValueError("codex base URL must start with http:// or https://")
+    return {"baseUrl": base_url.rstrip("/"), "apiKey": api_key}
 
   def list_workspaces(self) -> None:
     user = self.require_user()

@@ -85,6 +85,7 @@
               <button class="segment" data-lang="en">EN</button>
             </div>
             <button class="btn ghost" data-i18n="actions.auditLog">审计日志</button>
+            <button class="btn" id="codex-settings-button" data-i18n="actions.codexSettings">Codex 设置</button>
             <button class="btn primary" data-open-workspace-modal data-i18n="actions.newWorkspace">新建工作区</button>
             <button class="btn" id="logout-button" data-i18n="actions.logout">退出</button>
           </div>
@@ -190,6 +191,7 @@
                   <label>
                     <span data-i18n="chat.model">模型</span>
                     <select name="model">
+                      <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
                       <option value="gpt-5-codex">GPT-5 Codex</option>
                       <option value="gpt-5-mini">GPT-5 Mini</option>
                     </select>
@@ -319,6 +321,33 @@
         </div>
         <div class="preview-content" id="preview-content"></div>
       </section>
+    </div>
+    <div class="modal-backdrop hidden" id="codex-settings-modal" role="dialog" aria-modal="true" aria-labelledby="codex-settings-title">
+      <form class="modal-panel" id="codex-settings-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="codex-settings-title" data-i18n="codex.title">Codex 设置</h2>
+            <p id="codex-settings-status"></p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-codex-settings aria-label="Close">×</button>
+        </div>
+        <label class="field">
+          <span data-i18n="codex.baseUrl">Base URL</span>
+          <input name="baseUrl" id="codex-base-url-input" placeholder="https://api.openai.com/v1" required />
+        </label>
+        <label class="field">
+          <span data-i18n="codex.apiKey">API Key</span>
+          <input name="apiKey" id="codex-api-key-input" type="password" autocomplete="off" data-i18n-placeholder="codex.apiKeyPlaceholder" placeholder="Leave blank to keep current key" />
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" name="clearCodexApiKey" id="codex-clear-key-input" />
+          <span data-i18n="codex.clearKey">Clear saved API key</span>
+        </label>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-codex-settings data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" data-i18n="codex.save">保存</button>
+        </div>
+      </form>
     </div>
     <div class="file-context-menu hidden" id="file-context-menu">
       <button type="button" data-file-menu-action="download" data-i18n="files.download">下载</button>

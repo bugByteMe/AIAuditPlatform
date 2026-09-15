@@ -4,15 +4,23 @@ import sys
 import tempfile
 import time
 import unittest
+from copy import deepcopy
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from chat_runtime import ChatRuntime, CodexRunner
+from chat_runtime import ChatRuntime, CodexRunner, DockerCodexRunner
 from workspace_store import StorageError, UploadedFile, WorkspaceStore
 
 
-OWNER = {"username": "li.review", "role": "group_admin", "group": "审计一组", "budgetTokens": 2_000_000, "usedTokens": 0}
+OWNER = {
+  "username": "li.review",
+  "role": "group_admin",
+  "group": "审计一组",
+  "budgetTokens": 2_000_000,
+  "usedTokens": 0,
+  "codex": {"baseUrl": "https://codex.example/v1", "apiKey": "sk-test"},
+}
 
 
 class FakeRunner(CodexRunner):
@@ -38,7 +46,7 @@ class ChatRuntimeTest(unittest.TestCase):
   def setUp(self) -> None:
     self.tempdir = tempfile.TemporaryDirectory()
     self.store = WorkspaceStore(Path(self.tempdir.name) / "workspace_storage")
-    self.users = {"li.review": dict(OWNER)}
+    self.users = {"li.review": deepcopy(OWNER)}
 
   def tearDown(self) -> None:
     self.tempdir.cleanup()
@@ -89,6 +97,14 @@ class ChatRuntimeTest(unittest.TestCase):
       runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
     self.assertEqual(context.exception.code, "budget_exhausted")
 
+  def test_missing_codex_api_key_rejects_run(self) -> None:
+    workspace = self.create_workspace()
+    self.users["li.review"]["codex"]["apiKey"] = ""
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
+    self.assertEqual(context.exception.code, "codex_auth_required")
+
   def test_stop_transitions_run_to_stopped(self) -> None:
     workspace = self.create_workspace()
     runner = FakeRunner([{"type": "progress", "message": "working"} for _ in range(10)], delay=0.1)
@@ -97,6 +113,52 @@ class ChatRuntimeTest(unittest.TestCase):
     runtime.stop_run(workspace["id"], result["run"]["id"], self.users["li.review"])
     session = self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "stopped")
     self.assertTrue(any(event[0] == "stopped" for event in session["events"]))
+
+  def test_docker_runner_writes_session_scoped_codex_home(self) -> None:
+    runner = DockerCodexRunner()
+    runner.codex_home_root = Path(self.tempdir.name) / "codex_homes"
+    run = {
+      "id": "run_1",
+      "user": "li.review",
+      "sessionId": "chat_1",
+      "model": "gpt-5-codex",
+      "reasoning": "high",
+      "codexSettings": {"baseUrl": "https://codex.example/v1", "apiKey": "sk-test"},
+    }
+    codex_home = runner.prepare_codex_home(run)
+    self.assertEqual(codex_home, runner.codex_home_root / "li.review" / "chat_1")
+    self.assertIn('base_url = "https://codex.example/v1"', (codex_home / "config.toml").read_text(encoding="utf-8"))
+    self.assertIn('"OPENAI_API_KEY": "sk-test"', (codex_home / "auth.json").read_text(encoding="utf-8"))
+
+  def test_docker_runner_uses_native_resume_for_followup_runs(self) -> None:
+    runner = DockerCodexRunner()
+    first = {"model": "gpt-5.6-sol", "prompt": "first", "codexResume": False}
+    followup = {"model": "gpt-5.6-sol", "prompt": "next", "codexResume": True, "codexSessionId": "019abc"}
+    fallback = {"model": "gpt-5.6-sol", "prompt": "next", "codexResume": True, "codexSessionId": None}
+    self.assertEqual(runner.codex_command_args(first)[:3], ["codex", "exec", "--json"])
+    self.assertIn("resume", runner.codex_command_args(followup))
+    self.assertIn("019abc", runner.codex_command_args(followup))
+    self.assertIn("--last", runner.codex_command_args(fallback))
+
+  def test_followup_run_marks_native_resume(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.2))
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Native")
+    metadata = self.store.load_metadata()
+    metadata["chatSessions"][session["id"]]["codexSessionId"] = "native-1"
+    metadata["chatSessions"][session["id"]]["codexNativeResumable"] = True
+    self.store.save_metadata(metadata)
+    second = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Second", "sessionId": session["id"]})
+    self.assertTrue(second["run"]["codexResume"])
+    self.assertEqual(second["run"]["codexSessionId"], "native-1")
+    self.wait_for_status(runtime, workspace["id"], session["id"], "completed")
+
+  def test_default_model_is_gpt_56_sol(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
+    self.assertEqual(result["run"]["model"], "gpt-5.6-sol")
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
 
 
 if __name__ == "__main__":

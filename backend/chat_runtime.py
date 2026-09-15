@@ -31,7 +31,7 @@ class CodexRunner:
 class DockerCodexRunner(CodexRunner):
   def __init__(self) -> None:
     self.image = os.environ.get("AI_AUDIT_CODEX_IMAGE", "ai-audit-codex-runner:0.153.4")
-    self.codex_home = os.environ.get("AI_AUDIT_CODEX_HOME", "")
+    self.codex_home_root = Path(os.environ.get("AI_AUDIT_CODEX_HOME_ROOT", "") or "workspace_storage/codex_homes")
     self.timeout_seconds = int(os.environ.get("AI_AUDIT_RUN_TIMEOUT_SECONDS", "3600"))
     self.processes: dict[str, subprocess.Popen] = {}
     self.lock = threading.Lock()
@@ -39,6 +39,7 @@ class DockerCodexRunner(CodexRunner):
   def start(self, run: dict, workspace_path: Path) -> Iterable[dict]:
     container_name = f"ai-audit-{run['id']}"
     run["container"] = container_name
+    codex_home = self.prepare_codex_home(run)
     command = [
       "docker",
       "run",
@@ -46,32 +47,20 @@ class DockerCodexRunner(CodexRunner):
       "--name",
       container_name,
       "--network",
-      "none",
+      os.environ.get("AI_AUDIT_RUN_NETWORK", "bridge"),
       "--cpus",
       os.environ.get("AI_AUDIT_RUN_CPUS", "2"),
       "--memory",
       os.environ.get("AI_AUDIT_RUN_MEMORY", "4g"),
       "-v",
       f"{workspace_path.resolve()}:/workspace",
+      "-v",
+      f"{codex_home.resolve()}:/home/codex/.codex",
+      "-w",
+      "/workspace",
     ]
-    if self.codex_home:
-      command.extend(["-v", f"{Path(self.codex_home).resolve()}:/home/codex/.codex:ro"])
-    command.extend(
-      [
-        self.image,
-        "codex",
-        "exec",
-        "--json",
-        "--skip-git-repo-check",
-        "--ask-for-approval",
-        "never",
-        "-C",
-        "/workspace",
-        "-m",
-        run["model"],
-        run["prompt"],
-      ]
-    )
+    command.extend([self.image, *self.codex_command_args(run)])
+    run["codexHome"] = str(codex_home)
     started = time.monotonic()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     with self.lock:
@@ -106,12 +95,85 @@ class DockerCodexRunner(CodexRunner):
     event_type = str(payload.get("type") or payload.get("event") or "progress")
     message = str(payload.get("message") or payload.get("summary") or payload.get("type") or "Codex event")
     result = {"type": event_type, "message": message, "raw": payload}
+    native_id = self.extract_codex_session_id(payload)
+    if native_id:
+      result["codexSessionId"] = native_id
     usage = payload.get("usage")
     if isinstance(usage, dict):
       total = usage.get("total_tokens") or usage.get("totalTokens") or 0
       if total:
         result["tokens"] = int(total)
     return result
+
+  def prepare_codex_home(self, run: dict) -> Path:
+    settings = run.get("codexSettings") or {}
+    api_key = str(settings.get("apiKey") or "").strip()
+    base_url = str(settings.get("baseUrl") or "").strip()
+    if not api_key:
+      raise RunnerError("Codex API key is not configured for this user.")
+    codex_home = self.codex_home_root / safe_segment(run["user"]) / safe_segment(run["sessionId"])
+    codex_home.mkdir(parents=True, exist_ok=True)
+    os.chmod(codex_home, 0o700)
+    auth = {"auth_mode": "apikey", "OPENAI_API_KEY": api_key}
+    (codex_home / "auth.json").write_text(json.dumps(auth, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.chmod(codex_home / "auth.json", 0o600)
+    config = [
+      'model_provider = "OpenAI"',
+      f'model = "{toml_string(str(run["model"]))}"',
+      f'model_reasoning_effort = "{toml_string(str(run["reasoning"]))}"',
+      "disable_response_storage = false",
+      "",
+      "[model_providers.OpenAI]",
+      'name = "OpenAI"',
+      f'base_url = "{toml_string(base_url)}"',
+      'wire_api = "responses"',
+      "requires_openai_auth = true",
+      "",
+      '[projects."/workspace"]',
+      'trust_level = "trusted"',
+      "",
+    ]
+    (codex_home / "config.toml").write_text("\n".join(config), encoding="utf-8")
+    os.chmod(codex_home / "config.toml", 0o600)
+    return codex_home
+
+  def codex_command_args(self, run: dict) -> list[str]:
+    base = ["codex", "exec"]
+    if run.get("codexResume"):
+      base.extend(["resume", "--json", "--skip-git-repo-check", "-m", run["model"]])
+      if run.get("codexSessionId"):
+        base.append(run["codexSessionId"])
+      else:
+        base.append("--last")
+      base.append(run["prompt"])
+      return base
+    return [
+      *base,
+      "--json",
+      "--skip-git-repo-check",
+      "-- --ask-for-approval",
+      "never",
+      "-C",
+      "/workspace",
+      "-m",
+      run["model"],
+      run["prompt"],
+    ]
+
+  def extract_codex_session_id(self, payload: dict) -> str | None:
+    keys = ["session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"]
+    stack = [payload]
+    while stack:
+      current = stack.pop()
+      if isinstance(current, dict):
+        for key in keys:
+          value = current.get(key)
+          if isinstance(value, str) and value:
+            return value
+        stack.extend(value for value in current.values() if isinstance(value, (dict, list)))
+      elif isinstance(current, list):
+        stack.extend(value for value in current if isinstance(value, (dict, list)))
+    return None
 
   def stop(self, run: dict) -> None:
     container = run.get("container")
@@ -206,7 +268,7 @@ class ChatRuntime:
         "user": user["username"],
         "status": "queued",
         "prompt": prompt,
-        "model": str(payload.get("model") or "gpt-5-codex"),
+        "model": str(payload.get("model") or "gpt-5.6-sol"),
         "reasoning": str(payload.get("reasoning") or "high"),
         "worker": "local-docker",
         "container": "",
@@ -215,6 +277,9 @@ class ChatRuntime:
         "baseSnapshotId": workspace.get("latestSnapshotId"),
         "resultSnapshotId": None,
         "tokens": 0,
+        "codexSettings": self.user_codex_settings(user),
+        "codexResume": bool(session.get("codexNativeResumable")),
+        "codexSessionId": session.get("codexSessionId"),
       }
       metadata["runs"][run["id"]] = run
       workspace["locked"] = True
@@ -361,6 +426,11 @@ class ChatRuntime:
       user = self.users.get(run["user"])
       if user:
         user["usedTokens"] = int(user.get("usedTokens") or 0) + delta
+    if event.get("codexSessionId"):
+      session = metadata["chatSessions"][run["sessionId"]]
+      session["codexSessionId"] = event["codexSessionId"]
+      session["codexNativeResumable"] = True
+      run["codexSessionId"] = event["codexSessionId"]
     self.append_event(metadata, run["sessionId"], event_type, message, run["id"], persist=False, raw=event.get("raw"))
     run["updated"] = now_string()
     metadata["chatSessions"][run["sessionId"]]["updated"] = run["updated"]
@@ -385,6 +455,8 @@ class ChatRuntime:
     session = metadata["chatSessions"][run["sessionId"]]
     session["status"] = status
     session["updated"] = run["updated"]
+    if status in {"completed", "stopped"}:
+      session["codexNativeResumable"] = True
     self.append_event(metadata, run["sessionId"], status, f"Run {status}.", run["id"], persist=False)
 
   def append_event(
@@ -425,9 +497,27 @@ class ChatRuntime:
       "updated": session["updated"],
       "tokens": session.get("tokens", "0"),
       "latestRunId": session.get("latestRunId"),
+      "codexNativeResumable": bool(session.get("codexNativeResumable")),
       "events": [[event["type"], event["message"], event["message"]] for event in events],
     }
 
   def session_title(self, prompt: str) -> str:
     compact = " ".join(prompt.split())
     return compact[:48] or "Audit task"
+
+  def user_codex_settings(self, user: dict) -> dict:
+    settings = user.get("codex") or {}
+    base_url = str(settings.get("baseUrl") or os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL") or "https://api.openai.com/v1").strip()
+    api_key = str(settings.get("apiKey") or "").strip()
+    if not api_key:
+      raise StorageError("codex_auth_required", "configure Codex API key before starting a run")
+    return {"baseUrl": base_url, "apiKey": api_key}
+
+
+def safe_segment(value: str) -> str:
+  safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
+  return safe.strip("._") or "default"
+
+
+def toml_string(value: str) -> str:
+  return value.replace("\\", "\\\\").replace('"', '\\"')

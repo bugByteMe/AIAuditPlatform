@@ -278,6 +278,26 @@ function closeWorkspaceModal() {
   document.querySelector("#workspace-modal").classList.add("hidden");
 }
 
+function closeCodexSettingsModal() {
+  document.querySelector("#codex-settings-modal").classList.add("hidden");
+}
+
+async function openCodexSettingsModal() {
+  const modal = document.querySelector("#codex-settings-modal");
+  const form = document.querySelector("#codex-settings-form");
+  const status = document.querySelector("#codex-settings-status");
+  form.reset();
+  modal.classList.remove("hidden");
+  try {
+    const result = await api("/api/codex-settings");
+    const settings = result.settings || {};
+    document.querySelector("#codex-base-url-input").value = settings.baseUrl || "https://api.openai.com/v1";
+    status.textContent = settings.apiKeyConfigured ? t("codex.configured") : t("codex.missing");
+  } catch (error) {
+    status.textContent = error.message;
+  }
+}
+
 function closePreviewModal() {
   document.querySelector("#preview-modal").classList.add("hidden");
   document.querySelector("#preview-content").innerHTML = "";
@@ -392,6 +412,16 @@ function bindGlobalClicks() {
 
     if (event.target.closest("[data-close-workspace-modal]")) {
       closeWorkspaceModal();
+      return;
+    }
+
+    if (event.target.closest("#codex-settings-button")) {
+      openCodexSettingsModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-codex-settings]")) {
+      closeCodexSettingsModal();
       return;
     }
 
@@ -817,6 +847,36 @@ function bindForms() {
     event.preventDefault();
     createWorkspaceFromModal(event.currentTarget);
   });
+
+  document.querySelector("#codex-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const apiKey = String(form.get("apiKey") || "").trim();
+    const clearCodexApiKey = form.get("clearCodexApiKey") === "on";
+    const payload = {
+      baseUrl: form.get("baseUrl"),
+      clearCodexApiKey,
+    };
+    if (apiKey || clearCodexApiKey) payload.apiKey = apiKey;
+    try {
+      const result = await api("/api/codex-settings", {
+        method: "PATCH",
+        body: JSON.stringify(payload),
+      });
+      state.user = {
+        ...state.user,
+        codex: {
+          baseUrl: result.settings.baseUrl,
+          apiKeyConfigured: result.settings.apiKeyConfigured,
+        },
+      };
+      closeCodexSettingsModal();
+      renderCurrentUser();
+      showToast(t("toast.codexSettingsSaved"));
+    } catch (error) {
+      document.querySelector("#codex-settings-status").textContent = error.message;
+    }
+  });
 }
 
 function bindInputs() {
@@ -824,6 +884,7 @@ function bindInputs() {
     if (event.key === "Escape") {
       closePreviewModal();
       closeWorkspaceModal();
+      closeCodexSettingsModal();
       closeFileContextMenu();
       return;
     }

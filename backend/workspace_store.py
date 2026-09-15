@@ -197,6 +197,7 @@ class WorkspaceStore:
             "updated": session["updated"],
             "tokens": session.get("tokens", "0"),
             "latestRunId": session.get("latestRunId"),
+            "codexNativeResumable": bool(session.get("codexNativeResumable")),
             "events": [[event["type"], event["message"], event["message"]] for event in events],
           }
         )
