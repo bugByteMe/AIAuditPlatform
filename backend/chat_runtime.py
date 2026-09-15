@@ -9,6 +9,7 @@ import time
 from pathlib import Path
 from typing import Iterable
 
+from chat_store import ChatStore
 from workspace_store import StorageError, WorkspaceStore, generated_id, now_string
 
 
@@ -65,7 +66,6 @@ class DockerCodexRunner(CodexRunner):
       "/workspace",
     ]
     command.extend([self.image, *self.codex_command_args(run)])
-    run["codexHome"] = str(codex_home)
     started = time.monotonic()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     with self.lock:
@@ -199,7 +199,7 @@ class DockerCodexRunner(CodexRunner):
       "-m",
       run["model"],
       "--sandbox",
-      "danger-full-access"
+      "danger-full-access",
       run["prompt"],
     ]
 
@@ -229,10 +229,20 @@ class DockerCodexRunner(CodexRunner):
 
 
 class ChatRuntime:
-  def __init__(self, store: WorkspaceStore, users: dict[str, dict], runner: CodexRunner | None = None, capacity: int = 1):
+  def __init__(
+    self,
+    store: WorkspaceStore,
+    users: dict[str, dict],
+    runner: CodexRunner | None = None,
+    capacity: int = 1,
+    chat_store: ChatStore | None = None,
+    save_users=None,
+  ):
     self.store = store
     self.users = users
     self.runner = runner or DockerCodexRunner()
+    self.chat_store = chat_store or ChatStore(store.root / "chat")
+    self.save_users = save_users
     self.capacity = max(1, capacity)
     self.lock = threading.RLock()
     self.condition = threading.Condition(self.lock)
@@ -240,13 +250,18 @@ class ChatRuntime:
     self.active_runs: set[str] = set()
     self.stop_requested: set[str] = set()
     self.shutdown = False
+    self.store.set_chat_session_provider(self.chat_store.public_workspace_sessions)
+    self.migrate_legacy_chat_metadata()
     self.scheduler = threading.Thread(target=self.scheduler_loop, name="ai-audit-chat-scheduler", daemon=True)
     self.scheduler.start()
 
+  def migrate_legacy_chat_metadata(self) -> None:
+    metadata = self.store.load_metadata()
+    self.ensure_chat_metadata(metadata)
+    if self.chat_store.migrate_from_metadata(metadata):
+      self.store.save_metadata(metadata)
+
   def ensure_chat_metadata(self, metadata: dict) -> None:
-    metadata.setdefault("chatSessions", {})
-    metadata.setdefault("runs", {})
-    metadata.setdefault("events", {})
     for workspace in metadata.get("workspaces", {}).values():
       workspace.setdefault("sessions", [])
 
@@ -255,7 +270,7 @@ class ChatRuntime:
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
-      return [self.public_session(metadata, session["id"]) for session in workspace.get("sessions", [])]
+      return [self.public_session(session["id"]) for session in workspace.get("sessions", []) if self.chat_store.get_session(session["id"])]
 
   def create_session(self, workspace_id: str, user: dict, title: str | None = None) -> dict:
     with self.lock:
@@ -275,12 +290,11 @@ class ChatRuntime:
         "createdBy": user["username"],
         "created": timestamp,
       }
-      metadata["chatSessions"][session["id"]] = session
-      metadata["events"][session["id"]] = []
+      self.chat_store.save_session(session)
       workspace.setdefault("sessions", []).insert(0, {"id": session["id"]})
       workspace["updated"] = timestamp
       self.store.save_metadata(metadata)
-      return self.public_session(metadata, session["id"])
+      return self.public_session(session["id"])
 
   def start_run(self, workspace_id: str, user: dict, payload: dict) -> dict:
     prompt = str(payload.get("prompt") or "").strip()
@@ -288,6 +302,7 @@ class ChatRuntime:
       raise StorageError("bad_request", "prompt is required")
     if int(user.get("usedTokens") or 0) >= int(user.get("budgetTokens") or 0):
       raise StorageError("budget_exhausted", "user token budget is exhausted")
+    self.user_codex_settings(user)
     with self.lock:
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
@@ -295,12 +310,12 @@ class ChatRuntime:
       if workspace.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
       session_id = str(payload.get("sessionId") or "")
-      if session_id and session_id not in metadata["chatSessions"]:
+      if session_id and not self.chat_store.get_session(session_id):
         session_id = ""
       if not session_id:
         session = self._create_session_in_metadata(metadata, workspace, user, self.session_title(prompt))
       else:
-        session = metadata["chatSessions"][session_id]
+        session = self.chat_store.get_session(session_id)
         if session["workspaceId"] != workspace_id:
           raise StorageError("bad_request", "chat session belongs to another workspace")
       timestamp = now_string()
@@ -320,22 +335,22 @@ class ChatRuntime:
         "baseSnapshotId": workspace.get("latestSnapshotId"),
         "resultSnapshotId": None,
         "tokens": 0,
-        "codexSettings": self.user_codex_settings(user),
         "codexResume": bool(session.get("codexNativeResumable")),
         "codexSessionId": session.get("codexSessionId"),
       }
-      metadata["runs"][run["id"]] = run
+      self.chat_store.save_run(run)
       workspace["locked"] = True
       workspace["activeRunId"] = run["id"]
       session["status"] = "queued"
       session["latestRunId"] = run["id"]
       session["updated"] = timestamp
-      self.append_event(metadata, session["id"], "user", prompt, run["id"], persist=False)
-      self.append_event(metadata, session["id"], "queued", "Run queued. Waiting for local Docker capacity.", run["id"], persist=False)
+      self.chat_store.save_session(session)
+      self.append_event(session["id"], "user", prompt, run["id"])
+      self.append_event(session["id"], "queued", "Run queued. Waiting for local Docker capacity.", run["id"])
       self.store.save_metadata(metadata)
       self.queue.put(run["id"])
       self.condition.notify_all()
-      return {"session": self.public_session(metadata, session["id"]), "run": run}
+      return {"session": self.public_session(session["id"]), "run": run}
 
   def _create_session_in_metadata(self, metadata: dict, workspace: dict, user: dict, title: str) -> dict:
     timestamp = now_string()
@@ -351,8 +366,7 @@ class ChatRuntime:
       "createdBy": user["username"],
       "created": timestamp,
     }
-    metadata["chatSessions"][session["id"]] = session
-    metadata["events"][session["id"]] = []
+    self.chat_store.save_session(session)
     workspace.setdefault("sessions", []).insert(0, {"id": session["id"]})
     return session
 
@@ -361,7 +375,7 @@ class ChatRuntime:
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       self.store.get_workspace_from_metadata(metadata, workspace_id, user)
-      run = metadata["runs"].get(run_id)
+      run = self.chat_store.get_run(run_id)
       if not run or run["workspaceId"] != workspace_id:
         raise StorageError("not_found", "run not found")
       if run["status"] in TERMINAL_STATES:
@@ -369,8 +383,8 @@ class ChatRuntime:
       run["status"] = "stopping"
       run["updated"] = now_string()
       self.stop_requested.add(run_id)
-      self.append_event(metadata, run["sessionId"], "stopping", "Stop requested. Creating a resumable checkpoint.", run_id, persist=False)
-      self.store.save_metadata(metadata)
+      self.append_event(run["sessionId"], "stopping", "Stop requested. Creating a resumable checkpoint.", run_id)
+      self.chat_store.save_run(run)
       self.condition.notify_all()
     self.runner.stop(run)
     return {"run": run}
@@ -380,10 +394,10 @@ class ChatRuntime:
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       self.store.get_workspace_from_metadata(metadata, workspace_id, user)
-      session = metadata["chatSessions"].get(session_id)
+      session = self.chat_store.get_session(session_id)
       if not session or session["workspaceId"] != workspace_id:
         raise StorageError("not_found", "chat session not found")
-      return [event for event in metadata["events"].get(session_id, []) if int(event["id"]) > after]
+      return [event for event in self.chat_store.events(session_id) if int(event["id"]) > after]
 
   def wait_events(self, workspace_id: str, session_id: str, after: int, user: dict, timeout: float = 15) -> list[dict]:
     deadline = time.monotonic() + timeout
@@ -407,50 +421,55 @@ class ChatRuntime:
       with self.lock:
         metadata = self.store.load_metadata()
         self.ensure_chat_metadata(metadata)
-        run = metadata["runs"].get(run_id)
+        run = self.chat_store.get_run(run_id)
         if not run:
           return
         run["status"] = "starting"
         run["updated"] = now_string()
-        session = metadata["chatSessions"][run["sessionId"]]
+        session = self.chat_store.get_session(run["sessionId"])
         session["status"] = "running"
         session["updated"] = run["updated"]
-        self.append_event(metadata, run["sessionId"], "starting", "Starting Codex container.", run_id, persist=False)
+        self.append_event(run["sessionId"], "starting", "Starting Codex container.", run_id)
+        self.chat_store.save_session(session)
+        self.chat_store.save_run(run)
         self.store.save_metadata(metadata)
         self.condition.notify_all()
       workspace_path = self.store.workspace_path(run["workspaceId"])
-      for event in self.runner.start(run, workspace_path):
+      run_for_worker = {**run, "codexSettings": self.user_codex_settings(self.users[run["user"]])}
+      for event in self.runner.start(run_for_worker, workspace_path):
         with self.lock:
           metadata = self.store.load_metadata()
           self.ensure_chat_metadata(metadata)
-          stored_run = metadata["runs"].get(run_id)
+          stored_run = self.chat_store.get_run(run_id)
           if not stored_run:
             return
           if run_id in self.stop_requested:
             stored_run["status"] = "stopping"
-            self.store.save_metadata(metadata)
+            self.chat_store.save_run(stored_run)
             break
           stored_run["status"] = "running"
-          stored_run["container"] = run.get("container", stored_run.get("container", ""))
+          stored_run["container"] = run_for_worker.get("container", stored_run.get("container", ""))
           self.record_runner_event(metadata, stored_run, event)
-          self.store.save_metadata(metadata)
+          self.chat_store.save_run(stored_run)
           self.condition.notify_all()
       with self.lock:
         metadata = self.store.load_metadata()
         self.ensure_chat_metadata(metadata)
-        run = metadata["runs"].get(run_id)
+        run = self.chat_store.get_run(run_id)
         if run:
           final_status = "stopped" if run_id in self.stop_requested or run["status"] == "stopping" else "completed"
           self.finalize_run(metadata, run, final_status, None)
+          self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
           self.condition.notify_all()
     except Exception as exc:
       with self.lock:
         metadata = self.store.load_metadata()
         self.ensure_chat_metadata(metadata)
-        run = metadata["runs"].get(run_id)
+        run = self.chat_store.get_run(run_id)
         if run:
           self.finalize_run(metadata, run, "failed", str(exc))
+          self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
           self.condition.notify_all()
     finally:
@@ -463,58 +482,61 @@ class ChatRuntime:
     if "tokens" in event:
       delta = max(0, int(event.get("tokens") or 0) - int(run.get("tokens") or 0))
       run["tokens"] = max(int(run.get("tokens") or 0), int(event.get("tokens") or 0))
-      session = metadata["chatSessions"][run["sessionId"]]
+      session = self.chat_store.get_session(run["sessionId"])
       session["totalTokens"] = int(session.get("totalTokens") or 0) + delta
       session["tokens"] = f"{session['totalTokens']:,}"
+      self.chat_store.save_session(session)
       user = self.users.get(run["user"])
       if user:
         user["usedTokens"] = int(user.get("usedTokens") or 0) + delta
+        if self.save_users:
+          self.save_users()
     if event.get("codexSessionId"):
-      session = metadata["chatSessions"][run["sessionId"]]
+      session = self.chat_store.get_session(run["sessionId"])
       session["codexSessionId"] = event["codexSessionId"]
       session["codexNativeResumable"] = True
       run["codexSessionId"] = event["codexSessionId"]
-    self.append_event(metadata, run["sessionId"], event_type, message, run["id"], persist=False, raw=event.get("raw"))
+      self.chat_store.save_session(session)
+    self.append_event(run["sessionId"], event_type, message, run["id"], raw=event.get("raw"))
     run["updated"] = now_string()
-    metadata["chatSessions"][run["sessionId"]]["updated"] = run["updated"]
+    session = self.chat_store.get_session(run["sessionId"])
+    session["updated"] = run["updated"]
+    self.chat_store.save_session(session)
 
   def finalize_run(self, metadata: dict, run: dict, status: str, error: str | None) -> None:
     workspace = metadata["workspaces"].get(run["workspaceId"])
     if not workspace:
       return
     if error:
-      self.append_event(metadata, run["sessionId"], "error", error, run["id"], persist=False)
+      self.append_event(run["sessionId"], "error", error, run["id"])
     try:
       snapshot = self.store.refresh_workspace_metadata(metadata, workspace, status, run["id"])
       run["resultSnapshotId"] = snapshot["id"]
     except Exception as exc:
-      self.append_event(metadata, run["sessionId"], "error", f"Checkpoint failed: {exc}", run["id"], persist=False)
+      self.append_event(run["sessionId"], "error", f"Checkpoint failed: {exc}", run["id"])
       if status == "completed":
         status = "failed"
     run["status"] = status
     run["updated"] = now_string()
     workspace["locked"] = False
     workspace["activeRunId"] = None
-    session = metadata["chatSessions"][run["sessionId"]]
+    session = self.chat_store.get_session(run["sessionId"])
     session["status"] = status
     session["updated"] = run["updated"]
     if status in {"completed", "stopped"}:
       session["codexNativeResumable"] = True
-    self.append_event(metadata, run["sessionId"], status, f"Run {status}.", run["id"], persist=False)
+    self.chat_store.save_session(session)
+    self.append_event(run["sessionId"], status, f"Run {status}.", run["id"])
 
   def append_event(
     self,
-    metadata: dict,
     session_id: str,
     event_type: str,
     message: str,
     run_id: str | None,
-    persist: bool = True,
     raw: dict | None = None,
   ) -> dict:
-    events = metadata.setdefault("events", {}).setdefault(session_id, [])
     event = {
-      "id": len(events) + 1,
       "time": now_string(),
       "type": event_type,
       "message": message,
@@ -522,27 +544,10 @@ class ChatRuntime:
     }
     if raw is not None:
       event["raw"] = raw
-    events.append(event)
-    if persist:
-      self.store.save_metadata(metadata)
-      self.condition.notify_all()
-    return event
+    return self.chat_store.append_event(session_id, event)
 
-  def public_session(self, metadata: dict, session_id: str) -> dict:
-    session = metadata["chatSessions"].get(session_id)
-    if not session:
-      return {"id": session_id, "title": "Unknown session", "status": "failed", "updated": now_string(), "tokens": "0", "events": []}
-    events = metadata.get("events", {}).get(session_id, [])
-    return {
-      "id": session["id"],
-      "title": session["title"],
-      "status": session["status"],
-      "updated": session["updated"],
-      "tokens": session.get("tokens", "0"),
-      "latestRunId": session.get("latestRunId"),
-      "codexNativeResumable": bool(session.get("codexNativeResumable")),
-      "events": [[event["type"], event["message"], event["message"]] for event in events],
-    }
+  def public_session(self, session_id: str) -> dict:
+    return self.chat_store.public_session(session_id)
 
   def session_title(self, prompt: str) -> str:
     compact = " ".join(prompt.split())

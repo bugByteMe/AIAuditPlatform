@@ -99,7 +99,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 - `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`
 - `GET /api/workspaces/{workspace_id}/chat/stream?sessionId={session_id}&after={event_id}`
 
-The first implementation uses a local scheduler with configurable capacity. It persists chat sessions, runs, and events in the existing workspace metadata store, locks the workspace before queueing a run, releases the lock on terminal states, and records a checkpoint/artifact refresh after completion, stop, or failure.
+The first implementation uses a local scheduler with configurable capacity. It persists chat sessions, runs, and events in dedicated chat storage, locks the workspace before queueing a run, releases the lock on terminal states, and records a checkpoint/artifact refresh after completion, stop, or failure. Workspace metadata keeps only workspace-level state and lightweight chat session references.
 
 Live updates use Server-Sent Events. The event-list endpoint remains available for reload and polling fallback.
 
@@ -117,11 +117,11 @@ codex exec resume --json --skip-git-repo-check -m <model> <codex_session_id> <pr
 
 If Codex does not expose a session id in JSON events, the backend falls back to `codex exec resume --last` within that chat session's isolated `CODEX_HOME`.
 
-Each user account stores its own Codex `baseUrl` and API key. Before every run, the backend generates a writable session-scoped `CODEX_HOME` under `workspace_storage/codex_homes/<username>/<chat_session_id>/` with:
+Each user account stores its own Codex `baseUrl` and API key in account storage. Before every run, the backend generates a writable session-scoped `CODEX_HOME` under `workspace_storage/codex_homes/<username>/<chat_session_id>/` with:
 
 - `config.toml`: model provider, base URL, model, reasoning effort, and trusted `/workspace`.
 - `auth.json`: API key authentication for the selected user.
 
-The API key is write-only through the backend API and is never returned in public account/session responses.
+The API key is write-only through the backend API and is never returned in public account/session responses. Run records do not persist Codex credentials or generated `CODEX_HOME` paths.
 
 Docker is not required for unit tests. Tests use a fake runner so lifecycle, lock, budget, and event behavior can be validated on machines where Docker is unavailable or broken.

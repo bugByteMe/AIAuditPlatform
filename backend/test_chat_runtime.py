@@ -77,9 +77,15 @@ class ChatRuntimeTest(unittest.TestCase):
     session = self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
     metadata = self.store.load_metadata()
     self.assertFalse(metadata["workspaces"][workspace["id"]]["locked"])
-    self.assertEqual(metadata["runs"][result["run"]["id"]]["status"], "completed")
+    self.assertNotIn("runs", metadata)
+    self.assertNotIn("chatSessions", metadata)
+    self.assertNotIn("events", metadata)
+    self.assertEqual(runtime.chat_store.get_run(result["run"]["id"])["status"], "completed")
     self.assertEqual(self.users["li.review"]["usedTokens"], 10)
     self.assertTrue(any(event[0] == "assistant" for event in session["events"]))
+    reloaded_workspace = self.store.list_workspaces(self.users["li.review"])[0]
+    reloaded_session = next(item for item in reloaded_workspace["sessions"] if item["id"] == result["session"]["id"])
+    self.assertTrue(any(event[0] == "assistant" for event in reloaded_session["events"]))
 
   def test_workspace_lock_rejects_second_active_run(self) -> None:
     workspace = self.create_workspace()
@@ -105,6 +111,8 @@ class ChatRuntimeTest(unittest.TestCase):
     with self.assertRaises(StorageError) as context:
       runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
     self.assertEqual(context.exception.code, "codex_auth_required")
+    self.assertEqual(runtime.chat_store.sessions(), {})
+    self.assertEqual(runtime.chat_store.runs(), {})
 
   def test_stop_transitions_run_to_stopped(self) -> None:
     workspace = self.create_workspace()
@@ -163,10 +171,10 @@ class ChatRuntimeTest(unittest.TestCase):
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.2))
     session = runtime.create_session(workspace["id"], self.users["li.review"], "Native")
-    metadata = self.store.load_metadata()
-    metadata["chatSessions"][session["id"]]["codexSessionId"] = "native-1"
-    metadata["chatSessions"][session["id"]]["codexNativeResumable"] = True
-    self.store.save_metadata(metadata)
+    stored_session = runtime.chat_store.get_session(session["id"])
+    stored_session["codexSessionId"] = "native-1"
+    stored_session["codexNativeResumable"] = True
+    runtime.chat_store.save_session(stored_session)
     second = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Second", "sessionId": session["id"]})
     self.assertTrue(second["run"]["codexResume"])
     self.assertEqual(second["run"]["codexSessionId"], "native-1")
@@ -178,6 +186,61 @@ class ChatRuntimeTest(unittest.TestCase):
     result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
     self.assertEqual(result["run"]["model"], "gpt-5.6-sol")
     self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+
+  def test_run_records_do_not_persist_codex_settings(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+    stored_run = runtime.chat_store.get_run(result["run"]["id"])
+    self.assertNotIn("codexSettings", stored_run)
+    self.assertNotIn("codexHome", stored_run)
+
+  def test_legacy_chat_metadata_migrates_out_of_workspace_metadata(self) -> None:
+    workspace = self.create_workspace()
+    metadata = self.store.load_metadata()
+    session_id = "chat_legacy"
+    run_id = "run_legacy"
+    metadata["workspaces"][workspace["id"]]["sessions"].insert(0, {"id": session_id})
+    metadata["chatSessions"] = {
+      session_id: {
+        "id": session_id,
+        "workspaceId": workspace["id"],
+        "title": "Legacy",
+        "status": "completed",
+        "updated": "2026-09-15 10:00:00",
+        "tokens": "1",
+        "totalTokens": 1,
+        "latestRunId": run_id,
+        "createdBy": "li.review",
+        "created": "2026-09-15 10:00:00",
+      }
+    }
+    metadata["runs"] = {
+      run_id: {
+        "id": run_id,
+        "workspaceId": workspace["id"],
+        "sessionId": session_id,
+        "user": "li.review",
+        "status": "completed",
+        "prompt": "legacy",
+        "tokens": 1,
+        "codexSettings": {"baseUrl": "https://codex.example/v1", "apiKey": "sk-secret"},
+        "codexHome": "/tmp/secret",
+      }
+    }
+    metadata["events"] = {session_id: [{"id": 1, "time": "2026-09-15 10:00:00", "type": "assistant", "message": "legacy", "runId": run_id}]}
+    self.store.save_metadata(metadata)
+
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    migrated_metadata = self.store.load_metadata()
+    self.assertNotIn("chatSessions", migrated_metadata)
+    self.assertNotIn("runs", migrated_metadata)
+    self.assertNotIn("events", migrated_metadata)
+    self.assertEqual(runtime.chat_store.get_session(session_id)["title"], "Legacy")
+    self.assertEqual(runtime.chat_store.events(session_id)[0]["message"], "legacy")
+    self.assertNotIn("codexSettings", runtime.chat_store.get_run(run_id))
+    self.assertNotIn("codexHome", runtime.chat_store.get_run(run_id))
 
 
 if __name__ == "__main__":

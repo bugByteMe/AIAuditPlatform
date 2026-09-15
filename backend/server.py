@@ -15,6 +15,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
+from account_store import AccountStore
 from chat_runtime import ChatRuntime
 from workspace_store import StorageError, WorkspaceStore, parse_multipart, parse_query, parse_urlencoded_paths
 
@@ -45,7 +46,7 @@ def verify_password(password: str, encoded: str) -> bool:
     return False
 
 
-USERS = {
+SEED_USERS = {
   "chen.audit": {
     "username": "chen.audit",
     "displayName": "陈审计",
@@ -78,7 +79,9 @@ USERS = {
   },
 }
 
-CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=int(os.environ.get("AI_AUDIT_LOCAL_RUN_CAPACITY", "1")))
+ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS)
+USERS = ACCOUNT_STORE.users
+CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=int(os.environ.get("AI_AUDIT_LOCAL_RUN_CAPACITY", "1")), save_users=ACCOUNT_STORE.save)
 
 SESSIONS: dict[str, dict] = {}
 AUDIT_LOGS = [
@@ -267,6 +270,7 @@ class Handler(BaseHTTPRequestHandler):
       "codex": self.codex_payload_from_request(payload, {}),
       "passwordHash": hash_password(password),
     }
+    ACCOUNT_STORE.save()
     add_audit(actor["username"], "account created", username)
     self.write_json({"account": public_user(USERS[username])}, HTTPStatus.CREATED)
 
@@ -285,6 +289,7 @@ class Handler(BaseHTTPRequestHandler):
       user["codex"] = self.codex_payload_from_request(payload, user.get("codex") or {})
     if "password" in payload and payload["password"]:
       user["passwordHash"] = hash_password(str(payload["password"]))
+    ACCOUNT_STORE.save()
     add_audit(actor["username"], "account updated", username)
     self.write_json({"account": public_user(user)})
 
@@ -301,6 +306,7 @@ class Handler(BaseHTTPRequestHandler):
     user = self.require_user()
     payload = self.read_json()
     user["codex"] = self.codex_payload_from_request(payload, user.get("codex") or {})
+    ACCOUNT_STORE.save()
     add_audit(user["username"], "codex settings updated", "api key configured" if user["codex"].get("apiKey") else "api key cleared")
     self.write_json({"settings": {"baseUrl": user["codex"].get("baseUrl", ""), "apiKeyConfigured": bool(user["codex"].get("apiKey"))}})
 

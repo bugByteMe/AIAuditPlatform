@@ -14,6 +14,7 @@ import zipfile
 from dataclasses import dataclass
 from hashlib import sha256
 from pathlib import Path
+from typing import Callable
 from urllib.parse import parse_qs
 
 
@@ -105,7 +106,11 @@ class WorkspaceStore:
     self.bundle_dir = root / "bundles"
     self.preview_dir = root / "previews"
     self.metadata_path = root / "metadata.json"
+    self.chat_session_provider: Callable[[dict], list[dict]] | None = None
     self.ensure_layout()
+
+  def set_chat_session_provider(self, provider: Callable[[dict], list[dict]]) -> None:
+    self.chat_session_provider = provider
 
   def ensure_layout(self) -> None:
     for path in [self.active_dir, self.blob_dir, self.manifest_dir, self.bundle_dir, self.preview_dir]:
@@ -181,6 +186,8 @@ class WorkspaceStore:
     }
 
   def public_workspace_sessions(self, workspace: dict, metadata: dict) -> list[dict]:
+    if self.chat_session_provider:
+      return self.chat_session_provider(workspace)
     chat_sessions = metadata.get("chatSessions", {})
     events_by_session = metadata.get("events", {})
     sessions = []
