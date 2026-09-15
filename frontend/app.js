@@ -63,7 +63,14 @@ function mergeSessionEvents(session, events) {
   events
     .filter((event) => Number(event.id) > existingCount)
     .forEach((event) => {
-      session.events.push([event.type, event.message, event.message, event.runId || ""]);
+      const toolCallId = event.toolCallId || "";
+      const existingToolIndex =
+        toolCallId && ["command", "tool"].includes(event.type)
+          ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
+          : -1;
+      const tuple = [event.type, event.message, event.message, event.runId || "", Number(event.id) || 0, event.status || "", toolCallId];
+      if (existingToolIndex >= 0) session.events[existingToolIndex] = tuple;
+      else session.events.push(tuple);
       state.chatLastEventIds[session.id] = Number(event.id);
       if (["queued", "starting", "running", "stopping", "stopped", "completed", "failed"].includes(event.type)) {
         session.status = event.type === "running" ? "running" : event.type;

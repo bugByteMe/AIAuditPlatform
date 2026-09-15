@@ -16,6 +16,56 @@ function eventTypeLabel(type) {
   return type;
 }
 
+function safeClass(value) {
+  return String(value).replace(/[^a-z0-9_-]/gi, "-");
+}
+
+function inlineMarkdown(value) {
+  return escapeHtml(value)
+    .replace(/`([^`]+)`/g, "<code>$1</code>")
+    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
+    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
+    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
+}
+
+function markdownToHtml(value) {
+  const blocks = String(value).split(/```/);
+  return blocks
+    .map((block, index) => {
+      if (index % 2 === 1) {
+        const lines = block.replace(/^\w+\n/, "").replace(/\n$/, "");
+        return `<pre><code>${escapeHtml(lines)}</code></pre>`;
+      }
+      const lines = block.split(/\n/);
+      const html = [];
+      let list = [];
+      const flushList = () => {
+        if (!list.length) return;
+        html.push(`<ul>${list.map((item) => `<li>${inlineMarkdown(item)}</li>`).join("")}</ul>`);
+        list = [];
+      };
+      lines.forEach((line) => {
+        const listMatch = line.match(/^\s*[-*]\s+(.+)$/);
+        if (listMatch) {
+          list.push(listMatch[1]);
+          return;
+        }
+        flushList();
+        if (!line.trim()) return;
+        const heading = line.match(/^(#{1,3})\s+(.+)$/);
+        if (heading) {
+          const level = heading[1].length + 2;
+          html.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
+          return;
+        }
+        html.push(`<p>${inlineMarkdown(line)}</p>`);
+      });
+      flushList();
+      return html.join("");
+    })
+    .join("");
+}
+
 function descendantFilePaths(items, folderPath) {
   return items
     .filter((item) => item.type === "file" && item.path.startsWith(`${folderPath}/`))
@@ -195,11 +245,13 @@ export function renderEvents() {
   }
   let previousRunId = "";
   stream.innerHTML = session.events
-    .map(([type, zh, en, runId]) => {
+    .map(([type, zh, en, runId, eventId, status]) => {
       const message = state.lang === "zh" ? zh : en;
       const divider = runId && previousRunId && runId !== previousRunId ? `<div class="run-divider" aria-hidden="true"></div>` : "";
       previousRunId = runId || previousRunId;
-      return `${divider}<article class="event event-${escapeHtml(type)}"><span class="event-type">${escapeHtml(eventTypeLabel(type))}</span><p>${escapeHtml(message)}</p></article>`;
+      const body = type === "assistant" ? `<div class="event-markdown">${markdownToHtml(message)}</div>` : `<p>${escapeHtml(message)}</p>`;
+      const statusBadge = status ? `<span class="event-status event-status-${safeClass(status)}">${escapeHtml(t(`chat.${status}`) || status)}</span>` : "";
+      return `${divider}<article class="event event-${safeClass(type)}" data-event-id="${Number(eventId) || 0}"><span class="event-type">${escapeHtml(eventTypeLabel(type))}${statusBadge}</span>${body}</article>`;
     })
     .join("");
   stream.scrollTop = stream.scrollHeight;

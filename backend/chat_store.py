@@ -88,7 +88,7 @@ class ChatStore:
     session = self.get_session(session_id)
     if not session:
       return {"id": session_id, "title": "Unknown session", "status": "failed", "updated": now_string(), "tokens": "0", "events": []}
-    events = self.events(session_id)
+    events = self.public_events(session_id)
     return {
       "id": session["id"],
       "title": session["title"],
@@ -97,8 +97,37 @@ class ChatStore:
       "tokens": session.get("tokens", "0"),
       "latestRunId": session.get("latestRunId"),
       "codexNativeResumable": bool(session.get("codexNativeResumable")),
-      "events": [[event["type"], event["message"], event["message"], event.get("runId") or ""] for event in events],
+      "events": [self.public_event_tuple(event) for event in events],
     }
+
+  def public_events(self, session_id: str) -> list[dict]:
+    visible = []
+    tool_indexes = {}
+    for event in self.events(session_id):
+      key = self.tool_event_key(event)
+      if key and key in tool_indexes:
+        visible[tool_indexes[key]] = {**visible[tool_indexes[key]], **event}
+        continue
+      if key:
+        tool_indexes[key] = len(visible)
+      visible.append(event)
+    return visible
+
+  def public_event_tuple(self, event: dict) -> list:
+    return [
+      event["type"],
+      event["message"],
+      event["message"],
+      event.get("runId") or "",
+      event.get("id") or 0,
+      event.get("status") or "",
+      event.get("toolCallId") or "",
+    ]
+
+  def tool_event_key(self, event: dict) -> tuple | None:
+    if event.get("type") not in {"command", "tool"} or not event.get("toolCallId"):
+      return None
+    return (event.get("runId") or "", event["type"], event["toolCallId"])
 
   def public_workspace_sessions(self, workspace: dict) -> list[dict]:
     sessions = self.sessions()

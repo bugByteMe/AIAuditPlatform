@@ -140,6 +140,23 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertIn('base_url = "https://codex.example/v1"', (codex_home / "config.toml").read_text(encoding="utf-8"))
     self.assertIn('"OPENAI_API_KEY": "sk-test"', (codex_home / "auth.json").read_text(encoding="utf-8"))
 
+  def test_docker_runner_removes_stale_codex_tmp_before_run(self) -> None:
+    runner = DockerCodexRunner()
+    runner.codex_home_root = Path(self.tempdir.name) / "codex_homes"
+    run = {
+      "id": "run_1",
+      "user": "li.review",
+      "sessionId": "chat_1",
+      "model": "gpt-5-codex",
+      "reasoning": "high",
+      "codexSettings": {"baseUrl": "https://codex.example/v1", "apiKey": "sk-test"},
+    }
+    tmp_file = runner.codex_home_root / "li.review" / "chat_1" / "tmp" / "arg0" / "codex-arg00lqWw7" / "apply_patch"
+    tmp_file.parent.mkdir(parents=True)
+    tmp_file.write_text("stale", encoding="utf-8")
+    codex_home = runner.prepare_codex_home(run)
+    self.assertFalse((codex_home / "tmp").exists())
+
   def test_docker_runner_uses_native_resume_for_followup_runs(self) -> None:
     runner = DockerCodexRunner()
     first = {"model": "gpt-5.6-sol", "prompt": "first", "codexResume": False}
@@ -177,12 +194,34 @@ class ChatRuntimeTest(unittest.TestCase):
 
   def test_docker_runner_parses_command_execution_events(self) -> None:
     runner = DockerCodexRunner()
-    item_event = runner.parse_json_event(json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": "python3 -m unittest"}}))
+    item_event = runner.parse_json_event(json.dumps({"type": "item.started", "item": {"id": "call_1", "type": "command_execution", "command": "python3 -m unittest"}}))
     top_level_event = runner.parse_json_event(json.dumps({"type": "exec_command", "command": ["ls", "-la"]}))
     self.assertEqual(item_event["type"], "command")
     self.assertEqual(item_event["message"], "python3 -m unittest")
+    self.assertEqual(item_event["status"], "executing")
+    self.assertEqual(item_event["toolCallId"], "call_1")
     self.assertEqual(top_level_event["type"], "command")
     self.assertEqual(top_level_event["message"], "ls -la")
+
+  def test_public_session_coalesces_tool_start_and_result(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(
+      self.store,
+      self.users,
+      FakeRunner(
+        [
+          {"type": "command", "message": "python3 -m unittest", "status": "executing", "toolCallId": "call_1"},
+          {"type": "command", "message": "OK", "status": "completed", "toolCallId": "call_1"},
+        ]
+      ),
+    )
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Run tests"})
+    session = self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+    command_events = [event for event in session["events"] if event[0] == "command"]
+    self.assertEqual(len(command_events), 1)
+    self.assertEqual(command_events[0][1], "OK")
+    self.assertEqual(command_events[0][5], "completed")
+    self.assertEqual(command_events[0][6], "call_1")
 
   def test_followup_run_marks_native_resume(self) -> None:
     workspace = self.create_workspace()

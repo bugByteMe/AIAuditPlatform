@@ -280,6 +280,50 @@
   white-space: pre-wrap;
 }
 
+.event-markdown {
+  min-width: 0;
+  color: var(--text);
+}
+
+.event-markdown p,
+.event-markdown ul,
+.event-markdown pre,
+.event-markdown h3,
+.event-markdown h4,
+.event-markdown h5 {
+  margin: 0 0 8px;
+}
+
+.event-markdown > :last-child {
+  margin-bottom: 0;
+}
+
+.event-markdown ul {
+  padding-left: 20px;
+}
+
+.event-markdown code {
+  padding: 1px 4px;
+  border-radius: 4px;
+  background: #eef1f4;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 0.95em;
+}
+
+.event-markdown pre {
+  overflow: auto;
+  padding: 10px;
+  border-radius: 8px;
+  background: #17232d;
+  color: #ffffff;
+}
+
+.event-markdown pre code {
+  padding: 0;
+  background: transparent;
+  color: inherit;
+}
+
 .event-user {
   grid-template-columns: minmax(0, 1fr);
   justify-items: end;
@@ -305,6 +349,22 @@
 
 .event-command p {
   color: #26323f;
+}
+
+.event-status {
+  display: block;
+  width: fit-content;
+  margin-top: 4px;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: #e7ecf0;
+  color: #566371;
+  font-size: 11px;
+}
+
+.event-status-completed {
+  background: #e8f6ef;
+  color: #1f7a4d;
 }
 
 .run-divider {

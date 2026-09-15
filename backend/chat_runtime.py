@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import os
 import queue
+import shutil
 import subprocess
 import threading
 import time
@@ -121,11 +122,14 @@ class DockerCodexRunner(CodexRunner):
     if not isinstance(item, dict):
       return None
     text = self.event_text(item)
-    if not isinstance(text, str) or not text:
-      return None
     item_type = str(item.get("type") or payload.get("type") or "progress")
     event_type = self.normalize_event_type(item_type)
+    if not text and event_type not in {"command", "tool"}:
+      return None
+    if not text:
+      text = "Command executing." if event_type == "command" else "Tool executing."
     result = {"type": event_type, "message": text, "raw": payload}
+    self.add_tool_status(result, payload)
     native_id = self.extract_codex_session_id(payload)
     if native_id:
       result["codexSessionId"] = native_id
@@ -137,6 +141,7 @@ class DockerCodexRunner(CodexRunner):
       return None
     text = self.event_text(payload) or "Command execution"
     result = {"type": "command", "message": text, "raw": payload}
+    self.add_tool_status(result, payload)
     native_id = self.extract_codex_session_id(payload)
     if native_id:
       result["codexSessionId"] = native_id
@@ -151,20 +156,51 @@ class DockerCodexRunner(CodexRunner):
       "exec_command": "command",
       "exec_command_begin": "command",
       "exec_command_output": "command",
+      "exec_command_end": "command",
       "tool_call": "tool",
       "tool_output": "tool",
+      "tool_result": "tool",
       "reasoning": "progress",
       "agent_reasoning": "progress",
     }.get(event_type, event_type)
 
   def event_text(self, payload: dict) -> str:
-    for key in ["text", "message", "summary", "command", "cmd"]:
+    for key in ["text", "message", "summary", "command", "cmd", "output", "result", "content"]:
       value = payload.get(key)
       if isinstance(value, str) and value:
         return value
       if isinstance(value, list) and value:
-        return " ".join(str(item) for item in value)
+        if all(isinstance(item, str) for item in value):
+          return " ".join(value)
+        return json.dumps(value, ensure_ascii=False)
     return ""
+
+  def add_tool_status(self, result: dict, payload: dict) -> None:
+    call_id = self.extract_tool_call_id(payload)
+    if call_id:
+      result["toolCallId"] = call_id
+    event_type = str(payload.get("type") or payload.get("event") or "")
+    item = payload.get("item") if isinstance(payload.get("item"), dict) else {}
+    item_type = str(item.get("type") or "")
+    combined = f"{event_type} {item_type}".lower()
+    if any(marker in combined for marker in ["completed", "complete", "output", "result", "end"]):
+      result["status"] = "completed"
+    elif any(marker in combined for marker in ["started", "start", "begin", "call", "command"]):
+      result["status"] = "executing"
+
+  def extract_tool_call_id(self, payload: dict) -> str | None:
+    keys = ["tool_call_id", "toolCallId", "call_id", "callId", "id"]
+    item = payload.get("item")
+    if isinstance(item, dict):
+      for key in keys:
+        value = item.get(key)
+        if isinstance(value, str) and value:
+          return value
+    for key in keys:
+      value = payload.get(key)
+      if isinstance(value, str) and value:
+        return value
+    return None
 
   def prepare_codex_home(self, run: dict) -> Path:
     settings = run.get("codexSettings") or {}
@@ -174,6 +210,7 @@ class DockerCodexRunner(CodexRunner):
       raise RunnerError("Codex API key is not configured for this user.")
     codex_home = self.codex_home_root / safe_segment(run["user"]) / safe_segment(run["sessionId"])
     codex_home.mkdir(parents=True, exist_ok=True)
+    shutil.rmtree(codex_home / "tmp", ignore_errors=True)
     os.chmod(codex_home, 0o700)
     auth = {"auth_mode": "apikey", "OPENAI_API_KEY": api_key}
     (codex_home / "auth.json").write_text(json.dumps(auth, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -478,7 +515,7 @@ class ChatRuntime:
             break
           stored_run["status"] = "running"
           stored_run["container"] = run_for_worker.get("container", stored_run.get("container", ""))
-          self.record_runner_event(metadata, stored_run, event)
+          self.record_runner_event(stored_run, event)
           self.chat_store.save_run(stored_run)
           self.condition.notify_all()
       with self.lock:
@@ -505,7 +542,7 @@ class ChatRuntime:
       self.active_runs.discard(run_id)
       self.stop_requested.discard(run_id)
 
-  def record_runner_event(self, metadata: dict, run: dict, event: dict) -> None:
+  def record_runner_event(self, run: dict, event: dict) -> None:
     event_type = str(event.get("type") or "progress")
     message = str(event.get("message") or event_type)
     if "tokens" in event:
@@ -526,7 +563,15 @@ class ChatRuntime:
       session["codexNativeResumable"] = True
       run["codexSessionId"] = event["codexSessionId"]
       self.chat_store.save_session(session)
-    self.append_event(run["sessionId"], event_type, message, run["id"], raw=event.get("raw"))
+    self.append_event(
+      run["sessionId"],
+      event_type,
+      message,
+      run["id"],
+      raw=event.get("raw"),
+      status=event.get("status"),
+      tool_call_id=event.get("toolCallId"),
+    )
     run["updated"] = now_string()
     session = self.chat_store.get_session(run["sessionId"])
     session["updated"] = run["updated"]
@@ -564,6 +609,8 @@ class ChatRuntime:
     message: str,
     run_id: str | None,
     raw: dict | None = None,
+    status: str | None = None,
+    tool_call_id: str | None = None,
   ) -> dict:
     event = {
       "time": now_string(),
@@ -573,6 +620,10 @@ class ChatRuntime:
     }
     if raw is not None:
       event["raw"] = raw
+    if status:
+      event["status"] = status
+    if tool_call_id:
+      event["toolCallId"] = tool_call_id
     return self.chat_store.append_event(session_id, event)
 
   def public_session(self, session_id: str) -> dict:
