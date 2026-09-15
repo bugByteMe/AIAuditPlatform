@@ -32,6 +32,8 @@ class DockerCodexRunner(CodexRunner):
   def __init__(self) -> None:
     self.image = os.environ.get("AI_AUDIT_CODEX_IMAGE", "ai-audit-codex-runner:0.153.4")
     self.codex_home_root = Path(os.environ.get("AI_AUDIT_CODEX_HOME_ROOT", "") or "workspace_storage/codex_homes")
+    self.container_uid = int(os.environ.get("AI_AUDIT_CODEX_UID", "1001"))
+    self.container_gid = int(os.environ.get("AI_AUDIT_CODEX_GID", "1001"))
     self.timeout_seconds = int(os.environ.get("AI_AUDIT_RUN_TIMEOUT_SECONDS", "3600"))
     self.processes: dict[str, subprocess.Popen] = {}
     self.lock = threading.Lock()
@@ -40,6 +42,7 @@ class DockerCodexRunner(CodexRunner):
     container_name = f"ai-audit-{run['id']}"
     run["container"] = container_name
     codex_home = self.prepare_codex_home(run)
+    self.make_tree_writable_for_container(workspace_path)
     command = [
       "docker",
       "run",
@@ -52,6 +55,8 @@ class DockerCodexRunner(CodexRunner):
       os.environ.get("AI_AUDIT_RUN_CPUS", "2"),
       "--memory",
       os.environ.get("AI_AUDIT_RUN_MEMORY", "4g"),
+      "--user",
+      f"{self.container_uid}:{self.container_gid}",
       "-v",
       f"{workspace_path.resolve()}:/workspace",
       "-v",
@@ -135,10 +140,23 @@ class DockerCodexRunner(CodexRunner):
     ]
     (codex_home / "config.toml").write_text("\n".join(config), encoding="utf-8")
     os.chmod(codex_home / "config.toml", 0o600)
+    self.make_tree_writable_for_container(codex_home)
     return codex_home
 
+  def make_tree_writable_for_container(self, root: Path) -> None:
+    for path in [root, *root.rglob("*")]:
+      try:
+        os.chown(path, self.container_uid, self.container_gid)
+      except OSError as exc:
+        if os.geteuid() == 0:
+          raise RunnerError(f"Failed to set container ownership for {path}") from exc
+      if path.is_dir():
+        path.chmod(0o700)
+      elif path.is_file():
+        path.chmod(0o600)
+
   def codex_command_args(self, run: dict) -> list[str]:
-    base = ["codex", "exec"]
+    base = ["codex", "--ask-for-approval", "never", "exec"]
     if run.get("codexResume"):
       base.extend(["resume", "--json", "--skip-git-repo-check", "-m", run["model"]])
       if run.get("codexSessionId"):
@@ -151,8 +169,6 @@ class DockerCodexRunner(CodexRunner):
       *base,
       "--json",
       "--skip-git-repo-check",
-      "--ask-for-approval",
-      "never",
       "-C",
       "/workspace",
       "-m",
