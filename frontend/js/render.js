@@ -11,6 +11,11 @@ function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
 
+function eventTypeLabel(type) {
+  if (type === "command") return t("chat.command");
+  return type;
+}
+
 function descendantFilePaths(items, folderPath) {
   return items
     .filter((item) => item.type === "file" && item.path.startsWith(`${folderPath}/`))
@@ -188,13 +193,29 @@ export function renderEvents() {
     stream.innerHTML = "";
     return;
   }
-  stream.innerHTML = session
-    .events.map(([type, zh, en]) => {
+  let previousRunId = "";
+  stream.innerHTML = session.events
+    .map(([type, zh, en, runId]) => {
       const message = state.lang === "zh" ? zh : en;
-      return `<article class="event"><span class="event-type">${type}</span><p>${message}</p></article>`;
+      const divider = runId && previousRunId && runId !== previousRunId ? `<div class="run-divider" aria-hidden="true"></div>` : "";
+      previousRunId = runId || previousRunId;
+      return `${divider}<article class="event event-${escapeHtml(type)}"><span class="event-type">${escapeHtml(eventTypeLabel(type))}</span><p>${escapeHtml(message)}</p></article>`;
     })
     .join("");
   stream.scrollTop = stream.scrollHeight;
+}
+
+export function renderOperationProgress() {
+  const progress = state.operationProgress;
+  const container = document.querySelector("#operation-progress");
+  if (!container) return;
+  container.classList.toggle("hidden", !progress);
+  if (!progress) return;
+  const value = Math.max(0, Math.min(Number(progress.value || 0), 100));
+  document.querySelector("#operation-progress-label").textContent = progress.label;
+  document.querySelector("#operation-progress-value").textContent = progress.indeterminate ? "" : `${value}%`;
+  document.querySelector("#operation-progress-fill").style.width = progress.indeterminate ? "42%" : `${value}%`;
+  container.classList.toggle("indeterminate", Boolean(progress.indeterminate));
 }
 
 export function renderArtifacts() {

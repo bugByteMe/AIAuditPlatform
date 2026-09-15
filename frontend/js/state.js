@@ -16,4 +16,5 @@ export const state = {
   filePanelWidth: 300,
   isSessionPanelCollapsed: false,
   isFileExplorerCollapsed: true,
+  operationProgress: null,
 };

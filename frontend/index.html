@@ -154,7 +154,12 @@
                   <h2 data-i18n="chat.sessions">会话列表</h2>
                   <p id="chat-workspace-name">2026-Q3-收入测试</p>
                 </div>
-                <button class="rail-toggle" data-toggle-panel="sessions" data-i18n-title="chat.collapseSessions" title="收起会话列表">‹</button>
+                <div class="toolbar-actions">
+                  <button type="button" class="btn icon-btn primary" id="new-chat-button" data-i18n-title="chat.new" title="新建会话">
+                    <span aria-hidden="true">+</span>
+                  </button>
+                  <button class="rail-toggle" data-toggle-panel="sessions" data-i18n-title="chat.collapseSessions" title="收起会话列表">‹</button>
+                </div>
               </div>
               <div class="session-list" id="chat-session-list"></div>
             </aside>
@@ -277,6 +282,15 @@
           </div>
         </section>
       </main>
+    </div>
+    <div class="operation-progress hidden" id="operation-progress" role="status" aria-live="polite">
+      <div class="operation-progress-head">
+        <span id="operation-progress-label">Working</span>
+        <span id="operation-progress-value">0%</span>
+      </div>
+      <div class="operation-progress-track">
+        <div class="operation-progress-fill" id="operation-progress-fill"></div>
+      </div>
     </div>
     <div class="modal-backdrop hidden" id="workspace-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-modal-title">
       <form class="modal-panel" id="workspace-create-form">

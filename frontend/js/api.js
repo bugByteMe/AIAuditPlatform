@@ -97,3 +97,55 @@ export async function api(path, options = {}) {
   }
   throw lastError || new Error("request_failed");
 }
+
+function xhrJson(path, formData, base, onProgress) {
+  return new Promise((resolve, reject) => {
+    const xhr = new XMLHttpRequest();
+    xhr.open("POST", buildUrl(path, base), true);
+    xhr.withCredentials = true;
+    const token = window.localStorage.getItem(SESSION_TOKEN_KEY);
+    if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
+    xhr.upload.onprogress = (event) => {
+      if (event.lengthComputable && onProgress) onProgress(Math.round((event.loaded / event.total) * 100));
+    };
+    xhr.onerror = () => {
+      const error = new Error("request_failed");
+      error.retryable = true;
+      reject(error);
+    };
+    xhr.onload = () => {
+      const contentType = xhr.getResponseHeader("Content-Type") || "";
+      if (!contentType.includes("application/json")) {
+        const error = new Error("api_not_json");
+        error.retryable = true;
+        error.status = xhr.status;
+        reject(error);
+        return;
+      }
+      const payload = JSON.parse(xhr.responseText || "{}");
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const error = new Error(payload.message || payload.error || "request_failed");
+        error.status = xhr.status;
+        reject(error);
+        return;
+      }
+      resolve(payload);
+    };
+    xhr.send(formData);
+  });
+}
+
+export async function uploadApi(path, formData, onProgress) {
+  let lastError = null;
+  for (const base of backendCandidates()) {
+    try {
+      const payload = await xhrJson(path, formData, base, onProgress);
+      rememberApiBase(base);
+      return payload;
+    } catch (error) {
+      lastError = error;
+      if (!error.retryable) break;
+    }
+  }
+  throw lastError || new Error("request_failed");
+}

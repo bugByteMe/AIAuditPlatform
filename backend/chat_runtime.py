@@ -94,6 +94,9 @@ class DockerCodexRunner(CodexRunner):
     item_event = self.parse_item_event(payload)
     if item_event:
       return item_event
+    command_event = self.parse_command_event(payload)
+    if command_event:
+      return command_event
     if "message" in payload and isinstance(payload["message"], str):
       return {"type": "assistant", "message": payload["message"]}
     if "text" in payload and isinstance(payload["text"], str):
@@ -117,23 +120,51 @@ class DockerCodexRunner(CodexRunner):
     item = payload.get("item")
     if not isinstance(item, dict):
       return None
-    text = item.get("text")
+    text = self.event_text(item)
     if not isinstance(text, str) or not text:
       return None
     item_type = str(item.get("type") or payload.get("type") or "progress")
-    event_type = {
-      "agent_message": "assistant",
-      "assistant_message": "assistant",
-      "tool_call": "tool",
-      "tool_output": "tool",
-      "reasoning": "progress",
-      "agent_reasoning": "progress",
-    }.get(item_type, item_type)
+    event_type = self.normalize_event_type(item_type)
     result = {"type": event_type, "message": text, "raw": payload}
     native_id = self.extract_codex_session_id(payload)
     if native_id:
       result["codexSessionId"] = native_id
     return result
+
+  def parse_command_event(self, payload: dict) -> dict | None:
+    event_type = self.normalize_event_type(str(payload.get("type") or payload.get("event") or ""))
+    if event_type != "command":
+      return None
+    text = self.event_text(payload) or "Command execution"
+    result = {"type": "command", "message": text, "raw": payload}
+    native_id = self.extract_codex_session_id(payload)
+    if native_id:
+      result["codexSessionId"] = native_id
+    return result
+
+  def normalize_event_type(self, event_type: str) -> str:
+    return {
+      "agent_message": "assistant",
+      "assistant_message": "assistant",
+      "command_execution": "command",
+      "command_output": "command",
+      "exec_command": "command",
+      "exec_command_begin": "command",
+      "exec_command_output": "command",
+      "tool_call": "tool",
+      "tool_output": "tool",
+      "reasoning": "progress",
+      "agent_reasoning": "progress",
+    }.get(event_type, event_type)
+
+  def event_text(self, payload: dict) -> str:
+    for key in ["text", "message", "summary", "command", "cmd"]:
+      value = payload.get(key)
+      if isinstance(value, str) and value:
+        return value
+      if isinstance(value, list) and value:
+        return " ".join(str(item) for item in value)
+    return ""
 
   def prepare_codex_home(self, run: dict) -> Path:
     settings = run.get("codexSettings") or {}

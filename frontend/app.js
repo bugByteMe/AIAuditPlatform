@@ -1,4 +1,4 @@
-import { api, apiUrl, authenticatedApiUrl } from "./js/api.js";
+import { api, apiUrl, authenticatedApiUrl, uploadApi } from "./js/api.js";
 import { applyLocale, t } from "./js/i18n.js";
 import { state } from "./js/state.js";
 import {
@@ -8,6 +8,7 @@ import {
   renderCurrentUser,
   renderEvents,
   renderFileExplorer,
+  renderOperationProgress,
   renderPanelState,
   renderWorkspaceManagement,
   renderWorkspaces,
@@ -27,6 +28,7 @@ export function renderDynamic() {
   renderEvents();
   renderArtifacts();
   renderFileExplorer();
+  renderOperationProgress();
   renderPanelState();
   renderAdmin();
 }
@@ -61,7 +63,7 @@ function mergeSessionEvents(session, events) {
   events
     .filter((event) => Number(event.id) > existingCount)
     .forEach((event) => {
-      session.events.push([event.type, event.message, event.message]);
+      session.events.push([event.type, event.message, event.message, event.runId || ""]);
       state.chatLastEventIds[session.id] = Number(event.id);
       if (["queued", "starting", "running", "stopping", "stopped", "completed", "failed"].includes(event.type)) {
         session.status = event.type === "running" ? "running" : event.type;
@@ -74,6 +76,16 @@ function mergeSessionEvents(session, events) {
 function replaceWorkspace(updatedWorkspace) {
   const index = workspaceIndexById(updatedWorkspace.id);
   if (index >= 0) state.workspaces[index] = updatedWorkspace;
+}
+
+function setOperationProgress(label, value = 0, indeterminate = false) {
+  state.operationProgress = { label, value, indeterminate };
+  renderOperationProgress();
+}
+
+function clearOperationProgress() {
+  state.operationProgress = null;
+  renderOperationProgress();
 }
 
 async function refreshCurrentWorkspace() {
@@ -127,7 +139,7 @@ function startChatStreamForSession(workspaceId, sessionId) {
     }
   };
   activeChatStream.onmessage = handleEvent;
-  ["user", "queued", "starting", "running", "stopping", "assistant", "tool", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
+  ["user", "queued", "starting", "running", "stopping", "assistant", "command", "tool", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
     activeChatStream.addEventListener(type, handleEvent);
   });
   activeChatStream.onerror = () => {
@@ -383,6 +395,28 @@ function deleteSession(index) {
   showToast(t("toast.deleteSession"));
 }
 
+async function createNewChatSession() {
+  const workspace = safeCurrentWorkspace();
+  if (!workspace) return;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions`, {
+      method: "POST",
+      body: JSON.stringify({ title: t("chat.newTitle") }),
+    });
+    const workspaceIndex = workspaceIndexById(workspace.id);
+    if (workspaceIndex >= 0) {
+      const sessions = [result.session, ...(workspace.sessions || [])];
+      state.workspaces[workspaceIndex] = { ...workspace, sessions };
+      state.selectedSession = 0;
+    }
+    routeToView("chat");
+    renderDynamic();
+    document.querySelector("#composer textarea")?.focus();
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function bindGlobalClicks() {
   document.addEventListener("click", (event) => {
     const nav = event.target.closest(".nav-item");
@@ -417,6 +451,11 @@ function bindGlobalClicks() {
 
     if (event.target.closest("#codex-settings-button")) {
       openCodexSettingsModal();
+      return;
+    }
+
+    if (event.target.closest("#new-chat-button")) {
+      createNewChatSession();
       return;
     }
 
@@ -539,6 +578,7 @@ function openWorkspace(index = state.selectedWorkspace) {
 async function forkWorkspace(index = state.selectedWorkspace) {
   const workspace = workspaceAt(index);
   if (!workspace) return;
+  setOperationProgress(t("progress.fork"), 100, true);
   try {
     const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/fork`, {
       method: "POST",
@@ -550,6 +590,8 @@ async function forkWorkspace(index = state.selectedWorkspace) {
     showToast(t("toast.fork"));
   } catch (error) {
     showToast(error.message);
+  } finally {
+    clearOperationProgress();
   }
 }
 
@@ -567,8 +609,9 @@ async function createWorkspaceFromModal(form) {
     upload.append("paths", item.path);
     upload.append("files", item.file, item.path);
   });
+  setOperationProgress(t("progress.uploadWorkspace"), 0);
   try {
-    const result = await api("/api/workspaces", { method: "POST", body: upload });
+    const result = await uploadApi("/api/workspaces", upload, (percent) => setOperationProgress(t("progress.uploadWorkspace"), percent));
     closeWorkspaceModal();
     await loadWorkspaces();
     const index = state.workspaces.findIndex((item) => item.id === result.workspace.id);
@@ -576,6 +619,8 @@ async function createWorkspaceFromModal(form) {
     showToast(state.lang === "zh" ? "工作区已创建。" : "Workspace created.");
   } catch (error) {
     showToast(error.message);
+  } finally {
+    clearOperationProgress();
   }
 }
 
@@ -693,11 +738,13 @@ async function uploadFilesToCurrentWorkspace(files) {
     upload.append("paths", path);
     upload.append("files", file, path);
   });
+  setOperationProgress(t("progress.uploadFiles"), 0);
   try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/files`, {
-      method: "POST",
-      body: upload,
-    });
+    const result = await uploadApi(
+      `/api/workspaces/${encodeURIComponent(workspace.id)}/files`,
+      upload,
+      (percent) => setOperationProgress(t("progress.uploadFiles"), percent),
+    );
     const index = workspaceIndexById(workspace.id);
     if (index >= 0) state.workspaces[index] = result.workspace;
     state.selectedArtifacts = new Set(
@@ -710,6 +757,8 @@ async function uploadFilesToCurrentWorkspace(files) {
     showToast(t("toast.filesUploaded"));
   } catch (error) {
     showToast(error.message);
+  } finally {
+    clearOperationProgress();
   }
 }
 

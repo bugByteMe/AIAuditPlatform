@@ -86,6 +86,7 @@ class ChatRuntimeTest(unittest.TestCase):
     reloaded_workspace = self.store.list_workspaces(self.users["li.review"])[0]
     reloaded_session = next(item for item in reloaded_workspace["sessions"] if item["id"] == result["session"]["id"])
     self.assertTrue(any(event[0] == "assistant" for event in reloaded_session["events"]))
+    self.assertTrue(any(event[3] == result["run"]["id"] for event in reloaded_session["events"]))
 
   def test_workspace_lock_rejects_second_active_run(self) -> None:
     workspace = self.create_workspace()
@@ -173,6 +174,15 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual(event["type"], "assistant")
     self.assertEqual(event["message"], "Hello. What would you like to work on?")
     self.assertEqual(event["raw"]["type"], "item.completed")
+
+  def test_docker_runner_parses_command_execution_events(self) -> None:
+    runner = DockerCodexRunner()
+    item_event = runner.parse_json_event(json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": "python3 -m unittest"}}))
+    top_level_event = runner.parse_json_event(json.dumps({"type": "exec_command", "command": ["ls", "-la"]}))
+    self.assertEqual(item_event["type"], "command")
+    self.assertEqual(item_event["message"], "python3 -m unittest")
+    self.assertEqual(top_level_event["type"], "command")
+    self.assertEqual(top_level_event["message"], "ls -la")
 
   def test_followup_run_marks_native_resume(self) -> None:
     workspace = self.create_workspace()

@@ -205,7 +205,7 @@ class WorkspaceStore:
             "tokens": session.get("tokens", "0"),
             "latestRunId": session.get("latestRunId"),
             "codexNativeResumable": bool(session.get("codexNativeResumable")),
-            "events": [[event["type"], event["message"], event["message"]] for event in events],
+            "events": [[event["type"], event["message"], event["message"], event.get("runId") or ""] for event in events],
           }
         )
       elif {"title", "status", "updated", "tokens", "events"}.issubset(item):

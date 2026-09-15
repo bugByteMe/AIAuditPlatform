@@ -267,7 +267,6 @@
   grid-template-columns: 96px minmax(0, 1fr);
   gap: 10px;
   padding: 10px 12px;
-  border-bottom: 1px solid var(--line);
 }
 
 .event-type {
@@ -278,6 +277,40 @@
 .event p {
   margin-bottom: 0;
   color: var(--text);
+  white-space: pre-wrap;
+}
+
+.event-user {
+  grid-template-columns: minmax(0, 1fr);
+  justify-items: end;
+}
+
+.event-user .event-type {
+  display: none;
+}
+
+.event-user p {
+  max-width: min(680px, 82%);
+  padding: 9px 12px;
+  border-radius: 8px;
+  background: #eef1f4;
+}
+
+.event-command {
+  grid-template-columns: 96px minmax(0, 1fr);
+  background: #fbfcfd;
+  font-family: "SFMono-Regular", Consolas, monospace;
+  font-size: 13px;
+}
+
+.event-command p {
+  color: #26323f;
+}
+
+.run-divider {
+  height: 1px;
+  margin: 8px 12px;
+  background: var(--line);
 }
 
 .composer {
