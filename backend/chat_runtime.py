@@ -181,7 +181,7 @@ class DockerCodexRunner(CodexRunner):
         path.chmod(0o600)
 
   def codex_command_args(self, run: dict) -> list[str]:
-    base = ["codex", "--ask-for-approval", "never", "exec"]
+    base = ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "exec"]
     if run.get("codexResume"):
       base.extend(["resume", "--json", "--skip-git-repo-check", "-m", run["model"]])
       if run.get("codexSessionId"):
@@ -198,8 +198,6 @@ class DockerCodexRunner(CodexRunner):
       "/workspace",
       "-m",
       run["model"],
-      "--sandbox",
-      "danger-full-access",
       run["prompt"],
     ]
 

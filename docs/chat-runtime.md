@@ -106,13 +106,13 @@ Live updates use Server-Sent Events. The event-list endpoint remains available f
 The production runner launches one Docker container per run from the `docker/codex-runner/Dockerfile` image and executes:
 
 ```text
-codex exec --json --skip-git-repo-check --ask-for-approval never -C /workspace -m <model> <prompt>
+codex --ask-for-approval never --sandbox danger-full-access exec --json --skip-git-repo-check -C /workspace -m <model> <prompt>
 ```
 
 For follow-up prompts in an existing chat session, the runner uses Codex native resume:
 
 ```text
-codex exec resume --json --skip-git-repo-check -m <model> <codex_session_id> <prompt>
+codex --ask-for-approval never --sandbox danger-full-access exec resume --json --skip-git-repo-check -m <model> <codex_session_id> <prompt>
 ```
 
 If Codex does not expose a session id in JSON events, the backend falls back to `codex exec resume --last` within that chat session's isolated `CODEX_HOME`.

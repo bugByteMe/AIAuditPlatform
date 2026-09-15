@@ -144,7 +144,14 @@ class ChatRuntimeTest(unittest.TestCase):
     first = {"model": "gpt-5.6-sol", "prompt": "first", "codexResume": False}
     followup = {"model": "gpt-5.6-sol", "prompt": "next", "codexResume": True, "codexSessionId": "019abc"}
     fallback = {"model": "gpt-5.6-sol", "prompt": "next", "codexResume": True, "codexSessionId": None}
-    self.assertEqual(runner.codex_command_args(first)[:5], ["codex", "--ask-for-approval", "never", "exec", "--json"])
+    self.assertEqual(
+      runner.codex_command_args(first)[:7],
+      ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "exec", "--json"],
+    )
+    self.assertEqual(
+      runner.codex_command_args(followup)[:7],
+      ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "exec", "resume"],
+    )
     self.assertIn("resume", runner.codex_command_args(followup))
     self.assertIn("019abc", runner.codex_command_args(followup))
     self.assertIn("--last", runner.codex_command_args(fallback))
