@@ -29,6 +29,12 @@ PBKDF2_ITERATIONS = SETTINGS.pbkdf2_iterations
 WORKSPACE_STORE = WorkspaceStore(WORKSPACE_STORAGE_DIR)
 
 
+def static_content_type(file_path: Path) -> str:
+  if file_path.suffix.lower() in {".js", ".mjs"}:
+    return "text/javascript"
+  return mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+
+
 def hash_password(password: str, salt: str | None = None) -> str:
   salt = salt or secrets.token_hex(16)
   digest = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), bytes.fromhex(salt), PBKDF2_ITERATIONS)
@@ -614,7 +620,7 @@ class Handler(BaseHTTPRequestHandler):
     candidate = (FRONTEND_DIR / relative).resolve()
     if not str(candidate).startswith(str(FRONTEND_DIR.resolve())) or not candidate.is_file():
       candidate = FRONTEND_DIR / "index.html"
-    content_type = mimetypes.guess_type(candidate.name)[0] or "application/octet-stream"
+    content_type = static_content_type(candidate)
     body = candidate.read_bytes()
     self.send_response(HTTPStatus.OK)
     self.send_header("Content-Type", content_type)
