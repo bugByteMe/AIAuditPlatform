@@ -8,6 +8,8 @@ import time
 from copy import deepcopy
 from pathlib import Path
 
+from config import SETTINGS
+
 
 SCHEMA_VERSION = 2
 
@@ -144,12 +146,12 @@ class AccountStore:
     new_group_name = new_group_name.strip()
     if bool(group_id) == bool(new_group_name):
       raise ValueError("provide exactly one of groupId or newGroupName")
-    if not 1 <= count <= 100:
-      raise ValueError("count must be between 1 and 100")
+    if not 1 <= count <= SETTINGS.batch_invite_max_count:
+      raise ValueError(f"count must be between 1 and {SETTINGS.batch_invite_max_count}")
     if budget_tokens < 0:
       raise ValueError("budgetTokens must be non-negative")
-    if not 1 <= max_sessions <= 10:
-      raise ValueError("maxSessions must be between 1 and 10")
+    if not 1 <= max_sessions <= SETTINGS.account_max_sessions_limit:
+      raise ValueError(f"maxSessions must be between 1 and {SETTINGS.account_max_sessions_limit}")
 
     new_group = None
     if new_group_name:

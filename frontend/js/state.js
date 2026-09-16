@@ -14,6 +14,13 @@ export const state = {
   collapsedFileFolders: new Set(),
   collapsedArtifactFolders: new Set(),
   chatLastEventIds: {},
+  runtimeConfig: {
+    chatPollIntervalMs: 2000,
+    sseRetryMs: 2000,
+    registrationMinPasswordLength: 8,
+    batchInviteMaxCount: 100,
+    accountMaxSessionsLimit: 10,
+  },
   sessionPanelWidth: 280,
   filePanelWidth: 300,
   isSessionPanelCollapsed: false,

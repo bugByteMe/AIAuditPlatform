@@ -60,6 +60,8 @@ Stopping a chat requests graceful termination of the active container. The backe
 
 See [chat-runtime.md](chat-runtime.md).
 
+Deployment and runtime settings are documented in [configuration.md](configuration.md).
+
 ## Design Constraints
 
 - Data is sensitive enterprise audit data.

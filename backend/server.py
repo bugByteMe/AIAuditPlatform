@@ -138,7 +138,7 @@ def add_audit(actor: str, event: str, detail: str = "") -> None:
       "detail": detail,
     },
   )
-  del AUDIT_LOGS[100:]
+  del AUDIT_LOGS[SETTINGS.audit_log_limit:]
 
 
 def active_sessions_for(username: str) -> int:
@@ -189,6 +189,16 @@ class Handler(BaseHTTPRequestHandler):
     try:
       if method == "GET" and path == "/api/health":
         self.write_json({"ok": True})
+      elif method == "GET" and path == "/api/runtime-config":
+        self.write_json(
+          {
+            "chatPollIntervalMs": SETTINGS.chat_poll_interval_ms,
+            "sseRetryMs": SETTINGS.sse_retry_ms,
+            "registrationMinPasswordLength": SETTINGS.registration_min_password_length,
+            "batchInviteMaxCount": SETTINGS.batch_invite_max_count,
+            "accountMaxSessionsLimit": SETTINGS.account_max_sessions_limit,
+          }
+        )
       elif method == "GET" and path == "/api/session":
         self.require_session_response()
       elif method == "POST" and path == "/api/login":
@@ -264,8 +274,8 @@ class Handler(BaseHTTPRequestHandler):
     password = str(payload.get("password") or "")
     if not invite_token or not username or not password:
       raise ValueError("invite token, username, and password are required")
-    if len(password) < 8:
-      raise ValueError("password must be at least 8 characters")
+    if len(password) < SETTINGS.registration_min_password_length:
+      raise ValueError(f"password must be at least {SETTINGS.registration_min_password_length} characters")
     try:
       user = ACCOUNT_STORE.activate(
         invite_token,
@@ -550,7 +560,8 @@ class Handler(BaseHTTPRequestHandler):
       params = parse_query(query)
       session_id = (params.get("sessionId") or [""])[0]
       after = int((params.get("after") or ["0"])[0] or 0)
-      self.write_json({"events": CHAT_RUNTIME.events(workspace_id, session_id, after, user)})
+      events = CHAT_RUNTIME.events(workspace_id, session_id, after, user)
+      self.write_json({"events": events, "sessionStatus": CHAT_RUNTIME.public_session(session_id).get("status")})
     elif method == "GET" and action == "stream" and not tail:
       params = parse_query(query)
       session_id = (params.get("sessionId") or [""])[0]
@@ -560,25 +571,35 @@ class Handler(BaseHTTPRequestHandler):
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
   def write_sse(self, workspace_id: str, session_id: str, after: int, user: dict) -> None:
+    header_last_id = int(self.headers.get("Last-Event-ID") or 0)
+    last_id = max(after, header_last_id)
+    CHAT_RUNTIME.events(workspace_id, session_id, last_id, user)
     self.send_response(HTTPStatus.OK)
     self.send_header("Content-Type", "text/event-stream; charset=utf-8")
     self.send_header("Cache-Control", "no-store")
     self.send_header("Connection", "keep-alive")
+    self.send_header("X-Accel-Buffering", "no")
     origin = self.headers.get("Origin")
     if origin:
       self.send_header("Access-Control-Allow-Origin", origin)
       self.send_header("Access-Control-Allow-Credentials", "true")
     self.end_headers()
-    last_id = after
+    try:
+      self.wfile.write(f"retry: {SETTINGS.sse_retry_ms}\n\n".encode("utf-8"))
+      self.wfile.flush()
+    except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+      return
     idle_rounds = 0
-    while idle_rounds < 24:
-      events = CHAT_RUNTIME.wait_events(workspace_id, session_id, last_id, user, timeout=5)
+    while idle_rounds < SETTINGS.sse_max_idle_rounds:
+      events = CHAT_RUNTIME.wait_events(workspace_id, session_id, last_id, user, timeout=SETTINGS.sse_wait_timeout_seconds)
       if not events:
+        if CHAT_RUNTIME.public_session(session_id).get("status") in {"completed", "stopped", "failed"}:
+          return
         idle_rounds += 1
         try:
           self.wfile.write(b": keepalive\n\n")
           self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
           return
         continue
       idle_rounds = 0
@@ -588,7 +609,7 @@ class Handler(BaseHTTPRequestHandler):
         try:
           self.wfile.write(f"id: {last_id}\nevent: {event['type']}\ndata: {payload}\n\n".encode("utf-8"))
           self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
           return
       if events[-1]["type"] in {"completed", "stopped", "failed"}:
         return

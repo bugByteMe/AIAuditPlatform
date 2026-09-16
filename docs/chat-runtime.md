@@ -101,7 +101,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 
 The first implementation uses a local scheduler with configurable capacity. It persists chat sessions, runs, and events in dedicated chat storage, locks the workspace before queueing a run, releases the lock on terminal states, and records a checkpoint/artifact refresh after completion, stop, or failure. Workspace metadata keeps only workspace-level state and lightweight chat session references.
 
-Live updates use Server-Sent Events. The event-list endpoint remains available for reload and polling fallback.
+Live updates use Server-Sent Events. A lightweight event-list reconciliation poll runs alongside SSE so proxy buffering, silent connection stalls, or reconnect races cannot leave the visible history stale. Both paths merge by persisted event ID into the session they were opened for, and terminal status is returned even when no new event payload is available.
 
 The production runner launches one Docker container per run from the `docker/codex-runner/Dockerfile` image and executes:
 

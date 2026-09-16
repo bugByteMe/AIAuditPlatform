@@ -1,4 +1,12 @@
 import { api, apiUrl, authenticatedApiUrl, uploadApi } from "./js/api.js";
+import {
+  LIVE_CHAT_STATES,
+  TERMINAL_CHAT_STATES,
+  findSessionById,
+  initializeEventCursors,
+  mergeSessionEvents,
+  sessionEventCursor,
+} from "./js/chatEvents.js";
 import { applyLocale, t } from "./js/i18n.js";
 import { state } from "./js/state.js";
 import {
@@ -16,9 +24,9 @@ import {
 import { currentWorkspace } from "./js/selectors.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "admin"]);
-const LIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
 let activeChatStream = null;
 let activePollTimer = null;
+let activeStreamGeneration = 0;
 
 export function renderDynamic() {
   renderCurrentUser();
@@ -54,34 +62,11 @@ function escapeMarkup(value) {
 }
 
 function stopChatStream() {
+  activeStreamGeneration += 1;
   if (activeChatStream) activeChatStream.close();
   activeChatStream = null;
   if (activePollTimer) window.clearTimeout(activePollTimer);
   activePollTimer = null;
-}
-
-function mergeSessionEvents(session, events) {
-  if (!session || !events.length) return false;
-  session.events = session.events || [];
-  const existingCount = state.chatLastEventIds[session.id] || 0;
-  events
-    .filter((event) => Number(event.id) > existingCount)
-    .forEach((event) => {
-      const toolCallId = event.toolCallId || "";
-      const existingToolIndex =
-        toolCallId && ["command", "tool"].includes(event.type)
-          ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
-          : -1;
-      const tuple = [event.type, event.message, event.message, event.runId || "", Number(event.id) || 0, event.status || "", toolCallId];
-      if (existingToolIndex >= 0) session.events[existingToolIndex] = tuple;
-      else session.events.push(tuple);
-      state.chatLastEventIds[session.id] = Number(event.id);
-      if (["queued", "starting", "running", "stopping", "stopped", "completed", "failed"].includes(event.type)) {
-        session.status = event.type === "running" ? "running" : event.type;
-      }
-      session.updated = event.time || session.updated;
-    });
-  return true;
 }
 
 function replaceWorkspace(updatedWorkspace) {
@@ -99,11 +84,11 @@ function clearOperationProgress() {
   renderOperationProgress();
 }
 
-async function refreshCurrentWorkspace() {
-  const workspace = safeCurrentWorkspace();
-  if (!workspace) return;
+async function refreshWorkspaceById(workspaceId) {
+  if (!workspaceId) return;
   try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`);
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    initializeEventCursors([result.workspace], state.chatLastEventIds);
     replaceWorkspace(result.workspace);
     renderDynamic();
   } catch (error) {
@@ -116,37 +101,66 @@ function currentSessionObject() {
   return workspace?.sessions?.[state.selectedSession] || workspace?.sessions?.[0] || null;
 }
 
-async function pollChatEvents(workspaceId, sessionId) {
+function chatPollInterval() {
+  return Math.max(250, Number(state.runtimeConfig.chatPollIntervalMs) || 2_000);
+}
+
+function scheduleChatPoll(workspaceId, sessionId, generation, delay = chatPollInterval()) {
+  if (generation !== activeStreamGeneration || activePollTimer) return;
+  activePollTimer = window.setTimeout(() => {
+    activePollTimer = null;
+    pollChatEvents(workspaceId, sessionId, generation);
+  }, delay);
+}
+
+async function pollChatEvents(workspaceId, sessionId, generation) {
+  if (generation !== activeStreamGeneration) return;
   const after = state.chatLastEventIds[sessionId] || 0;
   try {
     const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({ sessionId, after }).toString()}`);
-    const session = currentSessionObject();
-    const changed = mergeSessionEvents(session, result.events || []);
-    if (changed) renderDynamic();
-    if (!session || !LIVE_CHAT_STATES.has(session.status)) {
-      await refreshCurrentWorkspace();
+    if (generation !== activeStreamGeneration) return;
+    const session = findSessionById(state.workspaces, workspaceId, sessionId);
+    if (!session) {
       stopChatStream();
       return;
     }
+    const changed = mergeSessionEvents(session, result.events || [], state.chatLastEventIds);
+    const serverStatus = result.sessionStatus || session.status;
+    const statusChanged = serverStatus !== session.status;
+    session.status = serverStatus;
+    if (changed || statusChanged) renderDynamic();
+    if (TERMINAL_CHAT_STATES.has(serverStatus)) {
+      stopChatStream();
+      await refreshWorkspaceById(workspaceId);
+      return;
+    }
   } catch (error) {
-    showToast(error.message);
+    console.warn("Chat event reconciliation failed", error);
   }
-  activePollTimer = window.setTimeout(() => pollChatEvents(workspaceId, sessionId), 2000);
+  scheduleChatPoll(workspaceId, sessionId, generation);
 }
 
 function startChatStreamForSession(workspaceId, sessionId) {
   if (!workspaceId || !sessionId) return;
   stopChatStream();
+  const generation = activeStreamGeneration;
   const after = state.chatLastEventIds[sessionId] || 0;
   const url = authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/stream?${new URLSearchParams({ sessionId, after }).toString()}`);
   activeChatStream = new EventSource(url, { withCredentials: true });
   const handleEvent = (event) => {
-    const payload = JSON.parse(event.data);
-    const session = currentSessionObject();
-    if (mergeSessionEvents(session, [payload])) renderDynamic();
-    if (["completed", "stopped", "failed"].includes(payload.type)) {
-      refreshCurrentWorkspace();
+    if (generation !== activeStreamGeneration) return;
+    let payload;
+    try {
+      payload = JSON.parse(event.data);
+    } catch (error) {
+      console.warn("Invalid chat event payload", error);
+      return;
+    }
+    const session = findSessionById(state.workspaces, workspaceId, sessionId);
+    if (mergeSessionEvents(session, [payload], state.chatLastEventIds)) renderDynamic();
+    if (TERMINAL_CHAT_STATES.has(payload.type)) {
       stopChatStream();
+      refreshWorkspaceById(workspaceId);
     }
   };
   activeChatStream.onmessage = handleEvent;
@@ -154,10 +168,14 @@ function startChatStreamForSession(workspaceId, sessionId) {
     activeChatStream.addEventListener(type, handleEvent);
   });
   activeChatStream.onerror = () => {
+    if (generation !== activeStreamGeneration) return;
     if (activeChatStream) activeChatStream.close();
     activeChatStream = null;
-    if (!activePollTimer) pollChatEvents(workspaceId, sessionId);
+    if (activePollTimer) window.clearTimeout(activePollTimer);
+    activePollTimer = null;
+    scheduleChatPoll(workspaceId, sessionId, generation, 0);
   };
+  scheduleChatPoll(workspaceId, sessionId, generation);
 }
 
 function maybeStartChatStream() {
@@ -174,6 +192,7 @@ async function loadWorkspaces() {
   try {
     const result = await api("/api/workspaces");
     state.workspaces = result.workspaces || [];
+    initializeEventCursors(state.workspaces, state.chatLastEventIds);
     state.workspacesLoaded = true;
     state.selectedWorkspace = Math.min(state.selectedWorkspace, Math.max(state.workspaces.length - 1, 0));
     state.selectedSession = 0;
@@ -263,6 +282,18 @@ async function loadAccountControlData() {
     state.auditLogs = [];
   }
   renderAdmin();
+}
+
+async function loadRuntimeConfig() {
+  try {
+    const config = await api("/api/runtime-config");
+    state.runtimeConfig = { ...state.runtimeConfig, ...config };
+    document.querySelector('#register-form [name="password"]').minLength = state.runtimeConfig.registrationMinPasswordLength;
+    document.querySelector('#batch-account-form [name="count"]').max = state.runtimeConfig.batchInviteMaxCount;
+    document.querySelector('#batch-account-form [name="maxSessions"]').max = state.runtimeConfig.accountMaxSessionsLimit;
+  } catch (error) {
+    console.warn("Runtime configuration unavailable; using frontend defaults", error);
+  }
 }
 
 function setAuthMode(mode) {
@@ -1099,7 +1130,7 @@ function bindForms() {
         state.workspaces[workspaceIndex] = { ...workspace, locked: true, sessions };
         state.selectedSession = Math.max(0, sessions.findIndex((item) => item.id === result.session.id));
       }
-      state.chatLastEventIds[result.session.id] = result.session.events?.length || 0;
+      state.chatLastEventIds[result.session.id] = sessionEventCursor(result.session);
       renderDynamic();
       startChatStreamForSession(workspace.id, result.session.id);
       showToast(t("toast.send"));
@@ -1276,6 +1307,7 @@ function bindInputs() {
 
 async function bootstrap() {
   applyLocale();
+  await loadRuntimeConfig();
   routeToView(viewFromLocation(), { replace: true });
   selectWorkspace(0);
   try {

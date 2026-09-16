@@ -43,6 +43,9 @@ class DockerCodexRunner(CodexRunner):
     self.run_network = SETTINGS.run_network
     self.run_cpus = SETTINGS.run_cpus
     self.run_memory = SETTINGS.run_memory
+    self.process_wait_timeout_seconds = SETTINGS.process_wait_timeout_seconds
+    self.docker_stop_grace_seconds = SETTINGS.docker_stop_grace_seconds
+    self.docker_stop_timeout_seconds = SETTINGS.docker_stop_timeout_seconds
     self.processes: dict[str, subprocess.Popen] = {}
     self.lock = threading.Lock()
 
@@ -85,7 +88,7 @@ class DockerCodexRunner(CodexRunner):
             yield {"type": "error", "message": "Run timed out."}
             break
           yield self.parse_json_event(line)
-      returncode = process.wait(timeout=10)
+      returncode = process.wait(timeout=self.process_wait_timeout_seconds)
       if returncode != 0:
         stderr = process.stderr.read() if process.stderr else ""
         raise RunnerError(stderr.strip() or f"Codex exited with status {returncode}")
@@ -325,7 +328,12 @@ class DockerCodexRunner(CodexRunner):
   def stop(self, run: dict) -> None:
     container = run.get("container")
     if container:
-      subprocess.run(["docker", "stop", "--time", "10", container], capture_output=True, timeout=20, check=False)
+      subprocess.run(
+        ["docker", "stop", "--time", str(self.docker_stop_grace_seconds), container],
+        capture_output=True,
+        timeout=self.docker_stop_timeout_seconds,
+        check=False,
+      )
     with self.lock:
       process = self.processes.get(run["id"])
     if process and process.poll() is None:
@@ -348,6 +356,7 @@ class ChatRuntime:
     self.chat_store = chat_store or ChatStore(store.root / "chat")
     self.save_users = save_users
     self.capacity = max(1, capacity)
+    self.scheduler_poll_seconds = max(0.01, SETTINGS.scheduler_poll_seconds)
     self.lock = threading.RLock()
     self.condition = threading.Condition(self.lock)
     self.queue: queue.Queue[str] = queue.Queue()
@@ -516,7 +525,7 @@ class ChatRuntime:
     while not self.shutdown:
       run_id = self.queue.get()
       while len(self.active_runs) >= self.capacity:
-        time.sleep(0.1)
+        time.sleep(self.scheduler_poll_seconds)
       self.active_runs.add(run_id)
       threading.Thread(target=self.execute_run, args=(run_id,), name=f"ai-audit-run-{run_id}", daemon=True).start()
 

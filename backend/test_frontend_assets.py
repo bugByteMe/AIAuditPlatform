@@ -59,6 +59,14 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("event-running-dots", render_source)
         self.assertIn("event-fold", render_source)
 
+    def test_chat_realtime_reconciliation_is_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        chat_events_source = (FRONTEND_ROOT / "js" / "chatEvents.js").read_text(encoding="utf-8")
+        self.assertIn("scheduleChatPoll(workspaceId, sessionId, generation)", app_source)
+        self.assertIn("findSessionById(state.workspaces, workspaceId, sessionId)", app_source)
+        self.assertIn("initializeEventCursors(state.workspaces", app_source)
+        self.assertIn("sessionEventCursor", chat_events_source)
+
 
 if __name__ == "__main__":
     unittest.main()

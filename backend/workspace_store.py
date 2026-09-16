@@ -17,12 +17,14 @@ from pathlib import Path
 from typing import Callable
 from urllib.parse import parse_qs
 
+from config import SETTINGS
 
-MAX_FILE_BYTES = 250 * 1024 * 1024
-MAX_WORKSPACE_BYTES = 2 * 1024 * 1024 * 1024
-MAX_FILE_COUNT = 10_000
-MAX_TEXT_PREVIEW_BYTES = 256 * 1024
-BLOCKED_SUFFIXES = {".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"}
+
+MAX_FILE_BYTES = SETTINGS.max_file_bytes
+MAX_WORKSPACE_BYTES = SETTINGS.max_workspace_bytes
+MAX_FILE_COUNT = SETTINGS.max_file_count
+MAX_TEXT_PREVIEW_BYTES = SETTINGS.max_text_preview_bytes
+BLOCKED_SUFFIXES = {suffix.lower() for suffix in SETTINGS.blocked_upload_suffixes}
 TEXT_SUFFIXES = {
   ".csv",
   ".css",
@@ -618,7 +620,7 @@ class WorkspaceStore:
       result = subprocess.run(
         [converter, "--headless", "--convert-to", "pdf", "--outdir", str(temp_dir), str(temp_source)],
         capture_output=True,
-        timeout=45,
+        timeout=SETTINGS.office_preview_timeout_seconds,
         check=False,
       )
       rendered = temp_dir / "source.pdf"
