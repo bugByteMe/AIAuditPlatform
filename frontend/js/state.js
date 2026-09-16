@@ -17,4 +17,5 @@ export const state = {
   isSessionPanelCollapsed: false,
   isFileExplorerCollapsed: true,
   operationProgress: null,
+  workspaceCreateUploadController: null,
 };

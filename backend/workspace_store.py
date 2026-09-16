@@ -158,16 +158,7 @@ class WorkspaceStore:
   def public_workspace(self, workspace: dict, metadata: dict | None = None) -> dict:
     metadata = metadata or self.load_metadata()
     workspace_id = workspace["id"]
-    sessions = self.public_workspace_sessions(workspace, metadata) or [
-      {
-        "id": f"session_{workspace_id}",
-        "title": "Workspace setup",
-        "status": "completed",
-        "updated": workspace["updated"],
-        "tokens": "0",
-        "events": [["completed", "工作区已创建并生成初始快照。", "Workspace created and initial snapshot generated."]],
-      }
-    ]
+    sessions = self.public_workspace_sessions(workspace, metadata)
     return {
       "id": workspace_id,
       "name": workspace["name"],
@@ -209,7 +200,8 @@ class WorkspaceStore:
           }
         )
       elif {"title", "status", "updated", "tokens", "events"}.issubset(item):
-        sessions.append(item)
+        if item.get("title") not in {"Workspace setup", "Fork created"}:
+          sessions.append(item)
     return sessions
 
   def workspace_path(self, workspace_id: str) -> Path:
@@ -263,16 +255,7 @@ class WorkspaceStore:
     workspace["latestSnapshotId"] = snapshot["id"]
     workspace["fileCount"] = len(snapshot["files"])
     workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
-    workspace["sessions"] = [
-      {
-        "id": generated_id("chat"),
-        "title": "Workspace setup",
-        "status": "completed",
-        "updated": timestamp,
-        "tokens": "0",
-        "events": [["completed", "工作区已创建并生成初始快照。", "Workspace created and initial snapshot generated."]],
-      }
-    ]
+    workspace["sessions"] = []
     self.save_metadata(metadata)
     return self.public_workspace(workspace, metadata)
 
@@ -395,16 +378,7 @@ class WorkspaceStore:
     fork["latestSnapshotId"] = snapshot["id"]
     fork["fileCount"] = len(snapshot["files"])
     fork["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
-    fork["sessions"] = [
-      {
-        "id": generated_id("chat"),
-        "title": "Fork created",
-        "status": "completed",
-        "updated": timestamp,
-        "tokens": "0",
-        "events": [["completed", "已从源快照复刻工作区。", "Workspace forked from the source snapshot."]],
-      }
-    ]
+    fork["sessions"] = []
     self.save_metadata(metadata)
     return self.public_workspace(fork, metadata)
 

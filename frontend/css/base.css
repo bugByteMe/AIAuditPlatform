@@ -39,6 +39,15 @@ button {
   cursor: pointer;
 }
 
+button:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+body.chat-view-active {
+  overflow: hidden;
+}
+
 .hidden {
   display: none !important;
 }

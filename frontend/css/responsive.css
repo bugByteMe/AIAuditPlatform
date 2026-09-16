@@ -52,6 +52,13 @@
     min-height: 0;
   }
 
+  .chat-view-active .chat-layout,
+  .chat-view-active .chat-layout:not(.files-collapsed),
+  .chat-view-active .chat-layout.sessions-collapsed,
+  .chat-view-active .chat-layout.sessions-collapsed:not(.files-collapsed) {
+    height: 100%;
+  }
+
   .sessions-panel,
   .file-panel,
   .chat-panel {

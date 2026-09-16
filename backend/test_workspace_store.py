@@ -61,6 +61,7 @@ class WorkspaceStoreTest(unittest.TestCase):
     workspace = self.create_workspace()
     metadata = self.store.load_metadata()
     self.assertEqual(workspace["fileCount"], 2)
+    self.assertEqual(workspace["sessions"], [])
     self.assertIn(workspace["id"], metadata["workspaces"])
     self.assertTrue((self.store.workspace_path(workspace["id"]) / "workpapers" / "income.txt").exists())
     snapshot = metadata["snapshots"][workspace["latestSnapshotId"]]
@@ -74,6 +75,11 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual(first["name"], second["name"])
     self.assertEqual((self.store.workspace_path(first["id"]) / "folder" / "a.txt").read_text(encoding="utf-8"), "one")
     self.assertEqual((self.store.workspace_path(second["id"]) / "folder" / "a.txt").read_text(encoding="utf-8"), "two")
+
+  def test_workspace_fork_does_not_create_setup_chat_session(self) -> None:
+    source = self.create_workspace()
+    fork = self.store.fork_workspace(source["id"], OWNER, "Forked")
+    self.assertEqual(fork["sessions"], [])
 
   def test_unsafe_upload_path_is_rejected(self) -> None:
     with self.assertRaises(StorageError):

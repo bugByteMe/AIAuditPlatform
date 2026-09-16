@@ -98,9 +98,13 @@ export async function api(path, options = {}) {
   throw lastError || new Error("request_failed");
 }
 
-function xhrJson(path, formData, base, onProgress) {
+function xhrJson(path, formData, base, onProgress, signal) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
+    if (signal?.aborted) {
+      reject(new DOMException("Upload aborted", "AbortError"));
+      return;
+    }
     xhr.open("POST", buildUrl(path, base), true);
     xhr.withCredentials = true;
     const token = window.localStorage.getItem(SESSION_TOKEN_KEY);
@@ -113,6 +117,8 @@ function xhrJson(path, formData, base, onProgress) {
       error.retryable = true;
       reject(error);
     };
+    xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
+    signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.onload = () => {
       const contentType = xhr.getResponseHeader("Content-Type") || "";
       if (!contentType.includes("application/json")) {
@@ -135,11 +141,11 @@ function xhrJson(path, formData, base, onProgress) {
   });
 }
 
-export async function uploadApi(path, formData, onProgress) {
+export async function uploadApi(path, formData, onProgress, options = {}) {
   let lastError = null;
   for (const base of backendCandidates()) {
     try {
-      const payload = await xhrJson(path, formData, base, onProgress);
+      const payload = await xhrJson(path, formData, base, onProgress, options.signal);
       rememberApiBase(base);
       return payload;
     } catch (error) {

@@ -206,6 +206,7 @@ function viewFromLocation() {
 
 function switchView(view) {
   const nextView = VALID_VIEWS.has(view) ? view : "workspace";
+  document.body.classList.toggle("chat-view-active", nextView === "chat");
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === nextView);
   });
@@ -294,6 +295,10 @@ function openWorkspaceModal() {
 }
 
 function closeWorkspaceModal() {
+  if (state.workspaceCreateUploadController) {
+    state.workspaceCreateUploadController.abort();
+    state.workspaceCreateUploadController = null;
+  }
   document.querySelector("#workspace-modal").classList.add("hidden");
 }
 
@@ -603,6 +608,7 @@ async function forkWorkspace(index = state.selectedWorkspace) {
 }
 
 async function createWorkspaceFromModal(form) {
+  if (state.workspaceCreateUploadController) return;
   if (!state.selectedUploadFiles.length) {
     showToast(t("toast.createNeedsFiles"));
     return;
@@ -616,17 +622,29 @@ async function createWorkspaceFromModal(form) {
     upload.append("paths", item.path);
     upload.append("files", item.file, item.path);
   });
+  const controller = new AbortController();
+  const submitButton = document.querySelector("#workspace-create-submit");
+  state.workspaceCreateUploadController = controller;
+  submitButton.disabled = true;
   setOperationProgress(t("progress.uploadWorkspace"), 0);
   try {
-    const result = await uploadApi("/api/workspaces", upload, (percent) => setOperationProgress(t("progress.uploadWorkspace"), percent));
+    const result = await uploadApi(
+      "/api/workspaces",
+      upload,
+      (percent) => setOperationProgress(t("progress.uploadWorkspace"), percent),
+      { signal: controller.signal },
+    );
+    state.workspaceCreateUploadController = null;
     closeWorkspaceModal();
     await loadWorkspaces();
     const index = state.workspaces.findIndex((item) => item.id === result.workspace.id);
     if (index >= 0) selectWorkspace(index);
     showToast(state.lang === "zh" ? "工作区已创建。" : "Workspace created.");
   } catch (error) {
-    showToast(error.message);
+    if (error.name !== "AbortError") showToast(error.message);
   } finally {
+    if (state.workspaceCreateUploadController === controller) state.workspaceCreateUploadController = null;
+    submitButton.disabled = false;
     clearOperationProgress();
   }
 }

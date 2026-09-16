@@ -137,7 +137,8 @@ class ChatStore:
       if session_id in sessions:
         items.append(self.public_session(session_id))
       elif {"title", "status", "updated", "tokens", "events"}.issubset(item):
-        items.append(item)
+        if item.get("title") not in {"Workspace setup", "Fork created"}:
+          items.append(item)
     return items
 
   def migrate_from_metadata(self, metadata: dict) -> bool:
