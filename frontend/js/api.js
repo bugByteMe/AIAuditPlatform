@@ -12,8 +12,9 @@ function currentApiBase() {
 
 function backendCandidates() {
   const currentBase = `${window.location.protocol}//${window.location.host}`;
+  const isLocalPage = ["localhost", "127.0.0.1", "::1"].includes(window.location.hostname);
   const candidates = [currentApiBase(), ""];
-  if (currentBase !== DEFAULT_BACKEND_BASE) candidates.push(DEFAULT_BACKEND_BASE);
+  if (isLocalPage && currentBase !== DEFAULT_BACKEND_BASE) candidates.push(DEFAULT_BACKEND_BASE);
   return unique(candidates);
 }
 

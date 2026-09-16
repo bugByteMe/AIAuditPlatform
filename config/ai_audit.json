@@ -2,7 +2,7 @@
   "codex_root": "workspace_storage/codex",
   "default_codex_base_url": "https://api.openai.com/v1",
   "frontend_dir": "frontend",
-  "host": "127.0.0.1",
+  "host": "0.0.0.0",
   "local_run_capacity": 1,
   "port": 8000,
   "run_network": "bridge",

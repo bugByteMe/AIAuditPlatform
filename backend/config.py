@@ -49,7 +49,7 @@ class Settings:
     self.session_cookie = str(_value("session_cookie", "AI_AUDIT_SESSION_COOKIE", "ai_audit_session"))
     self.session_ttl_seconds = _int("session_ttl_seconds", "AI_AUDIT_SESSION_TTL_SECONDS", 8 * 60 * 60)
     self.pbkdf2_iterations = _int("pbkdf2_iterations", "AI_AUDIT_PBKDF2_ITERATIONS", 2_000)
-    self.host = str(_value("host", "AI_AUDIT_HOST", "127.0.0.1"))
+    self.host = str(_value("host", "AI_AUDIT_HOST", "0.0.0.0"))
     self.port = _int("port", "AI_AUDIT_PORT", 8000)
     self.local_run_capacity = _int("local_run_capacity", "AI_AUDIT_LOCAL_RUN_CAPACITY", 1)
     self.default_codex_base_url = str(_value("default_codex_base_url", "AI_AUDIT_DEFAULT_CODEX_BASE_URL", "https://api.openai.com/v1"))
