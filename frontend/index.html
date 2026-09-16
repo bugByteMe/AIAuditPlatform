@@ -368,6 +368,14 @@
       <button type="button" class="danger" data-file-menu-action="delete" data-i18n="files.delete">删除</button>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js"></script>
+    <script type="module" src="app.js?v=20260916-login-fix"></script>
+    <script>
+      window.setTimeout(function () {
+        if (!window.aiAuditAppReady) {
+          var error = document.querySelector("#login-error");
+          if (error) error.textContent = "前端脚本未加载成功，请刷新页面或检查 app.js。";
+        }
+      }, 2500);
+    </script>
   </body>
 </html>

@@ -862,17 +862,23 @@ function bindForms() {
   document.querySelector("#login-form").addEventListener("submit", async (event) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
-    document.querySelector("#login-error").textContent = "";
+    const loginError = document.querySelector("#login-error");
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    loginError.textContent = state.lang === "zh" ? "正在登录..." : "Signing in...";
+    if (submitButton) submitButton.disabled = true;
     try {
       const result = await api("/api/login", {
         method: "POST",
         body: JSON.stringify({ username: form.get("username"), password: form.get("password") }),
       });
+      loginError.textContent = state.lang === "zh" ? "登录成功，正在载入工作区..." : "Signed in. Loading workspaces...";
       showAuthenticated(result.user);
       await loadWorkspaces();
       await loadAccountControlData();
     } catch (error) {
-      document.querySelector("#login-error").textContent = `${t("auth.failed")} ${error.message || ""}`.trim();
+      loginError.textContent = `${t("auth.failed")} ${error.message || ""}`.trim();
+    } finally {
+      if (submitButton) submitButton.disabled = false;
     }
   });
 
@@ -1107,4 +1113,5 @@ window.addEventListener("popstate", syncRouteFromLocation);
 bindGlobalClicks();
 bindForms();
 bindInputs();
+window.aiAuditAppReady = true;
 bootstrap();

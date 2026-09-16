@@ -8,6 +8,7 @@ import json
 import mimetypes
 import secrets
 import time
+import traceback
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -195,6 +196,9 @@ class Handler(BaseHTTPRequestHandler):
       self.write_json({"error": "bad_request", "message": str(exc)}, HTTPStatus.BAD_REQUEST)
     except RequestStopped:
       return
+    except Exception:
+      traceback.print_exc()
+      self.write_json({"error": "internal_error", "message": "internal server error"}, HTTPStatus.INTERNAL_SERVER_ERROR)
 
   def status_for_storage_error(self, exc: StorageError) -> HTTPStatus:
     if exc.code == "not_found":
