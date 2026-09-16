@@ -1,7 +1,14 @@
-FROM node:22-bookworm-slim
+FROM node:22-bookworm-slim AS node-runtime
+
+FROM python:3.12-slim-bookworm
 
 ARG CODEX_VERSION=0.153.4
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+
+COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
+COPY --from=node-runtime /usr/local/bin/npm /usr/local/bin/npm
+COPY --from=node-runtime /usr/local/bin/npx /usr/local/bin/npx
+COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 
 RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/debian#g; s#http://deb.debian.org/debian-security#http://mirrors.cloud.aliyuncs.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
@@ -9,9 +16,28 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     bash \
     ca-certificates \
     git \
-    python3 \
-    python3-pip \
+    libreoffice \
+    pandoc \
+    poppler-utils \
     ripgrep \
+    tesseract-ocr \
+  && python3.12 -m pip install --no-cache-dir --upgrade pip \
+  && python3.12 -m pip install --no-cache-dir \
+    defusedxml \
+    docx2txt \
+    lxml \
+    markitdown \
+    numpy \
+    openpyxl \
+    pandas \
+    pdf2image \
+    pdfplumber \
+    pillow \
+    pypdf \
+    pypdfium2 \
+    pytesseract \
+    python-docx \
+    reportlab \
   && npm install -g "@openai/codex@${CODEX_VERSION}" --registry="${NPM_REGISTRY}" \
   && useradd --create-home --shell /bin/bash codex \
   && mkdir -p /workspace /home/codex/.codex \
