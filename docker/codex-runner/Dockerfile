@@ -12,6 +12,9 @@ COPY --from=node-runtime /usr/local/bin/npm /usr/local/bin/npm
 COPY --from=node-runtime /usr/local/bin/npx /usr/local/bin/npx
 COPY --from=node-runtime /usr/local/lib/node_modules /usr/local/lib/node_modules
 
+RUN ln -sf ../lib/node_modules/npm/bin/npm-cli.js /usr/local/bin/npm \
+  && ln -sf ../lib/node_modules/npm/bin/npx-cli.js /usr/local/bin/npx
+
 RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/debian#g; s#http://deb.debian.org/debian-security#http://mirrors.cloud.aliyuncs.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
   && apt-get update \
   && apt-get install -y --no-install-recommends \
