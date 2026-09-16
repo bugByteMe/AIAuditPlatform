@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterable
 
 from chat_store import ChatStore
+from config import SETTINGS
 from workspace_store import StorageError, WorkspaceStore, generated_id, now_string
 
 
@@ -32,11 +33,16 @@ class CodexRunner:
 
 class DockerCodexRunner(CodexRunner):
   def __init__(self) -> None:
-    self.image = os.environ.get("AI_AUDIT_CODEX_IMAGE", "ai-audit-codex-runner:0.153.4")
-    self.codex_home_root = Path(os.environ.get("AI_AUDIT_CODEX_HOME_ROOT", "") or "workspace_storage/codex_homes")
-    self.container_uid = int(os.environ.get("AI_AUDIT_CODEX_UID", "1001"))
-    self.container_gid = int(os.environ.get("AI_AUDIT_CODEX_GID", "1001"))
-    self.timeout_seconds = int(os.environ.get("AI_AUDIT_RUN_TIMEOUT_SECONDS", "3600"))
+    self.image = SETTINGS.codex_image
+    self.codex_root = SETTINGS.codex_root
+    self.codex_home_root = SETTINGS.codex_home_root
+    self.skill_path = SETTINGS.skill_path
+    self.container_uid = SETTINGS.container_uid
+    self.container_gid = SETTINGS.container_gid
+    self.timeout_seconds = SETTINGS.run_timeout_seconds
+    self.run_network = SETTINGS.run_network
+    self.run_cpus = SETTINGS.run_cpus
+    self.run_memory = SETTINGS.run_memory
     self.processes: dict[str, subprocess.Popen] = {}
     self.lock = threading.Lock()
 
@@ -52,11 +58,11 @@ class DockerCodexRunner(CodexRunner):
       "--name",
       container_name,
       "--network",
-      os.environ.get("AI_AUDIT_RUN_NETWORK", "bridge"),
+      self.run_network,
       "--cpus",
-      os.environ.get("AI_AUDIT_RUN_CPUS", "2"),
+      self.run_cpus,
       "--memory",
-      os.environ.get("AI_AUDIT_RUN_MEMORY", "4g"),
+      self.run_memory,
       "--user",
       f"{self.container_uid}:{self.container_gid}",
       "-v",
@@ -98,6 +104,9 @@ class DockerCodexRunner(CodexRunner):
     command_event = self.parse_command_event(payload)
     if command_event:
       return command_event
+    websearch_event = self.parse_websearch_event(payload)
+    if websearch_event:
+      return websearch_event
     if "message" in payload and isinstance(payload["message"], str):
       return {"type": "assistant", "message": payload["message"]}
     if "text" in payload and isinstance(payload["text"], str):
@@ -124,10 +133,10 @@ class DockerCodexRunner(CodexRunner):
     text = self.event_text(item)
     item_type = str(item.get("type") or payload.get("type") or "progress")
     event_type = self.normalize_event_type(item_type)
-    if not text and event_type not in {"command", "tool"}:
+    if not text and event_type not in {"command", "tool", "websearch"}:
       return None
     if not text:
-      text = "Command executing." if event_type == "command" else "Tool executing."
+      text = {"command": "Command executing.", "websearch": "Web search."}.get(event_type, "Tool executing.")
     result = {"type": event_type, "message": text, "raw": payload}
     self.add_tool_status(result, payload)
     native_id = self.extract_codex_session_id(payload)
@@ -147,6 +156,18 @@ class DockerCodexRunner(CodexRunner):
       result["codexSessionId"] = native_id
     return result
 
+  def parse_websearch_event(self, payload: dict) -> dict | None:
+    event_type = self.normalize_event_type(str(payload.get("type") or payload.get("event") or ""))
+    if event_type != "websearch":
+      return None
+    text = self.event_text(payload) or "Web search."
+    result = {"type": "websearch", "message": text, "raw": payload}
+    self.add_tool_status(result, payload)
+    native_id = self.extract_codex_session_id(payload)
+    if native_id:
+      result["codexSessionId"] = native_id
+    return result
+
   def normalize_event_type(self, event_type: str) -> str:
     return {
       "agent_message": "assistant",
@@ -157,6 +178,11 @@ class DockerCodexRunner(CodexRunner):
       "exec_command_begin": "command",
       "exec_command_output": "command",
       "exec_command_end": "command",
+      "web_search": "websearch",
+      "web_search_call": "websearch",
+      "web_search_result": "websearch",
+      "web_search_results": "websearch",
+      "websearch": "websearch",
       "tool_call": "tool",
       "tool_output": "tool",
       "tool_result": "tool",
@@ -165,13 +191,15 @@ class DockerCodexRunner(CodexRunner):
     }.get(event_type, event_type)
 
   def event_text(self, payload: dict) -> str:
-    for key in ["text", "message", "summary", "command", "cmd", "output", "result", "content"]:
+    for key in ["text", "message", "summary", "query", "url", "title", "command", "cmd", "output", "result", "content"]:
       value = payload.get(key)
       if isinstance(value, str) and value:
         return value
       if isinstance(value, list) and value:
         if all(isinstance(item, str) for item in value):
           return " ".join(value)
+        return json.dumps(value, ensure_ascii=False)
+      if isinstance(value, dict) and value:
         return json.dumps(value, ensure_ascii=False)
     return ""
 
@@ -212,6 +240,7 @@ class DockerCodexRunner(CodexRunner):
     codex_home.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(codex_home / "tmp", ignore_errors=True)
     os.chmod(codex_home, 0o700)
+    self.copy_skills(codex_home)
     auth = {"auth_mode": "apikey", "OPENAI_API_KEY": api_key}
     (codex_home / "auth.json").write_text(json.dumps(auth, ensure_ascii=False, indent=2), encoding="utf-8")
     os.chmod(codex_home / "auth.json", 0o600)
@@ -235,6 +264,14 @@ class DockerCodexRunner(CodexRunner):
     os.chmod(codex_home / "config.toml", 0o600)
     self.make_tree_writable_for_container(codex_home)
     return codex_home
+
+  def copy_skills(self, codex_home: Path) -> None:
+    if not self.skill_path or not self.skill_path.exists():
+      return
+    destination = codex_home / "skills"
+    if destination.exists():
+      shutil.rmtree(destination)
+    shutil.copytree(self.skill_path, destination)
 
   def make_tree_writable_for_container(self, root: Path) -> None:
     for path in [root, *root.rglob("*")]:
@@ -635,7 +672,7 @@ class ChatRuntime:
 
   def user_codex_settings(self, user: dict) -> dict:
     settings = user.get("codex") or {}
-    base_url = str(settings.get("baseUrl") or os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL") or "https://api.openai.com/v1").strip()
+    base_url = str(settings.get("baseUrl") or SETTINGS.default_codex_base_url).strip()
     api_key = str(settings.get("apiKey") or "").strip()
     if not api_key:
       raise StorageError("codex_auth_required", "configure Codex API key before starting a run")

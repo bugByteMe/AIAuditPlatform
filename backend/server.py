@@ -6,7 +6,6 @@ import hashlib
 import hmac
 import json
 import mimetypes
-import os
 import secrets
 import time
 from http import HTTPStatus
@@ -17,15 +16,15 @@ from urllib.parse import quote, unquote, urlparse
 
 from account_store import AccountStore
 from chat_runtime import ChatRuntime
+from config import SETTINGS
 from workspace_store import StorageError, WorkspaceStore, parse_multipart, parse_query, parse_urlencoded_paths
 
 
-ROOT = Path(__file__).resolve().parents[1]
-FRONTEND_DIR = ROOT / "frontend"
-WORKSPACE_STORAGE_DIR = ROOT / "workspace_storage"
-SESSION_COOKIE = "ai_audit_session"
-SESSION_TTL_SECONDS = 8 * 60 * 60
-PBKDF2_ITERATIONS = 2_000
+FRONTEND_DIR = SETTINGS.frontend_dir
+WORKSPACE_STORAGE_DIR = SETTINGS.workspace_storage_dir
+SESSION_COOKIE = SETTINGS.session_cookie
+SESSION_TTL_SECONDS = SETTINGS.session_ttl_seconds
+PBKDF2_ITERATIONS = SETTINGS.pbkdf2_iterations
 WORKSPACE_STORE = WorkspaceStore(WORKSPACE_STORAGE_DIR)
 
 
@@ -57,8 +56,8 @@ SEED_USERS = {
     "enabled": True,
       "maxSessions": 2,
       "codex": {
-        "baseUrl": os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL", "https://api.openai.com/v1"),
-        "apiKey": os.environ.get("AI_AUDIT_DEFAULT_CODEX_API_KEY", ""),
+        "baseUrl": SETTINGS.default_codex_base_url,
+        "apiKey": SETTINGS.default_codex_api_key,
       },
       "passwordHash": hash_password("audit123", "00112233445566778899aabbccddeeff"),
   },
@@ -72,8 +71,8 @@ SEED_USERS = {
     "enabled": True,
       "maxSessions": 1,
       "codex": {
-        "baseUrl": os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL", "https://api.openai.com/v1"),
-        "apiKey": os.environ.get("AI_AUDIT_DEFAULT_CODEX_API_KEY", ""),
+        "baseUrl": SETTINGS.default_codex_base_url,
+        "apiKey": SETTINGS.default_codex_api_key,
       },
       "passwordHash": hash_password("review123", "ffeeddccbbaa99887766554433221100"),
   },
@@ -81,7 +80,7 @@ SEED_USERS = {
 
 ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS)
 USERS = ACCOUNT_STORE.users
-CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=int(os.environ.get("AI_AUDIT_LOCAL_RUN_CAPACITY", "1")), save_users=ACCOUNT_STORE.save)
+CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=SETTINGS.local_run_capacity, save_users=ACCOUNT_STORE.save)
 
 SESSIONS: dict[str, dict] = {}
 AUDIT_LOGS = [
@@ -311,7 +310,7 @@ class Handler(BaseHTTPRequestHandler):
     self.write_json({"settings": {"baseUrl": user["codex"].get("baseUrl", ""), "apiKeyConfigured": bool(user["codex"].get("apiKey"))}})
 
   def codex_payload_from_request(self, payload: dict, current: dict) -> dict:
-    base_url = str(payload.get("codexBaseUrl") or payload.get("baseUrl") or current.get("baseUrl") or os.environ.get("AI_AUDIT_DEFAULT_CODEX_BASE_URL") or "https://api.openai.com/v1").strip()
+    base_url = str(payload.get("codexBaseUrl") or payload.get("baseUrl") or current.get("baseUrl") or SETTINGS.default_codex_base_url).strip()
     api_key = str(current.get("apiKey") or "")
     if payload.get("clearCodexApiKey"):
       api_key = ""
@@ -623,8 +622,8 @@ class Handler(BaseHTTPRequestHandler):
 
 def main() -> None:
   parser = argparse.ArgumentParser(description="AI Audit prototype backend")
-  parser.add_argument("--host", default=os.environ.get("AI_AUDIT_HOST", "127.0.0.1"))
-  parser.add_argument("--port", type=int, default=int(os.environ.get("AI_AUDIT_PORT", "8000")))
+  parser.add_argument("--host", default=SETTINGS.host)
+  parser.add_argument("--port", type=int, default=SETTINGS.port)
   args = parser.parse_args()
   httpd = ThreadingHTTPServer((args.host, args.port), Handler)
   print(f"AI Audit backend serving http://{args.host}:{args.port}", flush=True)

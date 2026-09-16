@@ -140,6 +140,23 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertIn('base_url = "https://codex.example/v1"', (codex_home / "config.toml").read_text(encoding="utf-8"))
     self.assertIn('"OPENAI_API_KEY": "sk-test"', (codex_home / "auth.json").read_text(encoding="utf-8"))
 
+  def test_docker_runner_copies_configured_skill_path_into_codex_home(self) -> None:
+    runner = DockerCodexRunner()
+    runner.codex_home_root = Path(self.tempdir.name) / "codex_homes"
+    runner.skill_path = Path(self.tempdir.name) / "source_skills"
+    (runner.skill_path / "audit-skill").mkdir(parents=True)
+    (runner.skill_path / "audit-skill" / "SKILL.md").write_text("# Audit Skill\n", encoding="utf-8")
+    run = {
+      "id": "run_1",
+      "user": "li.review",
+      "sessionId": "chat_1",
+      "model": "gpt-5-codex",
+      "reasoning": "high",
+      "codexSettings": {"baseUrl": "https://codex.example/v1", "apiKey": "sk-test"},
+    }
+    codex_home = runner.prepare_codex_home(run)
+    self.assertEqual((codex_home / "skills" / "audit-skill" / "SKILL.md").read_text(encoding="utf-8"), "# Audit Skill\n")
+
   def test_docker_runner_removes_stale_codex_tmp_before_run(self) -> None:
     runner = DockerCodexRunner()
     runner.codex_home_root = Path(self.tempdir.name) / "codex_homes"
@@ -202,6 +219,12 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual(item_event["toolCallId"], "call_1")
     self.assertEqual(top_level_event["type"], "command")
     self.assertEqual(top_level_event["message"], "ls -la")
+
+  def test_docker_runner_parses_web_search_events(self) -> None:
+    runner = DockerCodexRunner()
+    event = runner.parse_json_event(json.dumps({"type": "web_search_call", "query": "audit sampling guidance"}))
+    self.assertEqual(event["type"], "websearch")
+    self.assertEqual(event["message"], "audit sampling guidance")
 
   def test_public_session_coalesces_tool_start_and_result(self) -> None:
     workspace = self.create_workspace()
