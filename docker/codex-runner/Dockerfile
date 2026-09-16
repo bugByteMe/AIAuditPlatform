@@ -4,6 +4,8 @@ FROM python:3.12-slim-bookworm
 
 ARG CODEX_VERSION=0.153.4
 ARG NPM_REGISTRY=https://registry.npmmirror.com
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 
 COPY --from=node-runtime /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-runtime /usr/local/bin/npm /usr/local/bin/npm
@@ -21,8 +23,13 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     poppler-utils \
     ripgrep \
     tesseract-ocr \
-  && python3.12 -m pip install --no-cache-dir --upgrade pip \
+  && apt-get clean \
+  && rm -rf /var/lib/apt/lists/*
+
+RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
   && python3.12 -m pip install --no-cache-dir \
+    --index-url "${PIP_INDEX_URL}" \
+    --trusted-host "${PIP_TRUSTED_HOST}" \
     defusedxml \
     docx2txt \
     lxml \
@@ -37,13 +44,12 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     pypdfium2 \
     pytesseract \
     python-docx \
-    reportlab \
-  && npm install -g "@openai/codex@${CODEX_VERSION}" --registry="${NPM_REGISTRY}" \
+    reportlab
+
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" --registry="${NPM_REGISTRY}" \
   && useradd --create-home --shell /bin/bash codex \
   && mkdir -p /workspace /home/codex/.codex \
-  && chown -R codex:codex /workspace /home/codex \
-  && apt-get clean \
-  && rm -rf /var/lib/apt/lists/*
+  && chown -R codex:codex /workspace /home/codex
 
 USER codex
 WORKDIR /workspace
