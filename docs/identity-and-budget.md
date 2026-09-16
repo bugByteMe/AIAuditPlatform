@@ -18,6 +18,12 @@ The system should support these roles:
 
 Login uses username and password. Passwords must be stored with a modern password hashing algorithm. Backend sessions should be short enough to limit risk and long enough for normal audit tasks.
 
+System administrators may batch-create pending accounts for an existing or newly named group. A pending account has an immutable generated user ID and a unique invite token, but no username or password. Invite tokens remain valid until used or revoked and are visible only through system-admin account APIs.
+
+Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Successful registration preserves the pending account's user ID, group, budget, and session limit, consumes the token, stores the password hash, activates the account, and creates a login session.
+
+Named groups are persisted independently from accounts. Group-level budget enforcement is not part of the current implementation; each invited account receives the per-user budget selected for its batch.
+
 The initial design does not require SSO, device binding, or multi-factor authentication.
 
 ## Account Sharing Controls
@@ -60,7 +66,8 @@ Budget checks belong in the backend control plane. Workers may report usage but 
 
 System admins can:
 
-- Create users and groups individually or in batch.
+- Create users and persistent named groups individually or in invitation batches.
+- View and revoke unused invitation tokens.
 - Set and increase token budgets.
 - Disable or re-enable users and groups.
 - View usage summaries by user, group, workspace, model, and date range.

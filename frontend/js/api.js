@@ -29,7 +29,7 @@ function rememberApiBase(base) {
 }
 
 function rememberSessionToken(path, payload) {
-  if (path === "/api/login" && payload.sessionToken) {
+  if (["/api/login", "/api/register"].includes(path) && payload.sessionToken) {
     window.localStorage.setItem(SESSION_TOKEN_KEY, payload.sessionToken);
   }
   if (path === "/api/logout") {

@@ -58,6 +58,10 @@
 ## Admin
 
 - Admin can batch-create users and groups.
+- Batch-created accounts have unique immutable IDs and invite tokens but no username or password hash.
+- Only system admins can list or revoke unused invite tokens.
+- Invite registration enforces single-use tokens, case-insensitive username uniqueness, and the minimum password length.
+- Successful registration preserves group and budget settings and creates a login session.
 - Admin can assign and increase budgets.
 - Admin can disable users and groups.
 - Admin can inspect usage by user, group, workspace, model, and date range.

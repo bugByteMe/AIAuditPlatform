@@ -388,6 +388,7 @@
 
 .event-fold {
   min-width: 0;
+  width: 100%;
 }
 
 .event-fold summary {
@@ -396,6 +397,19 @@
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+}
+
+.event-fold:not(.foldable) summary {
+  pointer-events: none;
+  list-style: none;
+}
+
+.event-fold:not(.foldable) summary::-webkit-details-marker {
+  display: none;
+}
+
+.event-fold:not(.foldable) pre {
+  display: none;
 }
 
 .event-fold pre {

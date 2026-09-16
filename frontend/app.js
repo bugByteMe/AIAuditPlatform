@@ -49,6 +49,10 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+function escapeMarkup(value) {
+  return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
+}
+
 function stopChatStream() {
   if (activeChatStream) activeChatStream.close();
   activeChatStream = null;
@@ -226,6 +230,9 @@ function routeToView(view, { replace = false } = {}) {
 
 function showAuthenticated(user) {
   state.user = user;
+  const isAdmin = user?.role === "system_admin";
+  document.querySelector("#admin-nav-button").classList.toggle("hidden", !isAdmin);
+  if (!isAdmin && viewFromLocation() === "admin") routeToView("workspace", { replace: true });
   document.querySelector("#auth-screen").classList.add("hidden");
   document.querySelector("#app-shell").classList.remove("hidden");
   renderDynamic();
@@ -235,18 +242,104 @@ function showLogin() {
   state.user = null;
   document.querySelector("#auth-screen").classList.remove("hidden");
   document.querySelector("#app-shell").classList.add("hidden");
+  setAuthMode("login");
 }
 
 async function loadAccountControlData() {
+  if (state.user?.role !== "system_admin") {
+    state.accounts = [];
+    state.groups = [];
+    renderAdmin();
+    return;
+  }
   try {
     const [accounts, logs] = await Promise.all([api("/api/accounts"), api("/api/audit-logs")]);
     state.accounts = accounts.accounts || [];
+    state.groups = accounts.groups || [];
     state.auditLogs = logs.logs || [];
   } catch {
     state.accounts = [];
+    state.groups = [];
     state.auditLogs = [];
   }
   renderAdmin();
+}
+
+function setAuthMode(mode) {
+  const registering = mode === "register";
+  document.querySelector("#login-form").classList.toggle("hidden", registering);
+  document.querySelector("#register-form").classList.toggle("hidden", !registering);
+  document.querySelectorAll("[data-auth-mode]").forEach((button) => button.classList.toggle("active", button.dataset.authMode === mode));
+  const input = document.querySelector(registering ? '#register-form [name="inviteToken"]' : '#login-form [name="username"]');
+  input?.focus();
+}
+
+function setGroupMode(mode) {
+  const creating = mode === "new";
+  document.querySelector("#existing-group-field").classList.toggle("hidden", creating);
+  document.querySelector("#new-group-field").classList.toggle("hidden", !creating);
+  document.querySelector("#batch-group-select").disabled = creating;
+  document.querySelector("#batch-new-group").disabled = !creating;
+  document.querySelector("#batch-new-group").required = creating;
+  document.querySelectorAll("[data-group-mode]").forEach((button) => button.classList.toggle("active", button.dataset.groupMode === mode));
+}
+
+function renderGroupOptions() {
+  document.querySelector("#batch-group-select").innerHTML = state.groups
+    .map((group) => `<option value="${escapeMarkup(group.id)}">${escapeMarkup(group.name)}</option>`)
+    .join("");
+}
+
+function renderCreatedInvites() {
+  const results = document.querySelector("#invite-results");
+  results.classList.toggle("hidden", !state.createdInvites.length);
+  document.querySelector("#invite-result-list").innerHTML = state.createdInvites
+    .map(
+      (account) => `<div class="invite-result-row"><strong>${escapeMarkup(account.id)}</strong><code>${escapeMarkup(account.inviteToken)}</code><button type="button" class="btn" data-copy-invite="${escapeMarkup(account.inviteToken)}">${t("admin.copy")}</button></div>`,
+    )
+    .join("");
+}
+
+function openBatchAccountModal() {
+  if (state.user?.role !== "system_admin") return;
+  const form = document.querySelector("#batch-account-form");
+  form.reset();
+  state.createdInvites = [];
+  renderGroupOptions();
+  setGroupMode(state.groups.length ? "existing" : "new");
+  renderCreatedInvites();
+  document.querySelector("#batch-account-error").textContent = "";
+  document.querySelector("#batch-account-modal").classList.remove("hidden");
+}
+
+function closeBatchAccountModal() {
+  document.querySelector("#batch-account-modal").classList.add("hidden");
+}
+
+async function copyText(value) {
+  if (navigator.clipboard?.writeText) {
+    await navigator.clipboard.writeText(value);
+  } else {
+    const textarea = document.createElement("textarea");
+    textarea.value = value;
+    textarea.style.position = "fixed";
+    textarea.style.opacity = "0";
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand("copy");
+    textarea.remove();
+  }
+  showToast(t("toast.inviteCopied"));
+}
+
+async function revokeInvite(userId) {
+  try {
+    await api(`/api/accounts/${encodeURIComponent(userId)}/revoke-invite`, { method: "POST" });
+    await loadAccountControlData();
+    showToast(t("toast.inviteRevoked"));
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function selectWorkspace(index) {
@@ -431,8 +524,49 @@ async function createNewChatSession() {
 
 function bindGlobalClicks() {
   document.addEventListener("click", (event) => {
+    const authMode = event.target.closest("[data-auth-mode]");
+    if (authMode) {
+      setAuthMode(authMode.dataset.authMode);
+      return;
+    }
+
+    const groupMode = event.target.closest("[data-group-mode]");
+    if (groupMode) {
+      setGroupMode(groupMode.dataset.groupMode);
+      return;
+    }
+
+    if (event.target.closest("#batch-create-button")) {
+      openBatchAccountModal();
+      return;
+    }
+
+    if (event.target.closest("[data-close-batch-account]")) {
+      closeBatchAccountModal();
+      return;
+    }
+
+    const copyInvite = event.target.closest("[data-copy-invite]");
+    if (copyInvite) {
+      copyText(copyInvite.dataset.copyInvite).catch((error) => showToast(error.message));
+      return;
+    }
+
+    const revokeButton = event.target.closest("[data-revoke-invite]");
+    if (revokeButton) {
+      revokeInvite(revokeButton.dataset.revokeInvite);
+      return;
+    }
+
+    if (event.target.closest("#copy-all-invites")) {
+      const text = state.createdInvites.map((account) => `${account.id}\t${account.inviteToken}`).join("\n");
+      if (text) copyText(text).catch((error) => showToast(error.message));
+      return;
+    }
+
     const nav = event.target.closest(".nav-item");
     if (nav) {
+      if (nav.dataset.view === "admin" && state.user?.role !== "system_admin") return;
       routeToView(nav.dataset.view);
       if (nav.dataset.view === "admin") loadAccountControlData();
       return;
@@ -882,6 +1016,58 @@ function bindForms() {
     }
   });
 
+  document.querySelector("#register-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const registerError = document.querySelector("#register-error");
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    registerError.textContent = t("auth.registering");
+    if (submitButton) submitButton.disabled = true;
+    try {
+      const result = await api("/api/register", {
+        method: "POST",
+        body: JSON.stringify({ inviteToken: form.get("inviteToken"), username: form.get("username"), password: form.get("password") }),
+      });
+      showAuthenticated(result.user);
+      await loadWorkspaces();
+      await loadAccountControlData();
+      event.currentTarget.reset();
+    } catch (error) {
+      registerError.textContent = `${t("auth.registerFailed")} ${error.message || ""}`.trim();
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
+  });
+
+  document.querySelector("#batch-account-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const creatingGroup = !document.querySelector("#batch-new-group").disabled;
+    const errorElement = document.querySelector("#batch-account-error");
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const payload = {
+      groupId: creatingGroup ? "" : form.get("groupId"),
+      newGroupName: creatingGroup ? form.get("newGroupName") : "",
+      count: Number(form.get("count")),
+      budgetTokens: Number(form.get("budgetTokens")),
+      maxSessions: Number(form.get("maxSessions")),
+    };
+    errorElement.textContent = "";
+    if (submitButton) submitButton.disabled = true;
+    try {
+      const result = await api("/api/accounts/batch", { method: "POST", body: JSON.stringify(payload) });
+      state.createdInvites = result.accounts || [];
+      await loadAccountControlData();
+      renderGroupOptions();
+      renderCreatedInvites();
+      showToast(t("toast.invitesCreated"));
+    } catch (error) {
+      errorElement.textContent = error.message;
+    } finally {
+      if (submitButton) submitButton.disabled = false;
+    }
+  });
+
   document.querySelector("#logout-button").addEventListener("click", async () => {
     await api("/api/logout", { method: "POST" }).catch(() => null);
     showLogin();
@@ -965,6 +1151,7 @@ function bindInputs() {
       closePreviewModal();
       closeWorkspaceModal();
       closeCodexSettingsModal();
+      closeBatchAccountModal();
       closeFileContextMenu();
       return;
     }
@@ -1102,7 +1289,9 @@ async function bootstrap() {
 }
 
 function syncRouteFromLocation() {
-  const view = viewFromLocation();
+  const requestedView = viewFromLocation();
+  const view = requestedView === "admin" && state.user?.role !== "system_admin" ? "workspace" : requestedView;
+  if (view !== requestedView) routeToView(view, { replace: true });
   switchView(view);
   if (view === "admin" && state.user) loadAccountControlData();
 }

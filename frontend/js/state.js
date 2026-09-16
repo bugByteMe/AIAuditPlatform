@@ -2,6 +2,8 @@ export const state = {
   lang: "zh",
   user: null,
   accounts: [],
+  groups: [],
+  createdInvites: [],
   auditLogs: [],
   workspaces: [],
   workspacesLoaded: false,

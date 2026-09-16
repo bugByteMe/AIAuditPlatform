@@ -100,13 +100,32 @@ class RequestStopped(Exception):
 
 
 def public_user(user: dict) -> dict:
-  public = {key: value for key, value in user.items() if key not in {"passwordHash", "codex"}}
+  public = {key: value for key, value in user.items() if key not in {"passwordHash", "codex", "inviteToken"}}
   codex = user.get("codex") or {}
   public["codex"] = {
     "baseUrl": codex.get("baseUrl", ""),
     "apiKeyConfigured": bool(codex.get("apiKey")),
   }
   return public
+
+
+def admin_account(account: dict) -> dict:
+  public = {key: value for key, value in account.items() if key not in {"passwordHash", "codex"}}
+  if public.get("status") == "active" and not public.get("enabled", True):
+    public["status"] = "disabled"
+  return public
+
+
+def user_by_username(username: str) -> dict | None:
+  normalized = username.strip().casefold()
+  return next((user for name, user in USERS.items() if name.casefold() == normalized), None)
+
+
+def user_by_identifier(identifier: str) -> dict | None:
+  user = USERS.get(identifier)
+  if user:
+    return user
+  return next((item for item in USERS.values() if item.get("id") == identifier), None)
 
 
 def add_audit(actor: str, event: str, detail: str = "") -> None:
@@ -174,10 +193,16 @@ class Handler(BaseHTTPRequestHandler):
         self.require_session_response()
       elif method == "POST" and path == "/api/login":
         self.login()
+      elif method == "POST" and path == "/api/register":
+        self.register()
       elif method == "POST" and path == "/api/logout":
         self.logout()
       elif method == "GET" and path == "/api/accounts":
         self.accounts()
+      elif method == "POST" and path == "/api/accounts/batch":
+        self.create_account_batch()
+      elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/revoke-invite"):
+        self.revoke_invite(path.split("/")[-2])
       elif method == "POST" and path == "/api/accounts":
         self.create_account()
       elif method == "PATCH" and path.startswith("/api/accounts/"):
@@ -225,11 +250,40 @@ class Handler(BaseHTTPRequestHandler):
     payload = self.read_json()
     username = str(payload.get("username", "")).strip()
     password = str(payload.get("password", ""))
-    user = USERS.get(username)
+    user = user_by_username(username)
     if not user or not verify_password(password, user["passwordHash"]):
       add_audit(username or "anonymous", "login failed", "invalid credentials")
       self.write_json({"error": "invalid_credentials"}, HTTPStatus.UNAUTHORIZED)
       return
+    self.start_session(user, "login success")
+
+  def register(self) -> None:
+    payload = self.read_json()
+    invite_token = str(payload.get("inviteToken") or "").strip()
+    username = str(payload.get("username") or "").strip()
+    password = str(payload.get("password") or "")
+    if not invite_token or not username or not password:
+      raise ValueError("invite token, username, and password are required")
+    if len(password) < 8:
+      raise ValueError("password must be at least 8 characters")
+    try:
+      user = ACCOUNT_STORE.activate(
+        invite_token,
+        username,
+        hash_password(password),
+        {
+          "baseUrl": SETTINGS.default_codex_base_url,
+          "apiKey": SETTINGS.default_codex_api_key,
+        },
+      )
+    except ValueError as exc:
+      add_audit("anonymous", "registration failed", str(exc))
+      raise
+    add_audit(username, "account activated", str(user.get("id") or ""))
+    self.start_session(user, "registration login success")
+
+  def start_session(self, user: dict, audit_event: str) -> None:
+    username = str(user["username"])
     if not user["enabled"]:
       add_audit(username, "login blocked", "account disabled")
       self.write_json({"error": "account_disabled"}, HTTPStatus.FORBIDDEN)
@@ -241,7 +295,7 @@ class Handler(BaseHTTPRequestHandler):
 
     token = secrets.token_urlsafe(32)
     SESSIONS[token] = {"username": username, "createdAt": time.time(), "expiresAt": time.time() + SESSION_TTL_SECONDS}
-    add_audit(username, "login success")
+    add_audit(username, audit_event)
     self.write_json(
       {"user": public_user(user), "sessionToken": token},
       headers={"Set-Cookie": f"{SESSION_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TTL_SECONDS}"},
@@ -255,7 +309,33 @@ class Handler(BaseHTTPRequestHandler):
 
   def accounts(self) -> None:
     self.require_admin()
-    self.write_json({"accounts": [public_user(user) for user in USERS.values()]})
+    active = [admin_account(user) for user in USERS.values()]
+    pending = [admin_account(account) for account in ACCOUNT_STORE.pending_accounts.values()]
+    self.write_json({"accounts": active + pending, "groups": list(ACCOUNT_STORE.groups.values())})
+
+  def create_account_batch(self) -> None:
+    actor = self.require_admin()
+    payload = self.read_json()
+    group, accounts = ACCOUNT_STORE.create_batch(
+      group_id=str(payload.get("groupId") or ""),
+      new_group_name=str(payload.get("newGroupName") or ""),
+      count=int(payload.get("count") or 0),
+      budget_tokens=int(payload.get("budgetTokens") or 0),
+      max_sessions=int(payload["maxSessions"]) if "maxSessions" in payload else 1,
+    )
+    if payload.get("newGroupName"):
+      add_audit(actor["username"], "group created", str(group["id"]))
+    add_audit(actor["username"], "account invitations created", f"{group['id']} count={len(accounts)}")
+    self.write_json({"group": group, "accounts": [admin_account(account) for account in accounts]}, HTTPStatus.CREATED)
+
+  def revoke_invite(self, user_id: str) -> None:
+    actor = self.require_admin()
+    account = ACCOUNT_STORE.revoke_invite(unquote(user_id))
+    if not account:
+      self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+      return
+    add_audit(actor["username"], "account invitation revoked", str(account["id"]))
+    self.write_json({"account": admin_account(account)})
 
   def create_account(self) -> None:
     actor = self.require_admin()
@@ -264,18 +344,25 @@ class Handler(BaseHTTPRequestHandler):
     password = str(payload.get("password", "")).strip()
     if not username or not password:
       raise ValueError("username and password are required")
-    if username in USERS:
+    if ACCOUNT_STORE.username_exists(username):
       self.write_json({"error": "account_exists"}, HTTPStatus.CONFLICT)
       return
+    group_name = str(payload.get("group") or "").strip()
+    group = ACCOUNT_STORE.group_by_name(group_name) if group_name else None
+    if group_name and not group:
+      group = ACCOUNT_STORE.create_group(group_name)
     USERS[username] = {
+      "id": f"usr_{secrets.token_urlsafe(12)}",
       "username": username,
       "displayName": str(payload.get("displayName") or username),
       "role": str(payload.get("role") or "user"),
-      "group": str(payload.get("group") or ""),
+      "groupId": str(group.get("id") if group else ""),
+      "group": group_name,
       "budgetTokens": int(payload.get("budgetTokens") or 0),
       "usedTokens": 0,
       "enabled": bool(payload.get("enabled", True)),
       "maxSessions": int(payload.get("maxSessions") or 1),
+      "status": "active",
       "codex": self.codex_payload_from_request(payload, {}),
       "passwordHash": hash_password(password),
     }
@@ -286,7 +373,7 @@ class Handler(BaseHTTPRequestHandler):
   def update_account(self, raw_username: str) -> None:
     actor = self.require_admin()
     username = unquote(raw_username)
-    user = USERS.get(username)
+    user = user_by_identifier(username)
     if not user:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
       return

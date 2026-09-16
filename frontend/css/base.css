@@ -187,13 +187,27 @@ p {
   color: var(--text);
 }
 
+.auth-tabs {
+  width: 100%;
+}
+
+.auth-tabs .segment {
+  flex: 1;
+}
+
+.auth-form {
+  display: grid;
+  gap: 12px;
+}
+
 .field {
   display: grid;
   gap: 7px;
   color: var(--text);
 }
 
-.field input {
+.field input,
+.field select {
   width: 100%;
   min-height: 42px;
   padding: 0 12px;

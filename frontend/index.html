@@ -8,7 +8,7 @@
   </head>
   <body>
     <section class="auth-screen" id="auth-screen">
-      <form class="login-panel" id="login-form">
+      <div class="login-panel">
         <div class="brand login-brand">
           <div class="brand-mark">AI</div>
           <div>
@@ -16,20 +16,44 @@
             <span data-i18n="brand.subtitle">审计智能体平台</span>
           </div>
         </div>
-        <h1 data-i18n="auth.title">登录</h1>
-        <p data-i18n="auth.help">使用内部账号进入审计工作台。</p>
-        <label class="field">
-          <span data-i18n="auth.username">用户名</span>
-          <input name="username" autocomplete="username" value="chen.audit" required />
-        </label>
-        <label class="field">
-          <span data-i18n="auth.password">密码</span>
-          <input name="password" type="password" autocomplete="current-password" value="audit123" required />
-        </label>
-        <button class="btn primary" type="submit" data-i18n="auth.login">登录</button>
-        <p class="form-error" id="login-error"></p>
-        <p class="login-hint" data-i18n="auth.demo">演示账号：chen.audit / audit123</p>
-      </form>
+        <div class="segmented auth-tabs" role="tablist">
+          <button type="button" class="segment active" data-auth-mode="login" data-i18n="auth.login">登录</button>
+          <button type="button" class="segment" data-auth-mode="register" data-i18n="auth.register">注册</button>
+        </div>
+        <form class="auth-form" id="login-form">
+          <h1 data-i18n="auth.title">登录</h1>
+          <p data-i18n="auth.help">使用内部账号进入审计工作台。</p>
+          <label class="field">
+            <span data-i18n="auth.username">用户名</span>
+            <input name="username" autocomplete="username" value="chen.audit" required />
+          </label>
+          <label class="field">
+            <span data-i18n="auth.password">密码</span>
+            <input name="password" type="password" autocomplete="current-password" value="audit123" required />
+          </label>
+          <button class="btn primary" type="submit" data-i18n="auth.login">登录</button>
+          <p class="form-error" id="login-error"></p>
+          <p class="login-hint" data-i18n="auth.demo">演示账号：chen.audit / audit123</p>
+        </form>
+        <form class="auth-form hidden" id="register-form">
+          <h1 data-i18n="auth.registerTitle">邀请注册</h1>
+          <p data-i18n="auth.registerHelp">使用管理员提供的邀请码激活账号。</p>
+          <label class="field">
+            <span data-i18n="auth.inviteToken">邀请码</span>
+            <input name="inviteToken" autocomplete="one-time-code" required />
+          </label>
+          <label class="field">
+            <span data-i18n="auth.username">用户名</span>
+            <input name="username" autocomplete="username" required />
+          </label>
+          <label class="field">
+            <span data-i18n="auth.password">密码</span>
+            <input name="password" type="password" minlength="8" autocomplete="new-password" required />
+          </label>
+          <button class="btn primary" type="submit" data-i18n="auth.activate">激活并登录</button>
+          <p class="form-error" id="register-error"></p>
+        </form>
+      </div>
     </section>
 
     <div class="app-shell hidden" id="app-shell">
@@ -52,7 +76,7 @@
             <span class="icon" aria-hidden="true">▣</span>
             <span data-i18n="nav.chat">实时会话</span>
           </button>
-          <button class="nav-item" data-view="admin">
+          <button class="nav-item" data-view="admin" id="admin-nav-button">
             <span class="icon" aria-hidden="true">⚙</span>
             <span data-i18n="nav.admin">管理</span>
           </button>
@@ -241,7 +265,7 @@
                   <h2 data-i18n="admin.users">用户与小组</h2>
                   <p data-i18n="admin.usersHelp">批量创建账号、分组并设置预算。</p>
                 </div>
-                <button class="btn primary" data-i18n="admin.batchCreate">批量创建</button>
+                <button class="btn primary" id="batch-create-button" data-i18n="admin.batchCreate">批量创建</button>
               </div>
               <div class="admin-grid" id="admin-grid"></div>
             </section>
@@ -335,6 +359,55 @@
         </div>
         <div class="preview-content" id="preview-content"></div>
       </section>
+    </div>
+    <div class="modal-backdrop hidden" id="batch-account-modal" role="dialog" aria-modal="true" aria-labelledby="batch-account-title">
+      <form class="modal-panel" id="batch-account-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="batch-account-title" data-i18n="admin.batchTitle">批量创建邀请</h2>
+            <p data-i18n="admin.batchHelp">为同一小组创建多个待激活账号。</p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-batch-account aria-label="Close">×</button>
+        </div>
+        <div class="segmented">
+          <button type="button" class="segment active" data-group-mode="existing" data-i18n="admin.existingGroup">现有小组</button>
+          <button type="button" class="segment" data-group-mode="new" data-i18n="admin.newGroup">新建小组</button>
+        </div>
+        <label class="field" id="existing-group-field">
+          <span data-i18n="admin.group">小组</span>
+          <select name="groupId" id="batch-group-select"></select>
+        </label>
+        <label class="field hidden" id="new-group-field">
+          <span data-i18n="admin.newGroupName">新小组名称</span>
+          <input name="newGroupName" id="batch-new-group" />
+        </label>
+        <div class="batch-fields">
+          <label class="field">
+            <span data-i18n="admin.inviteCount">邀请数量</span>
+            <input name="count" type="number" min="1" max="100" value="1" required />
+          </label>
+          <label class="field">
+            <span data-i18n="admin.userBudget">每人 Token 预算</span>
+            <input name="budgetTokens" type="number" min="0" value="0" required />
+          </label>
+          <label class="field">
+            <span data-i18n="admin.maxSessions">并发会话数</span>
+            <input name="maxSessions" type="number" min="1" max="10" value="1" required />
+          </label>
+        </div>
+        <p class="form-error" id="batch-account-error"></p>
+        <div class="invite-results hidden" id="invite-results">
+          <div class="panel-head">
+            <strong data-i18n="admin.createdInvites">已创建邀请</strong>
+            <button type="button" class="btn" id="copy-all-invites" data-i18n="admin.copyAll">复制全部</button>
+          </div>
+          <div id="invite-result-list"></div>
+        </div>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-batch-account data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" data-i18n="admin.createInvites">创建邀请</button>
+        </div>
+      </form>
     </div>
     <div class="modal-backdrop hidden" id="codex-settings-modal" role="dialog" aria-modal="true" aria-labelledby="codex-settings-title">
       <form class="modal-panel" id="codex-settings-form">

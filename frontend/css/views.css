@@ -86,6 +86,20 @@
   border-bottom: 1px solid var(--line);
 }
 
+.admin-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.invite-token {
+  display: block;
+  max-width: 100%;
+  margin-top: 8px;
+  overflow-wrap: anywhere;
+  color: var(--primary-dark);
+}
+
 .workspace-item:hover,
 .admin-item:hover,
 .workspace-item.active {
@@ -349,6 +363,38 @@ td.code {
 
 .modal-actions {
   justify-content: flex-end;
+}
+
+.batch-fields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.invite-results {
+  display: grid;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fbfcfd;
+}
+
+.invite-result-row {
+  display: grid;
+  gap: 4px;
+  padding: 8px 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.invite-result-row:last-child {
+  border-bottom: 0;
+}
+
+@media (max-width: 640px) {
+  .batch-fields {
+    grid-template-columns: 1fr;
+  }
 }
 
 .selected-folder-list {

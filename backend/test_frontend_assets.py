@@ -48,6 +48,17 @@ class FrontendAssetTests(unittest.TestCase):
 
         self.assertGreater(checked_modules, 0)
 
+    def test_invite_and_chat_activity_ui_is_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="register-form"', html)
+        self.assertIn('id="batch-account-form"', html)
+        self.assertIn('api("/api/register"', app_source)
+        self.assertIn('api("/api/accounts/batch"', app_source)
+        self.assertIn("event-running-dots", render_source)
+        self.assertIn("event-fold", render_source)
+
 
 if __name__ == "__main__":
     unittest.main()

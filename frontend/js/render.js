@@ -3,6 +3,8 @@ import { fallbackAccounts, fallbackAuditEvents } from "./mockData.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { state } from "./state.js";
 
+const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
+
 function statusLabel(status) {
   return t(`chat.${status}`) || status;
 }
@@ -244,16 +246,31 @@ export function renderEvents() {
     return;
   }
   let previousRunId = "";
-  stream.innerHTML = session.events
+  const events = session.events
     .map(([type, zh, en, runId, eventId, status]) => {
       const message = state.lang === "zh" ? zh : en;
       const divider = runId && previousRunId && runId !== previousRunId ? `<div class="run-divider" aria-hidden="true"></div>` : "";
       previousRunId = runId || previousRunId;
-      const body = type === "assistant" ? `<div class="event-markdown">${markdownToHtml(message)}</div>` : `<p>${escapeHtml(message)}</p>`;
+      const flattened = String(message).replace(/\s+/g, " ").trim();
+      const body =
+        type === "assistant"
+          ? `<div class="event-markdown">${markdownToHtml(message)}</div>`
+          : type === "command"
+            ? `<details class="event-fold" data-multiline="${String(message).includes("\n")}"><summary title="${escapeHtml(flattened)}">${escapeHtml(flattened)}</summary><pre>${escapeHtml(message)}</pre></details>`
+            : `<p>${escapeHtml(message)}</p>`;
       const statusBadge = status ? `<span class="event-status event-status-${safeClass(status)}">${escapeHtml(t(`chat.${status}`) || status)}</span>` : "";
       return `${divider}<article class="event event-${safeClass(type)}" data-event-id="${Number(eventId) || 0}"><span class="event-type">${escapeHtml(eventTypeLabel(type))}${statusBadge}</span>${body}</article>`;
     })
     .join("");
+  const thinking = ACTIVE_CHAT_STATES.has(session.status)
+    ? `<article class="event event-running-dots" role="status" aria-label="${escapeHtml(t("chat.thinking"))}"><span class="event-type">${escapeHtml(t("chat.thinking"))}</span><span class="running-dots" aria-hidden="true"><span></span><span></span><span></span></span></article>`
+    : "";
+  stream.innerHTML = events + thinking;
+  stream.querySelectorAll(".event-fold").forEach((fold) => {
+    const summary = fold.querySelector("summary");
+    const collapsible = fold.dataset.multiline === "true" || summary.scrollWidth > summary.clientWidth;
+    fold.classList.toggle("foldable", collapsible);
+  });
   stream.scrollTop = stream.scrollHeight;
 }
 
@@ -306,22 +323,31 @@ export function renderFileExplorer() {
 
 export function renderAdmin() {
   const accountRows = state.accounts.length
-    ? state.accounts.map((account) => [
-        account.username,
-        `${account.role}${account.enabled ? "" : " disabled"}`,
-        `${Number(account.usedTokens || 0).toLocaleString()} / ${Number(account.budgetTokens || 0).toLocaleString()} tokens`,
-      ])
-    : fallbackAccounts;
-  document.querySelector("#admin-grid").innerHTML = accountRows
-    .map(
-      ([name, role, budget]) => `
-        <article class="admin-item">
-          <div><h3>${name}</h3><div class="meta-line"><span>${role}</span><span>${budget}</span></div></div>
-          <button class="btn">${state.lang === "zh" ? "调整预算" : "Adjust budget"}</button>
-        </article>
-      `,
-    )
-    .join("");
+    ? state.accounts
+        .map((account) => {
+          const status = account.status === "active" && !account.enabled ? "disabled" : account.status || "active";
+          const name = account.username || account.id;
+          const token = account.inviteToken || "";
+          const actions = token
+            ? `<div class="admin-actions"><button class="btn" data-copy-invite="${escapeHtml(token)}">${t("admin.copy")}</button><button class="btn danger" data-revoke-invite="${escapeHtml(account.id)}">${t("admin.revoke")}</button></div>`
+            : "";
+          return `
+            <article class="admin-item">
+              <div>
+                <h3>${escapeHtml(name)}</h3>
+                <div class="meta-line"><span>${escapeHtml(account.group || "-")}</span><span>${escapeHtml(account.role || "user")}</span><span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span><span>${Number(account.usedTokens || 0).toLocaleString()} / ${Number(account.budgetTokens || 0).toLocaleString()} tokens</span></div>
+                ${token ? `<code class="invite-token">${escapeHtml(token)}</code>` : ""}
+              </div>
+              ${actions}
+            </article>`;
+        })
+        .join("")
+    : fallbackAccounts
+        .map(
+          ([name, role, budget]) => `<article class="admin-item"><div><h3>${escapeHtml(name)}</h3><div class="meta-line"><span>${escapeHtml(role)}</span><span>${escapeHtml(budget)}</span></div></div></article>`,
+        )
+        .join("");
+  document.querySelector("#admin-grid").innerHTML = accountRows;
 
   const logs = state.auditLogs.length
     ? state.auditLogs.map((log) => `${log.actor} ${log.event}${log.detail ? ` - ${log.detail}` : ""}`)

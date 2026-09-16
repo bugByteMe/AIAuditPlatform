@@ -275,11 +275,12 @@ class DockerCodexRunner(CodexRunner):
 
   def make_tree_writable_for_container(self, root: Path) -> None:
     for path in [root, *root.rglob("*")]:
-      try:
-        os.chown(path, self.container_uid, self.container_gid)
-      except OSError as exc:
-        if os.geteuid() == 0:
-          raise RunnerError(f"Failed to set container ownership for {path}") from exc
+      if hasattr(os, "chown"):
+        try:
+          os.chown(path, self.container_uid, self.container_gid)
+        except OSError as exc:
+          if getattr(os, "geteuid", lambda: -1)() == 0:
+            raise RunnerError(f"Failed to set container ownership for {path}") from exc
       if path.is_dir():
         path.chmod(0o700)
       elif path.is_file():
