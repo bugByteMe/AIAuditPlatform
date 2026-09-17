@@ -1,4 +1,4 @@
-import { api, apiUrl, authenticatedApiUrl, uploadApi } from "./js/api.js";
+import { api, apiUrl, authenticatedApiUrl, uploadChunkApi } from "./js/api.js";
 import {
   LIVE_CHAT_STATES,
   TERMINAL_CHAT_STATES,
@@ -910,29 +910,24 @@ async function createWorkspaceFromModal(form) {
   }
   const formData = new FormData(form);
   const workspaceName = String(formData.get("workspaceName") || "").trim();
-  const upload = new FormData();
-  upload.append("name", workspaceName);
-  upload.append("shared", document.querySelector("#workspace-shared-input").checked ? "true" : "false");
-  state.selectedUploadFiles.forEach((item) => {
-    upload.append("paths", item.path);
-    upload.append("files", item.file, item.path);
-  });
   const controller = new AbortController();
   const submitButton = document.querySelector("#workspace-create-submit");
   state.workspaceCreateUploadController = controller;
   submitButton.disabled = true;
   setOperationProgress(t("progress.uploadWorkspace"), 0);
   try {
-    const result = await uploadApi(
-      "/api/workspaces",
-      upload,
-      (percent) => setOperationProgress(t("progress.uploadWorkspace"), percent),
-      { signal: controller.signal },
-    );
+    const workspace = await runResumableUpload({
+      items: state.selectedUploadFiles,
+      mode: "create",
+      name: workspaceName,
+      shared: document.querySelector("#workspace-shared-input").checked,
+      signal: controller.signal,
+      uploadLabel: t("progress.uploadWorkspace"),
+    });
     state.workspaceCreateUploadController = null;
     closeWorkspaceModal();
     await loadWorkspaces();
-    const index = state.workspaces.findIndex((item) => item.id === result.workspace.id);
+    const index = state.workspaces.findIndex((item) => item.id === workspace.id);
     if (index >= 0) selectWorkspace(index);
     showToast(state.lang === "zh" ? "工作区已创建。" : "Workspace created.");
   } catch (error) {
@@ -942,6 +937,91 @@ async function createWorkspaceFromModal(form) {
     submitButton.disabled = false;
     clearOperationProgress();
   }
+}
+
+const PENDING_UPLOAD_KEY = "aiAuditPendingUpload";
+
+function uploadFingerprint(items, mode, workspaceId = "", name = "", shared = false) {
+  return JSON.stringify({
+    mode,
+    workspaceId,
+    name,
+    shared,
+    files: items.map((item) => [item.path, item.file.size, item.file.lastModified]),
+  });
+}
+
+async function runResumableUpload({ items, mode, workspaceId = "", name = "", shared = false, signal, uploadLabel }) {
+  const fingerprint = uploadFingerprint(items, mode, workspaceId, name, shared);
+  let saved = null;
+  try {
+    saved = JSON.parse(window.localStorage.getItem(PENDING_UPLOAD_KEY) || "null");
+  } catch {
+    window.localStorage.removeItem(PENDING_UPLOAD_KEY);
+  }
+  let upload = null;
+  if (saved?.fingerprint === fingerprint && saved.uploadId) {
+    try {
+      upload = (await api(`/api/uploads/${encodeURIComponent(saved.uploadId)}`)).upload;
+    } catch {
+      window.localStorage.removeItem(PENDING_UPLOAD_KEY);
+    }
+  }
+  if (!upload || !["uploading", "processing", "committing"].includes(upload.status)) {
+    upload = (await api("/api/uploads", {
+      method: "POST",
+      body: JSON.stringify({
+        mode,
+        workspaceId: workspaceId || undefined,
+        name,
+        shared,
+        files: items.map((item) => ({ path: item.path, size: item.file.size, lastModified: item.file.lastModified })),
+      }),
+    })).upload;
+    window.localStorage.setItem(PENDING_UPLOAD_KEY, JSON.stringify({ fingerprint, uploadId: upload.id }));
+  }
+  const total = Math.max(1, Number(upload.totalBytes || items.reduce((sum, item) => sum + item.file.size, 0)));
+  const offsets = items.map((_, index) => Number(upload.offsets?.[index] || 0));
+  const inflight = new Map();
+  const renderBytes = () => {
+    const sent = offsets.reduce((sum, value) => sum + value, 0) + [...inflight.values()].reduce((sum, value) => sum + value, 0);
+    setOperationProgress(uploadLabel, Math.min(89, Math.floor((sent / total) * 89)));
+  };
+  if (upload.status === "uploading") {
+    let nextIndex = 0;
+    const sendFile = async () => {
+      while (nextIndex < items.length) {
+        const index = nextIndex++;
+        const file = items[index].file;
+        while (offsets[index] < file.size) {
+          if (signal?.aborted) throw new DOMException("Upload aborted", "AbortError");
+          const start = offsets[index];
+          const end = Math.min(file.size, start + Number(upload.chunkSizeBytes || state.runtimeConfig.uploadChunkBytes || 8 * 1024 * 1024));
+          const result = await uploadChunkApi(
+            `/api/uploads/${encodeURIComponent(upload.id)}/files/${index}?offset=${start}`,
+            file.slice(start, end),
+            (loaded) => { inflight.set(index, loaded); renderBytes(); },
+            { signal },
+          );
+          inflight.delete(index);
+          offsets[index] = Number(result.upload.offsets?.[index] ?? end);
+          renderBytes();
+        }
+      }
+    };
+    await Promise.all([sendFile(), sendFile()]);
+    upload = (await api(`/api/uploads/${encodeURIComponent(upload.id)}/complete`, { method: "POST", body: JSON.stringify({}) })).upload;
+  }
+  while (upload.status !== "committed") {
+    if (upload.status === "failed") throw new Error(upload.error || "Upload processing failed");
+    if (signal?.aborted && upload.status === "uploading") throw new DOMException("Upload aborted", "AbortError");
+    setOperationProgress(t(upload.phase === "committing" ? "progress.committingUpload" : "progress.processingUpload"), 90, true);
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    upload = (await api(`/api/uploads/${encodeURIComponent(upload.id)}`)).upload;
+  }
+  window.localStorage.removeItem(PENDING_UPLOAD_KEY);
+  setOperationProgress(t("progress.committingUpload"), 100);
+  return upload.workspace;
 }
 
 function downloadCurrentWorkspace(mode) {
@@ -1052,23 +1132,14 @@ async function uploadFilesToCurrentWorkspace(files) {
   const workspace = safeCurrentWorkspace();
   const incoming = [...files];
   if (!workspace || !incoming.length) return;
-  const upload = new FormData();
-  incoming.forEach((file) => {
-    const path = file.webkitRelativePath || file.name;
-    upload.append("paths", path);
-    upload.append("files", file, path);
-  });
+  const items = incoming.map((file) => ({ file, path: file.webkitRelativePath || file.name }));
   setOperationProgress(t("progress.uploadFiles"), 0);
   try {
-    const result = await uploadApi(
-      `/api/workspaces/${encodeURIComponent(workspace.id)}/files`,
-      upload,
-      (percent) => setOperationProgress(t("progress.uploadFiles"), percent),
-    );
+    const updatedWorkspace = await runResumableUpload({ items, mode: "append", workspaceId: workspace.id, uploadLabel: t("progress.uploadFiles") });
     const index = workspaceIndexById(workspace.id);
-    if (index >= 0) state.workspaces[index] = result.workspace;
+    if (index >= 0) state.workspaces[index] = updatedWorkspace;
     state.selectedArtifacts = new Set(
-      (result.workspace.files || [])
+      (updatedWorkspace.files || [])
         .filter((file) => file.type === "file")
         .map((file) => file.path),
     );

@@ -40,6 +40,7 @@ def node(node_id, cpu, memory):
     "cpu": float(cpu),
     "memoryBytes": memory,
     "enabled": True,
+    "uploadSlots": 1,
   }
 
 
@@ -81,6 +82,15 @@ class WorkerRegistryTest(unittest.TestCase):
   def test_rejects_request_larger_than_every_node(self):
     self.assertFalse(self.registry.compatible(9, 2_000))
     self.assertIsNone(self.registry.select(9, 2_000))
+
+  def test_upload_claim_honors_slots_and_is_reported_separately(self):
+    worker_id = self.registry.claim_upload("upload-1", 1, 1_000)
+    second_worker = self.registry.claim_upload("upload-2", 1, 1_000)
+    self.assertNotEqual(worker_id, second_worker)
+    self.assertIsNone(self.registry.claim_upload("upload-3", 1, 1_000))
+    status = self.registry.node_status(worker_id)
+    self.assertEqual(status["activeUploadCount"], 1)
+    self.assertEqual(status["activeRunCount"], 0)
 
 
 if __name__ == "__main__":

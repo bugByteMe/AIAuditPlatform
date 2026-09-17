@@ -7,6 +7,9 @@ The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to us
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.
 - `session_cookie`, `session_ttl_seconds`, `pbkdf2_iterations`, and `audit_log_limit` configure authentication persistence and audit retention.
 - `max_file_bytes`, `max_workspace_bytes`, `max_file_count`, `max_text_preview_bytes`, `blocked_upload_suffixes`, and `office_preview_timeout_seconds` configure upload and preview limits.
+- `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation.
+- `upload_session_ttl_seconds` controls abandoned-session retention, `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
+- `upload_reservation_cpus` and `upload_reservation_memory` reserve worker capacity during active upload sessions. Each compute node may set `upload_slots` (default `1`).
 
 ## Chat Streaming
 
@@ -37,7 +40,8 @@ The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to us
       "workspace_storage_dir": "/srv/ai-audit/workspace_storage",
       "tls_cert_file": "/etc/ai-audit/worker.crt",
       "tls_key_file": "/etc/ai-audit/worker.key",
-      "enabled": true
+      "enabled": true,
+      "upload_slots": 1
     }
   ],
   "worker_ca_file": "/etc/ai-audit/cluster-ca.crt"
@@ -57,7 +61,7 @@ The control plane requires the same bearer token through `AI_AUDIT_WORKER_AUTH_T
 - `worker_request_timeout_seconds` bounds individual HTTPS calls.
 - `worker_run_lease_seconds` fences orphaned work. A worker stops an active container if the control plane no longer renews its lease.
 
-The agent API is intentionally narrow: health, start, status/events, stop, lease renewal, and terminal acknowledgement/cleanup. It requires HTTPS and constant-time bearer authentication. Codex API keys are written by the control plane into the session-scoped shared `CODEX_HOME`; they are not included in scheduler requests or worker run records.
+The agent API is intentionally narrow: health; run start, status/events, stop, lease renewal, and terminal acknowledgement; plus upload initialization, bounded chunks, status, finalization, and cleanup. It requires HTTPS and constant-time bearer authentication. Codex API keys are written by the control plane into the session-scoped shared `CODEX_HOME`; they are not included in scheduler requests or worker run records.
 
 ## Account Policy
 

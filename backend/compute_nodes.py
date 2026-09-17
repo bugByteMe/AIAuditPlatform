@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import http.client
 import ssl
 import threading
 import time
@@ -105,6 +106,47 @@ class WorkerClient:
   def acknowledge(self, run_id: str) -> dict:
     return self.request("DELETE", f"/v1/runs/{urllib.parse.quote(run_id)}")
 
+  def initialize_upload(self, upload: dict) -> dict:
+    return self.request("POST", "/v1/uploads", upload)
+
+  def upload_status(self, upload_id: str) -> dict:
+    return self.request("GET", f"/v1/uploads/{urllib.parse.quote(upload_id)}")
+
+  def complete_upload(self, upload_id: str) -> dict:
+    return self.request("POST", f"/v1/uploads/{urllib.parse.quote(upload_id)}/complete", {})
+
+  def cancel_upload(self, upload_id: str) -> dict:
+    return self.request("DELETE", f"/v1/uploads/{urllib.parse.quote(upload_id)}")
+
+  def stream_upload_chunk(self, upload_id: str, file_index: int, offset: int, source, length: int, buffer_bytes: int) -> dict:
+    parsed = urllib.parse.urlparse(self.base_url)
+    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=max(self.timeout, 60), context=self.ssl_context)
+    path = f"/v1/uploads/{urllib.parse.quote(upload_id)}/files/{file_index}?offset={offset}"
+    try:
+      connection.putrequest("PUT", path)
+      connection.putheader("Authorization", f"Bearer {self.token}")
+      connection.putheader("Content-Type", "application/octet-stream")
+      connection.putheader("Content-Length", str(length))
+      connection.endheaders()
+      remaining = length
+      while remaining:
+        block = source.read(min(buffer_bytes, remaining))
+        if not block:
+          raise WorkerUnavailable("client upload stream ended before Content-Length")
+        connection.send(block)
+        remaining -= len(block)
+      response = connection.getresponse()
+      payload = json.loads(response.read().decode("utf-8") or "{}")
+      if response.status < 200 or response.status >= 300:
+        raise WorkerUnavailable(str(payload.get("message") or payload.get("error") or f"worker upload HTTP {response.status}"))
+      return payload
+    except (OSError, ValueError, http.client.HTTPException) as exc:
+      if isinstance(exc, WorkerUnavailable):
+        raise
+      raise WorkerUnavailable(f"worker {self.node['id']} upload failed: {exc}") from exc
+    finally:
+      connection.close()
+
 
 class WorkerRegistry:
   def __init__(self, settings, *, client_factory=WorkerClient, start_monitor: bool = True):
@@ -179,14 +221,17 @@ class WorkerRegistry:
     with self.lock:
       return self._select_locked(cpu, memory_bytes)
 
-  def claim(self, run_id: str, cpu: float, memory_bytes: int) -> str | None:
+  def claim(self, run_id: str, cpu: float, memory_bytes: int, kind: str = "run") -> str | None:
     with self.lock:
-      node_id = self._select_locked(cpu, memory_bytes)
+      node_id = self._select_locked(cpu, memory_bytes, kind)
       if node_id:
-        self.states[node_id]["reservations"][run_id] = {"cpu": cpu, "memoryBytes": memory_bytes}
+        self.states[node_id]["reservations"][run_id] = {"cpu": cpu, "memoryBytes": memory_bytes, "kind": kind}
       return node_id
 
-  def _select_locked(self, cpu: float, memory_bytes: int) -> str | None:
+  def claim_upload(self, upload_id: str, cpu: float, memory_bytes: int) -> str | None:
+    return self.claim(upload_id, cpu, memory_bytes, "upload")
+
+  def _select_locked(self, cpu: float, memory_bytes: int, kind: str = "run") -> str | None:
     candidates = []
     now = time.monotonic()
     for order, (node_id, node) in enumerate(self.nodes.items()):
@@ -195,15 +240,17 @@ class WorkerRegistry:
         continue
       used_cpu = sum(float(item["cpu"]) for item in state["reservations"].values())
       used_memory = sum(int(item["memoryBytes"]) for item in state["reservations"].values())
+      if kind == "upload" and sum(1 for item in state["reservations"].values() if item.get("kind") == "upload") >= int(node.get("uploadSlots") or 1):
+        continue
       if used_cpu + cpu > float(node["cpu"]) or used_memory + memory_bytes > int(node["memoryBytes"]):
         continue
       utilization = max((used_cpu + cpu) / float(node["cpu"]), (used_memory + memory_bytes) / int(node["memoryBytes"]))
       candidates.append((utilization, order, node_id))
     return min(candidates)[2] if candidates else None
 
-  def reserve(self, node_id: str, run_id: str, cpu: float, memory_bytes: int) -> None:
+  def reserve(self, node_id: str, run_id: str, cpu: float, memory_bytes: int, kind: str = "run") -> None:
     with self.lock:
-      self.states[node_id]["reservations"][run_id] = {"cpu": cpu, "memoryBytes": memory_bytes}
+      self.states[node_id]["reservations"][run_id] = {"cpu": cpu, "memoryBytes": memory_bytes, "kind": kind}
 
   def release(self, node_id: str | None, run_id: str) -> None:
     if not node_id or node_id not in self.states:
@@ -235,6 +282,7 @@ class WorkerRegistry:
               "memoryAvailableBytes": 0,
               "activeRunCount": 0,
               "activeRunIds": [],
+              "activeUploadCount": 0,
               "lastContact": None,
               "error": "disabled by configuration",
             }
@@ -242,6 +290,8 @@ class WorkerRegistry:
           continue
         state = self.states[node_id]
         reservations = state["reservations"]
+        upload_reservations = {key: value for key, value in reservations.items() if value.get("kind") == "upload"}
+        run_reservations = {key: value for key, value in reservations.items() if value.get("kind") != "upload"}
         used_cpu = sum(float(item["cpu"]) for item in reservations.values())
         used_memory = sum(int(item["memoryBytes"]) for item in reservations.values())
         healthy = bool(state.get("healthy")) and now - float(state.get("lastContactMonotonic") or 0) < self.settings.worker_unhealthy_after_seconds
@@ -258,8 +308,9 @@ class WorkerRegistry:
             "memoryTotalBytes": int(node["memoryBytes"]),
             "memoryUsedBytes": used_memory,
             "memoryAvailableBytes": max(0, int(node["memoryBytes"]) - used_memory),
-            "activeRunCount": len(reservations),
-            "activeRunIds": sorted(reservations),
+            "activeRunCount": len(run_reservations),
+            "activeRunIds": sorted(run_reservations),
+            "activeUploadCount": len(upload_reservations),
             "lastContact": state.get("lastContact"),
             "error": state.get("error") or "",
           }
@@ -282,4 +333,5 @@ class WorkerRegistry:
       "memoryUsedBytes": sum(worker["memoryUsedBytes"] for worker in healthy),
       "memoryAvailableBytes": sum(worker["memoryAvailableBytes"] for worker in healthy),
       "activeRunCount": sum(worker["activeRunCount"] for worker in healthy),
+      "activeUploadCount": sum(worker.get("activeUploadCount", 0) for worker in healthy),
     }

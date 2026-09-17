@@ -42,6 +42,12 @@
 
 - User can upload files and folders into a new workspace.
 - Large upload limits are enforced.
+- Upload manifests are rejected before byte transfer for unsafe paths, blocked types, count/size limits, permission failures, and quota exhaustion.
+- Chunk reads stay bounded independently of total folder size; duplicate chunks are idempotent and conflicting retries fail.
+- Uploads resume from persisted offsets after browser, control-plane, or worker restart, and can move to another healthy worker over shared storage.
+- Existing workspaces remain mutation-locked until commit or cancellation; new workspaces are not visible before commit.
+- Upload progress distinguishes transfer, processing, and commit, and does not show 100% before metadata commit.
+- Worker upload endpoints require cluster authentication and no worker credential or internal upload URL is returned to browsers.
 - Workspace fork creates an independent workspace from the selected snapshot.
 - Group-shared workspace is visible to group members.
 - Snapshot comparison detects added, modified, and deleted files.

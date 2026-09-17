@@ -88,6 +88,15 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("export function renderWorkers", render_source)
         self.assertNotRegex(html, r'<header class="topbar">\s*<div[^>]+>\s*<h1')
 
+    def test_resumable_upload_uses_chunk_and_processing_phases(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")
+        self.assertIn('api("/api/uploads"', app_source)
+        self.assertIn("uploadChunkApi", app_source)
+        self.assertIn("progress.processingUpload", app_source)
+        self.assertIn('xhr.open("PUT"', api_source)
+        self.assertNotIn('uploadApi(\n      "/api/workspaces"', app_source)
+
 
 if __name__ == "__main__":
     unittest.main()

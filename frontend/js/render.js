@@ -442,7 +442,7 @@ export function renderWorkers() {
       const memoryPercent = memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0;
       return `<article class="worker-card">
         <div class="worker-card-head"><h3>${escapeHtml(worker.id)}</h3><span class="pill ${worker.healthy ? "" : "danger"}">${t(worker.enabled === false ? "admin.workerDisabled" : worker.healthy ? "admin.workerHealthy" : "admin.workerUnhealthy")}</span></div>
-        <div class="meta-line"><span>${escapeHtml(worker.ip || "-")}${worker.port ? `:${Number(worker.port)}` : ""}</span><span>${Number(worker.activeRunCount || 0)} ${t("admin.activeRuns")}</span></div>
+        <div class="meta-line"><span>${escapeHtml(worker.ip || "-")}${worker.port ? `:${Number(worker.port)}` : ""}</span><span>${Number(worker.activeRunCount || 0)} ${t("admin.activeRuns")} · ${Number(worker.activeUploadCount || 0)} ${t("admin.activeUploads")}</span></div>
         <div class="worker-resource"><span>CPU ${cpuAvailable.toLocaleString()} / ${cpuTotal.toLocaleString()}</span><div class="meter"><span style="width:${cpuPercent}%"></span></div></div>
         <div class="worker-resource"><span>${t("chat.memory")} ${formatResourceBytes(memoryAvailable)} / ${formatResourceBytes(memoryTotal)}</span><div class="meter green"><span style="width:${memoryPercent}%"></span></div></div>
         <div class="meta-line"><span>${t("admin.lastContact")}: ${escapeHtml(worker.lastContact || "-")}</span>${worker.error ? `<span>${escapeHtml(worker.error)}</span>` : ""}</div>

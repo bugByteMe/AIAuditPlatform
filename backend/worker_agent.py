@@ -16,6 +16,8 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 from chat_runtime import DockerCodexRunner, safe_segment
 from config import SETTINGS
+from upload_store import WorkerUploadStore
+from workspace_store import StorageError
 
 
 TERMINAL = {"completed", "stopped", "failed"}
@@ -32,6 +34,7 @@ class WorkerState:
     self.lock = threading.RLock()
     self.condition = threading.Condition(self.lock)
     self.runner = DockerCodexRunner()
+    self.uploads = WorkerUploadStore(self.root, SETTINGS.upload_stream_buffer_bytes)
     self.runs: dict[str, dict] = {}
     self.events: dict[str, list[dict]] = {}
     self.state_dir.mkdir(parents=True, exist_ok=True)
@@ -240,6 +243,9 @@ class WorkerHandler(BaseHTTPRequestHandler):
   def do_POST(self) -> None:
     self.handle_request("POST")
 
+  def do_PUT(self) -> None:
+    self.handle_request("PUT")
+
   def do_DELETE(self) -> None:
     self.handle_request("DELETE")
 
@@ -254,6 +260,24 @@ class WorkerHandler(BaseHTTPRequestHandler):
         self.write_json(self.state.health())
       elif method == "POST" and parsed.path == "/v1/runs":
         self.write_json(self.state.start_run(self.read_json()), HTTPStatus.ACCEPTED)
+      elif method == "POST" and parsed.path == "/v1/uploads":
+        self.write_json(self.state.uploads.initialize(self.read_json()), HTTPStatus.CREATED)
+      elif len(parts) >= 3 and parts[:2] == ["v1", "uploads"]:
+        upload_id = parts[2]
+        action = parts[3] if len(parts) > 3 else ""
+        if method == "GET" and not action:
+          self.write_json(self.state.uploads.status(upload_id))
+        elif method == "PUT" and action == "files" and len(parts) == 5:
+          query = parse_qs(parsed.query)
+          length = int(self.headers.get("Content-Length") or -1)
+          result = self.state.uploads.write_chunk(upload_id, int(parts[4]), int((query.get("offset") or ["0"])[0]), self.rfile, length)
+          self.write_json(result)
+        elif method == "POST" and action == "complete":
+          self.write_json(self.state.uploads.complete(upload_id), HTTPStatus.ACCEPTED)
+        elif method == "DELETE" and not action:
+          self.write_json(self.state.uploads.cancel(upload_id))
+        else:
+          self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
       elif len(parts) >= 3 and parts[:2] == ["v1", "runs"]:
         run_id = parts[2]
         action = parts[3] if len(parts) > 3 else ""
@@ -274,6 +298,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
         self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
     except KeyError:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+    except StorageError as exc:
+      self.write_json({"error": exc.code, "message": exc.message}, HTTPStatus.BAD_REQUEST)
     except ValueError as exc:
       self.write_json({"error": "bad_request", "message": str(exc)}, HTTPStatus.BAD_REQUEST)
     except Exception:

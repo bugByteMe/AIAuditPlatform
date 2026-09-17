@@ -6,7 +6,19 @@ A workspace is a managed directory on the shared filesystem. It contains the fil
 
 Users create workspaces by uploading files or folders through the web UI. The backend writes uploaded content into a generated workspace path and stores metadata in the database.
 
-Large folder uploads should be handled as resumable or chunked uploads when supported by the frontend. The backend should enforce maximum file size, total workspace size, file count, and blocked file type policies.
+Folder uploads use persisted, resumable upload sessions. The browser first sends a file manifest to the control plane, which validates permissions, paths, file count, declared sizes, blocked file types, and group quota before accepting bytes. It then sends bounded binary chunks through the authenticated control-plane API. The control plane streams each chunk to a reserved compute worker without buffering the file or request body in memory.
+
+Compute workers stage chunks under shared storage, persist per-file offsets, stream files while hashing, create missing content-addressed blobs, and apply completed files to the active workspace. Only the control plane commits workspace and snapshot metadata. New workspaces remain invisible until commit; existing workspaces hold a mutation lease from session creation through commit or cancellation.
+
+The public upload lifecycle is:
+
+1. `POST /api/uploads` creates a session from a manifest.
+2. `PUT /api/uploads/<id>/files/<index>?offset=<bytes>` accepts idempotent chunks.
+3. `GET /api/uploads/<id>` reconciles offsets and processing state after reconnects.
+4. `POST /api/uploads/<id>/complete` starts worker finalization.
+5. `DELETE /api/uploads/<id>` cancels a session before finalization begins.
+
+Network progress and server processing are separate phases. The UI reports completion only after the worker result and authoritative metadata commit are complete. A browser reload requires the user to reselect the same folder; path, size, and modification time are matched to the persisted session. Expired pre-commit sessions release their quota and workspace reservations.
 
 ## Storage Model
 

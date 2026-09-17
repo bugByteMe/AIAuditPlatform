@@ -99,54 +99,37 @@ export async function api(path, options = {}) {
   throw lastError || new Error("request_failed");
 }
 
-function xhrJson(path, formData, base, onProgress, signal) {
+function xhrBinary(path, body, base, onProgress, signal) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
-    if (signal?.aborted) {
-      reject(new DOMException("Upload aborted", "AbortError"));
-      return;
-    }
-    xhr.open("POST", buildUrl(path, base), true);
+    if (signal?.aborted) return reject(new DOMException("Upload aborted", "AbortError"));
+    xhr.open("PUT", buildUrl(path, base), true);
     xhr.withCredentials = true;
+    xhr.setRequestHeader("Content-Type", "application/octet-stream");
     const token = window.localStorage.getItem(SESSION_TOKEN_KEY);
     if (token) xhr.setRequestHeader("Authorization", `Bearer ${token}`);
     xhr.upload.onprogress = (event) => {
-      if (event.lengthComputable && onProgress) onProgress(Math.round((event.loaded / event.total) * 100));
+      if (event.lengthComputable && onProgress) onProgress(event.loaded, event.total);
     };
-    xhr.onerror = () => {
-      const error = new Error("request_failed");
-      error.retryable = true;
-      reject(error);
-    };
+    xhr.onerror = () => reject(Object.assign(new Error("request_failed"), { retryable: true }));
     xhr.onabort = () => reject(new DOMException("Upload aborted", "AbortError"));
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.onload = () => {
       const contentType = xhr.getResponseHeader("Content-Type") || "";
-      if (!contentType.includes("application/json")) {
-        const error = new Error("api_not_json");
-        error.retryable = true;
-        error.status = xhr.status;
-        reject(error);
-        return;
-      }
+      if (!contentType.includes("application/json")) return reject(Object.assign(new Error("api_not_json"), { retryable: true, status: xhr.status }));
       const payload = JSON.parse(xhr.responseText || "{}");
-      if (xhr.status < 200 || xhr.status >= 300) {
-        const error = new Error(payload.message || payload.error || "request_failed");
-        error.status = xhr.status;
-        reject(error);
-        return;
-      }
+      if (xhr.status < 200 || xhr.status >= 300) return reject(Object.assign(new Error(payload.message || payload.error || "request_failed"), { status: xhr.status }));
       resolve(payload);
     };
-    xhr.send(formData);
+    xhr.send(body);
   });
 }
 
-export async function uploadApi(path, formData, onProgress, options = {}) {
+export async function uploadChunkApi(path, blob, onProgress, options = {}) {
   let lastError = null;
   for (const base of backendCandidates()) {
     try {
-      const payload = await xhrJson(path, formData, base, onProgress, options.signal);
+      const payload = await xhrBinary(path, blob, base, onProgress, options.signal);
       rememberApiBase(base);
       return payload;
     } catch (error) {

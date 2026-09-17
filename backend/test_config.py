@@ -46,6 +46,13 @@ class ConfigurationTest(unittest.TestCase):
       "worker_request_timeout_seconds",
       "worker_run_lease_seconds",
       "worker_unhealthy_after_seconds",
+      "upload_chunk_bytes",
+      "upload_stream_buffer_bytes",
+      "upload_session_ttl_seconds",
+      "upload_reservation_idle_seconds",
+      "upload_max_concurrent_streams",
+      "upload_reservation_cpus",
+      "upload_reservation_memory",
     }
     self.assertEqual(set(), expected - set(payload))
     self.assertNotIn("default_codex_api_key", payload)
@@ -56,6 +63,7 @@ class ConfigurationTest(unittest.TestCase):
     self.assertGreaterEqual(SETTINGS.chat_poll_interval_ms, 250)
     self.assertGreater(SETTINGS.sse_wait_timeout_seconds, 0)
     self.assertTrue(SETTINGS.blocked_upload_suffixes)
+    self.assertGreater(SETTINGS.upload_chunk_bytes, SETTINGS.upload_stream_buffer_bytes)
 
   def test_compute_node_configuration_is_normalized(self) -> None:
     nodes = normalize_compute_nodes(

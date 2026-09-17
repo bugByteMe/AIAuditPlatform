@@ -18,7 +18,8 @@ from urllib.parse import quote, unquote, urlparse
 from account_store import AccountStore
 from chat_runtime import ChatRuntime
 from config import SETTINGS
-from workspace_store import StorageError, WorkspaceStore, parse_multipart, parse_query, parse_urlencoded_paths
+from upload_store import UploadManager
+from workspace_store import StorageError, WorkspaceStore, parse_query, parse_urlencoded_paths
 
 
 FRONTEND_DIR = SETTINGS.frontend_dir
@@ -142,6 +143,9 @@ def add_audit(actor: str, event: str, detail: str = "") -> None:
   del AUDIT_LOGS[SETTINGS.audit_log_limit:]
 
 
+UPLOAD_MANAGER = UploadManager(WORKSPACE_STORE, CHAT_RUNTIME.worker_registry, SETTINGS, add_audit)
+
+
 def active_sessions_for(username: str) -> int:
   now = time.time()
   return sum(1 for session in SESSIONS.values() if session["username"] == username and session["expiresAt"] > now)
@@ -174,6 +178,10 @@ class Handler(BaseHTTPRequestHandler):
     parsed = urlparse(self.path)
     self.handle_api("PATCH", parsed.path, parsed.query)
 
+  def do_PUT(self) -> None:
+    parsed = urlparse(self.path)
+    self.handle_api("PUT", parsed.path, parsed.query)
+
   def do_DELETE(self) -> None:
     parsed = urlparse(self.path)
     self.handle_api("DELETE", parsed.path, parsed.query)
@@ -183,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
     self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", "*"))
     self.send_header("Access-Control-Allow-Credentials", "true")
     self.send_header("Access-Control-Allow-Headers", "Content-Type, Authorization")
-    self.send_header("Access-Control-Allow-Methods", "GET,POST,PATCH,DELETE,OPTIONS")
+    self.send_header("Access-Control-Allow-Methods", "GET,POST,PUT,PATCH,DELETE,OPTIONS")
     self.end_headers()
 
   def handle_api(self, method: str, path: str, query: str = "") -> None:
@@ -198,6 +206,7 @@ class Handler(BaseHTTPRequestHandler):
             "registrationMinPasswordLength": SETTINGS.registration_min_password_length,
             "batchInviteMaxCount": SETTINGS.batch_invite_max_count,
             "accountMaxSessionsLimit": SETTINGS.account_max_sessions_limit,
+            "uploadChunkBytes": SETTINGS.upload_chunk_bytes,
           }
         )
       elif method == "GET" and path == "/api/session":
@@ -239,7 +248,9 @@ class Handler(BaseHTTPRequestHandler):
       elif method == "GET" and path == "/api/workspaces":
         self.list_workspaces()
       elif method == "POST" and path == "/api/workspaces":
-        self.create_workspace()
+        raise StorageError("upload_sessions_required", "use /api/uploads for workspace creation")
+      elif path == "/api/uploads" or path.startswith("/api/uploads/"):
+        self.upload_api(method, path, query)
       elif path.startswith("/api/workspaces/"):
         self.workspace_api(method, path, query)
       else:
@@ -259,11 +270,11 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.NOT_FOUND
     if exc.code == "forbidden":
       return HTTPStatus.FORBIDDEN
-    if exc.code in {"workspace_locked", "runs_not_stopped", "protected_admin"}:
+    if exc.code in {"workspace_locked", "workspace_changed", "upload_offset_mismatch", "upload_chunk_conflict", "upload_commit_started", "runs_not_stopped", "protected_admin"}:
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
       return HTTPStatus.PAYMENT_REQUIRED
-    if exc.code in {"codex_auth_required", "no_compatible_worker"}:
+    if exc.code in {"codex_auth_required", "no_compatible_worker", "no_upload_worker"}:
       return HTTPStatus.PRECONDITION_REQUIRED
     if exc.code in {"file_too_large", "workspace_too_large", "too_many_files", "group_disk_quota_exceeded"}:
       return HTTPStatus.REQUEST_ENTITY_TOO_LARGE
@@ -560,18 +571,36 @@ class Handler(BaseHTTPRequestHandler):
     user = self.require_user()
     self.write_json({"workspaces": WORKSPACE_STORE.list_workspaces(user)})
 
-  def create_workspace(self) -> None:
+  def upload_api(self, method: str, path: str, query: str) -> None:
     user = self.require_user()
-    length = int(self.headers.get("Content-Length") or 0)
-    fields, files = parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(length))
-    workspace = WORKSPACE_STORE.create_workspace(
-      user,
-      fields.get("name", "Untitled workspace"),
-      fields.get("shared", "").lower() in {"1", "true", "yes", "on"},
-      files,
-    )
-    add_audit(user["username"], "workspace created", workspace["id"])
-    self.write_json({"workspace": workspace}, HTTPStatus.CREATED)
+    parts = [unquote(part) for part in path.split("/") if part]
+    if method == "POST" and len(parts) == 2:
+      upload = UPLOAD_MANAGER.create(user, self.read_json())
+      add_audit(user["username"], "workspace upload started", upload["id"])
+      self.write_json({"upload": upload}, HTTPStatus.CREATED)
+      return
+    if len(parts) < 3:
+      self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+      return
+    upload_id = parts[2]
+    action = parts[3] if len(parts) > 3 else ""
+    if method == "GET" and not action:
+      self.write_json({"upload": UPLOAD_MANAGER.status(upload_id, user)})
+    elif method == "POST" and action == "complete":
+      result = UPLOAD_MANAGER.complete(upload_id, user)
+      add_audit(user["username"], "workspace upload finalization requested", upload_id)
+      self.write_json({"upload": result}, HTTPStatus.ACCEPTED)
+    elif method == "PUT" and action == "files" and len(parts) == 5:
+      length = int(self.headers.get("Content-Length") or -1)
+      offset = int((parse_query(query).get("offset") or ["0"])[0])
+      result = UPLOAD_MANAGER.receive_chunk(upload_id, user, int(parts[4]), offset, self.rfile, length)
+      self.write_json({"upload": result})
+    elif method == "DELETE" and not action:
+      result = UPLOAD_MANAGER.cancel(upload_id, user)
+      add_audit(user["username"], "workspace upload cancelled", upload_id)
+      self.write_json({"upload": result})
+    else:
+      self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
   def workspace_api(self, method: str, path: str, query: str) -> None:
     user = self.require_user()
@@ -606,11 +635,7 @@ class Handler(BaseHTTPRequestHandler):
       WORKSPACE_STORE.get_workspace(workspace_id, user)
       self.write_json({"files": WORKSPACE_STORE.file_tree(workspace_id)})
     elif method == "POST" and action == "files" and not subaction:
-      length = int(self.headers.get("Content-Length") or 0)
-      fields, files = parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(length))
-      workspace = WORKSPACE_STORE.add_files_to_workspace(workspace_id, user, files)
-      add_audit(user["username"], "workspace files uploaded", f"{workspace_id} {len(files)} files")
-      self.write_json({"workspace": workspace, "paths": [item.path for item in files]})
+      raise StorageError("upload_sessions_required", "use /api/uploads for workspace file uploads")
     elif method == "DELETE" and action == "files" and not subaction:
       params = parse_query(query)
       path_to_delete = (params.get("path") or [""])[0]

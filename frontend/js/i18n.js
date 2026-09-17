@@ -172,6 +172,7 @@ const dictionaries = {
     "admin.workerUnhealthy": "不可用",
     "admin.workerDisabled": "已禁用",
     "admin.activeRuns": "个活动任务",
+    "admin.activeUploads": "个活动上传",
     "admin.lastContact": "最近联系",
     "admin.audit": "审计事件",
     "admin.auditHelp": "关键操作记录会写入审计日志。",
@@ -203,6 +204,8 @@ const dictionaries = {
     "toast.budgetReset": "Token 预算已重置。",
     "progress.uploadWorkspace": "正在上传工作区",
     "progress.uploadFiles": "正在上传文件",
+    "progress.processingUpload": "正在处理上传文件",
+    "progress.committingUpload": "正在提交工作区",
     "progress.fork": "正在复刻工作区",
   },
   en: {
@@ -376,6 +379,7 @@ const dictionaries = {
     "admin.workerUnhealthy": "Unavailable",
     "admin.workerDisabled": "Disabled",
     "admin.activeRuns": "active runs",
+    "admin.activeUploads": "active uploads",
     "admin.lastContact": "Last contact",
     "admin.audit": "Audit Events",
     "admin.auditHelp": "Important actions are written to audit logs.",
@@ -407,6 +411,8 @@ const dictionaries = {
     "toast.budgetReset": "Token budget reset.",
     "progress.uploadWorkspace": "Uploading workspace",
     "progress.uploadFiles": "Uploading files",
+    "progress.processingUpload": "Processing uploaded files",
+    "progress.committingUpload": "Committing workspace",
     "progress.fork": "Forking workspace",
   },
 };

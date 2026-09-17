@@ -441,10 +441,81 @@ class WorkspaceStore:
     metadata["artifacts"][workspace["id"]] = self.diff_snapshots(parent, snapshot)
     return snapshot
 
+  def commit_prepared_upload(self, user: dict, session: dict, result: dict) -> dict:
+    """Commit a worker-prepared manifest while keeping metadata control-plane-owned."""
+    with self.lock:
+      metadata = self.load_metadata()
+      workspace_id = str(session["workspaceId"])
+      snapshot_id = str(result.get("snapshotId") or session["snapshotId"])
+      files = result.get("files") or {}
+      if len(files) > MAX_FILE_COUNT or sum(int(entry.get("size") or 0) for entry in files.values()) > MAX_WORKSPACE_BYTES:
+        raise StorageError("workspace_too_large", "prepared upload exceeds workspace limits")
+      timestamp = now_string()
+      if session["mode"] == "create":
+        workspace = metadata["workspaces"].get(workspace_id)
+        if workspace:
+          return self.public_workspace(workspace, metadata)
+        workspace = {
+          "id": workspace_id,
+          "name": str(session.get("name") or "Untitled workspace"),
+          "owner": session["owner"],
+          "group": session.get("group", ""),
+          "shared": bool(session.get("shared")),
+          "locked": False,
+          "created": timestamp,
+          "updated": timestamp,
+          "fileCount": len(files),
+          "sizeBytes": sum(int(entry["size"]) for entry in files.values()),
+          "latestSnapshotId": snapshot_id,
+          "initialSnapshotId": snapshot_id,
+          "sourceWorkspaceId": None,
+          "sourceSnapshotId": None,
+          "sessions": [],
+        }
+        metadata["workspaces"][workspace_id] = workspace
+        parent_id = None
+      else:
+        workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+        if workspace.get("latestSnapshotId") == snapshot_id:
+          return self.public_workspace(workspace, metadata)
+        if workspace.get("activeUploadId") != session["id"]:
+          raise StorageError("workspace_locked", "workspace upload lease is not owned by this upload")
+        if workspace.get("latestSnapshotId") != session.get("parentSnapshotId"):
+          raise StorageError("workspace_changed", "workspace changed during upload")
+        parent_id = workspace.get("latestSnapshotId")
+      snapshot = {
+        "id": snapshot_id,
+        "workspaceId": workspace_id,
+        "parentSnapshotId": parent_id,
+        "reason": "upload" if session["mode"] == "create" else "file_upload",
+        "actor": user["username"],
+        "created": timestamp,
+        "manifestPath": f"{snapshot_id}.json",
+        "files": files,
+      }
+      manifest_path = ensure_under_root(self.manifest_dir, self.manifest_dir / snapshot["manifestPath"])
+      manifest_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+      parent = metadata["snapshots"].get(parent_id) if parent_id else None
+      metadata["snapshots"][snapshot_id] = snapshot
+      workspace["latestSnapshotId"] = snapshot_id
+      workspace["updated"] = timestamp
+      workspace["fileCount"] = len(files)
+      workspace["sizeBytes"] = sum(int(entry["size"]) for entry in files.values())
+      workspace["locked"] = False
+      workspace.pop("activeUploadId", None)
+      if session["mode"] == "create":
+        metadata["artifacts"][workspace_id] = []
+      else:
+        metadata["artifacts"][workspace_id] = self.diff_snapshots(parent, snapshot)
+      self.save_metadata(metadata)
+      return self.public_workspace(workspace, metadata)
+
   def fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
     with self.lock:
       metadata = self.load_metadata()
       source = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      if source.get("locked"):
+        raise StorageError("workspace_locked", "workspace has an active write lock")
       self.assert_group_quota(user, int(source.get("sizeBytes") or 0), metadata)
       return self._fork_workspace(workspace_id, user, name)
 

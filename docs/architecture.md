@@ -63,6 +63,7 @@ Each compute worker runs a lightweight worker agent. The worker agent:
 - Answers health probes from the main node.
 - Reports capacity, active runs, and health.
 - Receives start and stop commands.
+- Receives authenticated resumable upload chunks and finalizes workspace files on shared storage.
 - Launches one Docker container per active Codex run.
 - Mounts the assigned workspace path into the container.
 - Applies CPU, memory, timeout, and network policies.

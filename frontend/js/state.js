@@ -21,6 +21,7 @@ export const state = {
     registrationMinPasswordLength: 8,
     batchInviteMaxCount: 100,
     accountMaxSessionsLimit: 10,
+    uploadChunkBytes: 8388608,
   },
   sessionPanelWidth: 280,
   filePanelWidth: 300,

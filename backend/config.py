@@ -106,6 +106,7 @@ def normalize_compute_nodes(raw_nodes) -> list[dict]:
         "tlsCertFile": str(source.get("tls_cert_file") or ""),
         "tlsKeyFile": str(source.get("tls_key_file") or ""),
         "enabled": bool(source.get("enabled", True)),
+        "uploadSlots": max(1, int(source.get("upload_slots") or 1)),
       }
     )
   return nodes
@@ -148,6 +149,13 @@ class Settings:
     self.max_workspace_bytes = _int("max_workspace_bytes", "AI_AUDIT_MAX_WORKSPACE_BYTES", 2 * 1024 * 1024 * 1024)
     self.max_file_count = _int("max_file_count", "AI_AUDIT_MAX_FILE_COUNT", 10_000)
     self.max_text_preview_bytes = _int("max_text_preview_bytes", "AI_AUDIT_MAX_TEXT_PREVIEW_BYTES", 256 * 1024)
+    self.upload_chunk_bytes = _int("upload_chunk_bytes", "AI_AUDIT_UPLOAD_CHUNK_BYTES", 8 * 1024 * 1024)
+    self.upload_stream_buffer_bytes = _int("upload_stream_buffer_bytes", "AI_AUDIT_UPLOAD_STREAM_BUFFER_BYTES", 1024 * 1024)
+    self.upload_session_ttl_seconds = _int("upload_session_ttl_seconds", "AI_AUDIT_UPLOAD_SESSION_TTL_SECONDS", 24 * 60 * 60)
+    self.upload_reservation_idle_seconds = _int("upload_reservation_idle_seconds", "AI_AUDIT_UPLOAD_RESERVATION_IDLE_SECONDS", 60)
+    self.upload_max_concurrent_streams = _int("upload_max_concurrent_streams", "AI_AUDIT_UPLOAD_MAX_CONCURRENT_STREAMS", 8)
+    self.upload_reservation_cpus = _float("upload_reservation_cpus", "AI_AUDIT_UPLOAD_RESERVATION_CPUS", 0.25)
+    self.upload_reservation_memory_bytes = parse_memory_bytes(_value("upload_reservation_memory", "AI_AUDIT_UPLOAD_RESERVATION_MEMORY", "256MiB"))
     self.blocked_upload_suffixes = _list(
       "blocked_upload_suffixes",
       "AI_AUDIT_BLOCKED_UPLOAD_SUFFIXES",
