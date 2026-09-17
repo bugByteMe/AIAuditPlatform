@@ -48,7 +48,7 @@ The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to us
 }
 ```
 
-The shared filesystem must expose the same `active/`, `codex/homes/`, snapshot, and blob content to the control plane and every worker. Mount points may differ, so each node declares its local `workspace_storage_dir`. Start a node agent with:
+The shared filesystem must expose the same `active/`, `codex/homes/`, upload staging, and blob content to the control plane and every worker. Workspace metadata is stored in `workspace.sqlite3` and is owned by the control plane; workers never write it. Mount points may differ, so each node declares its local `workspace_storage_dir`. Start a node agent with:
 
 ```text
 AI_AUDIT_WORKER_AUTH_TOKEN=<secret> AI_AUDIT_WORKER_NODE_ID=worker-01 python backend/worker_agent.py

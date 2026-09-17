@@ -6,6 +6,7 @@ import mimetypes
 import os
 import posixpath
 import shutil
+import sqlite3
 import subprocess
 import tempfile
 import threading
@@ -19,6 +20,7 @@ from typing import Callable
 from urllib.parse import parse_qs
 
 from config import SETTINGS
+from workspace_database import WorkspaceDatabase
 
 
 MAX_FILE_BYTES = SETTINGS.max_file_bytes
@@ -105,13 +107,12 @@ class WorkspaceStore:
     self.root = root
     self.active_dir = root / "active"
     self.blob_dir = root / "blobs" / "sha256"
-    self.manifest_dir = root / "manifests"
     self.bundle_dir = root / "bundles"
     self.preview_dir = root / "previews"
-    self.metadata_path = root / "metadata.json"
     self.chat_session_provider: Callable[[dict], list[dict]] | None = None
     self.account_provider: Callable[[], tuple[dict[str, dict], dict[str, dict]]] | None = None
     self.lock = threading.RLock()
+    self.database = WorkspaceDatabase(root)
     self.ensure_layout()
 
   def set_chat_session_provider(self, provider: Callable[[dict], list[dict]]) -> None:
@@ -177,23 +178,33 @@ class WorkspaceStore:
     return users.get(str(workspace.get("owner") or ""), fallback)
 
   def ensure_layout(self) -> None:
-    for path in [self.active_dir, self.blob_dir, self.manifest_dir, self.bundle_dir, self.preview_dir]:
+    for path in [self.active_dir, self.blob_dir, self.bundle_dir, self.preview_dir]:
       path.mkdir(parents=True, exist_ok=True)
-    if not self.metadata_path.exists():
-      self.save_metadata({"workspaces": {}, "snapshots": {}, "artifacts": {}})
 
   def load_metadata(self) -> dict:
     self.ensure_layout()
     try:
-      return json.loads(self.metadata_path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError as exc:
-      raise StorageError("metadata_corrupt", "workspace metadata is corrupt") from exc
+      return self.database.load()
+    except (sqlite3.DatabaseError, RuntimeError) as exc:
+      raise StorageError("metadata_corrupt", "workspace metadata database is corrupt or unsupported") from exc
 
   def save_metadata(self, metadata: dict) -> None:
-    self.root.mkdir(parents=True, exist_ok=True)
-    tmp = self.metadata_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(metadata, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    tmp.replace(self.metadata_path)
+    candidates = self.database.save(metadata)
+    for digest in candidates:
+      blob = self.blob_path(digest)
+      if blob.exists():
+        blob.unlink()
+    self.prune_preview_blobs(candidates)
+    self.remove_empty_blob_directories()
+
+  def prune_preview_blobs(self, digests: set[str]) -> None:
+    if not digests or not self.preview_dir.exists():
+      return
+    for workspace_previews in self.preview_dir.iterdir():
+      if not workspace_previews.is_dir():
+        continue
+      for digest in digests:
+        shutil.rmtree(workspace_previews / digest, ignore_errors=True)
 
   def user_can_access(self, user: dict, workspace: dict) -> bool:
     if user["role"] == "system_admin":
@@ -334,20 +345,21 @@ class WorkspaceStore:
     return self.public_workspace(workspace, metadata)
 
   def update_workspace(self, workspace_id: str, user: dict, payload: dict) -> dict:
-    metadata = self.load_metadata()
-    workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
-    if workspace["owner"] != user["username"] and user["role"] != "system_admin":
-      raise StorageError("forbidden", "only the owner or system admin can update workspace settings")
-    if "name" in payload:
-      name = str(payload["name"]).strip()
-      if not name:
-        raise StorageError("bad_request", "workspace name cannot be empty")
-      workspace["name"] = name
-    if "shared" in payload:
-      workspace["shared"] = bool(payload["shared"])
-    workspace["updated"] = now_string()
-    self.save_metadata(metadata)
-    return self.public_workspace(workspace, metadata)
+    with self.lock:
+      metadata = self.load_metadata()
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      if workspace["owner"] != user["username"] and user["role"] != "system_admin":
+        raise StorageError("forbidden", "only the owner or system admin can update workspace settings")
+      if "name" in payload:
+        name = str(payload["name"]).strip()
+        if not name:
+          raise StorageError("bad_request", "workspace name cannot be empty")
+        workspace["name"] = name
+      if "shared" in payload:
+        workspace["shared"] = bool(payload["shared"])
+      workspace["updated"] = now_string()
+      self.save_metadata(metadata)
+      return self.public_workspace(workspace, metadata)
 
   def user_can_mutate_workspace(self, user: dict, workspace: dict) -> bool:
     return user["role"] == "system_admin" or workspace["owner"] == user["username"]
@@ -409,26 +421,27 @@ class WorkspaceStore:
     return self.public_workspace(workspace, metadata)
 
   def delete_workspace_path(self, workspace_id: str, user: dict, raw_path: str) -> dict:
-    metadata = self.load_metadata()
-    workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
-    if not self.user_can_mutate_workspace(user, workspace):
-      raise StorageError("forbidden", "only the owner or system admin can delete files")
-    if workspace.get("locked"):
-      raise StorageError("workspace_locked", "workspace has an active write lock")
+    with self.lock:
+      metadata = self.load_metadata()
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      if not self.user_can_mutate_workspace(user, workspace):
+        raise StorageError("forbidden", "only the owner or system admin can delete files")
+      if workspace.get("locked"):
+        raise StorageError("workspace_locked", "workspace has an active write lock")
 
-    workspace_path = self.workspace_path(workspace_id)
-    relative = normalize_relative_path(raw_path)
-    target = ensure_under_root(workspace_path, workspace_path / relative)
-    if not target.exists():
-      raise StorageError("not_found", "file or folder not found")
-    if target.is_dir():
-      shutil.rmtree(target)
-    else:
-      target.unlink()
+      workspace_path = self.workspace_path(workspace_id)
+      relative = normalize_relative_path(raw_path)
+      target = ensure_under_root(workspace_path, workspace_path / relative)
+      if not target.exists():
+        raise StorageError("not_found", "file or folder not found")
+      if target.is_dir():
+        shutil.rmtree(target)
+      else:
+        target.unlink()
 
-    self.refresh_workspace_metadata(metadata, workspace, "file_delete", user["username"])
-    self.save_metadata(metadata)
-    return self.public_workspace(workspace, metadata)
+      self.refresh_workspace_metadata(metadata, workspace, "file_delete", user["username"])
+      self.save_metadata(metadata)
+      return self.public_workspace(workspace, metadata)
 
   def refresh_workspace_metadata(self, metadata: dict, workspace: dict, reason: str, actor: str) -> dict:
     parent_id = workspace.get("latestSnapshotId")
@@ -490,11 +503,10 @@ class WorkspaceStore:
         "reason": "upload" if session["mode"] == "create" else "file_upload",
         "actor": user["username"],
         "created": timestamp,
-        "manifestPath": f"{snapshot_id}.json",
+        "manifestPath": None,
         "files": files,
       }
-      manifest_path = ensure_under_root(self.manifest_dir, self.manifest_dir / snapshot["manifestPath"])
-      manifest_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+      self.ensure_prepared_blobs(workspace_id, files)
       parent = metadata["snapshots"].get(parent_id) if parent_id else None
       metadata["snapshots"][snapshot_id] = snapshot
       workspace["latestSnapshotId"] = snapshot_id
@@ -559,31 +571,30 @@ class WorkspaceStore:
     return self.public_workspace(fork, metadata)
 
   def delete_workspace(self, workspace_id: str, user: dict) -> dict:
-    metadata = self.load_metadata()
-    workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
-    if workspace["owner"] != user["username"] and user["role"] != "system_admin":
-      raise StorageError("forbidden", "only the owner or system admin can delete a workspace")
-    if workspace.get("locked"):
-      raise StorageError("workspace_locked", "workspace has an active write lock")
+    with self.lock:
+      metadata = self.load_metadata()
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      if workspace["owner"] != user["username"] and user["role"] != "system_admin":
+        raise StorageError("forbidden", "only the owner or system admin can delete a workspace")
+      if workspace.get("locked"):
+        raise StorageError("workspace_locked", "workspace has an active write lock")
 
-    deleted = {
-      "id": workspace["id"],
-      "name": workspace["name"],
-      "owner": workspace["owner"],
-      "deleted": now_string(),
-    }
-    metadata["workspaces"].pop(workspace_id, None)
-    metadata.get("artifacts", {}).pop(workspace_id, None)
-    for snapshot_id, snapshot in list(metadata.get("snapshots", {}).items()):
-      if snapshot.get("workspaceId") == workspace_id:
-        metadata["snapshots"].pop(snapshot_id, None)
-        manifest = self.manifest_dir / snapshot.get("manifestPath", "")
-        if manifest.exists():
-          manifest.unlink()
-    shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
-    shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
-    self.save_metadata(metadata)
-    return deleted
+      deleted = {
+        "id": workspace["id"],
+        "name": workspace["name"],
+        "owner": workspace["owner"],
+        "deleted": now_string(),
+      }
+      metadata["workspaces"].pop(workspace_id, None)
+      metadata.get("artifacts", {}).pop(workspace_id, None)
+      for snapshot_id, snapshot in list(metadata.get("snapshots", {}).items()):
+        if snapshot.get("workspaceId") == workspace_id:
+          metadata["snapshots"].pop(snapshot_id, None)
+      self.save_metadata(metadata)
+      shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
+      shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
+      self.garbage_collect_blobs()
+      return deleted
 
   def delete_owned_workspaces(self, usernames: set[str]) -> list[dict]:
     with self.lock:
@@ -598,9 +609,6 @@ class WorkspaceStore:
           if snapshot.get("workspaceId") != workspace_id:
             continue
           metadata["snapshots"].pop(snapshot_id, None)
-          manifest = self.manifest_dir / snapshot.get("manifestPath", "")
-          if manifest.exists():
-            manifest.unlink()
         shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
         shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
       self.save_metadata(metadata)
@@ -608,25 +616,27 @@ class WorkspaceStore:
       return deleted
 
   def garbage_collect_blobs(self, metadata: dict | None = None) -> int:
-    metadata = metadata or self.load_metadata()
-    referenced = {
-      str(entry.get("blob") or "")
-      for snapshot in metadata.get("snapshots", {}).values()
-      for entry in snapshot.get("files", {}).values()
-      if entry.get("blob")
-    }
+    referenced = self.database.referenced_blobs()
     removed = 0
+    removed_digests: set[str] = set()
     if self.blob_dir.exists():
       for path in self.blob_dir.rglob("*"):
-        if path.is_file() and path.name not in referenced:
+        if path.is_file() and not path.name.endswith(".tmp") and path.name not in referenced:
+          removed_digests.add(path.name)
           path.unlink()
           removed += 1
-      for path in sorted((item for item in self.blob_dir.rglob("*") if item.is_dir()), reverse=True):
-        try:
-          path.rmdir()
-        except OSError:
-          pass
+      self.prune_preview_blobs(removed_digests)
+      self.remove_empty_blob_directories()
     return removed
+
+  def remove_empty_blob_directories(self) -> None:
+    if not self.blob_dir.exists():
+      return
+    for path in sorted((item for item in self.blob_dir.rglob("*") if item.is_dir()), reverse=True):
+      try:
+        path.rmdir()
+      except OSError:
+        pass
 
   def get_workspace_from_metadata(self, metadata: dict, workspace_id: str, user: dict) -> dict:
     workspace = metadata["workspaces"].get(workspace_id)
@@ -647,13 +657,31 @@ class WorkspaceStore:
       "reason": reason,
       "actor": actor,
       "created": timestamp,
-      "manifestPath": f"{snapshot_id}.json",
+      "manifestPath": None,
       "files": manifest,
     }
-    manifest_path = ensure_under_root(self.manifest_dir, self.manifest_dir / f"{snapshot_id}.json")
-    manifest_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
     metadata["snapshots"][snapshot_id] = snapshot
     return snapshot
+
+  def ensure_prepared_blobs(self, workspace_id: str, files: dict) -> None:
+    workspace_path = self.workspace_path(workspace_id)
+    for relative, entry in files.items():
+      digest = str(entry.get("blob") or "")
+      source = ensure_under_root(workspace_path, workspace_path / normalize_relative_path(relative))
+      if not source.is_file():
+        raise StorageError("upload_incomplete", f"prepared upload file is missing: {relative}")
+      actual = sha256(source.read_bytes()).hexdigest()
+      if actual != digest or str(entry.get("checksum") or "") != f"sha256:{digest}":
+        raise StorageError("upload_checksum_mismatch", f"prepared upload checksum differs: {relative}")
+      blob = self.blob_path(digest)
+      if not blob.exists():
+        blob.parent.mkdir(parents=True, exist_ok=True)
+        temporary = blob.with_suffix(".tmp")
+        shutil.copyfile(source, temporary)
+        try:
+          temporary.replace(blob)
+        except FileExistsError:
+          temporary.unlink(missing_ok=True)
 
   def scan_workspace(self, workspace_id: str) -> dict:
     workspace_path = self.workspace_path(workspace_id)
@@ -721,19 +749,20 @@ class WorkspaceStore:
     }
 
   def refresh_artifacts(self, workspace_id: str, user: dict) -> list[dict]:
-    metadata = self.load_metadata()
-    workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
-    parent_id = workspace.get("latestSnapshotId")
-    parent = metadata["snapshots"].get(parent_id) if parent_id else None
-    snapshot = self.create_snapshot(metadata, workspace_id, "manual_refresh", user["username"], parent_id)
-    workspace["latestSnapshotId"] = snapshot["id"]
-    workspace["updated"] = snapshot["created"]
-    workspace["fileCount"] = len(snapshot["files"])
-    workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
-    changes = self.diff_snapshots(parent, snapshot)
-    metadata["artifacts"][workspace_id] = changes
-    self.save_metadata(metadata)
-    return changes
+    with self.lock:
+      metadata = self.load_metadata()
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      parent_id = workspace.get("latestSnapshotId")
+      parent = metadata["snapshots"].get(parent_id) if parent_id else None
+      snapshot = self.create_snapshot(metadata, workspace_id, "manual_refresh", user["username"], parent_id)
+      workspace["latestSnapshotId"] = snapshot["id"]
+      workspace["updated"] = snapshot["created"]
+      workspace["fileCount"] = len(snapshot["files"])
+      workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
+      changes = self.diff_snapshots(parent, snapshot)
+      metadata["artifacts"][workspace_id] = changes
+      self.save_metadata(metadata)
+      return changes
 
   def workspace_artifacts(self, workspace_id: str, metadata: dict | None = None) -> list[dict]:
     metadata = metadata or self.load_metadata()

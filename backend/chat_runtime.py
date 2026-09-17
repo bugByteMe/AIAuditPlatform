@@ -399,26 +399,20 @@ class ChatRuntime:
     self.worker_registry = worker_registry or (WorkerRegistry(SETTINGS) if SETTINGS.compute_nodes else None)
     self.codex_preparer = self.runner if isinstance(self.runner, DockerCodexRunner) else DockerCodexRunner()
     self.scheduler_poll_seconds = max(0.01, SETTINGS.scheduler_poll_seconds)
-    self.lock = threading.RLock()
+    # Serialize chat lifecycle metadata changes with workspace/upload mutations.
+    self.lock = store.lock
     self.condition = threading.Condition(self.lock)
     self.queue: queue.Queue[str] = queue.Queue()
     self.active_runs: set[str] = set()
     self.stop_requested: set[str] = set()
     self.shutdown = False
     self.store.set_chat_session_provider(self.public_workspace_sessions)
-    self.migrate_legacy_chat_metadata()
     self.recover_persisted_runs()
     self.scheduler = threading.Thread(target=self.scheduler_loop, name="ai-audit-chat-scheduler", daemon=True)
     self.scheduler.start()
 
   def public_workspace_sessions(self, workspace: dict) -> list[dict]:
     return [self.public_session(item["id"]) for item in workspace.get("sessions", []) if self.chat_store.get_session(item.get("id"))]
-
-  def migrate_legacy_chat_metadata(self) -> None:
-    metadata = self.store.load_metadata()
-    self.ensure_chat_metadata(metadata)
-    if self.chat_store.migrate_from_metadata(metadata):
-      self.store.save_metadata(metadata)
 
   def recover_persisted_runs(self) -> None:
     for run in self.chat_store.runs().values():

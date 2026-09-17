@@ -117,6 +117,24 @@ class UploadManagerTest(unittest.TestCase):
     self.assertFalse(result["workspace"]["locked"])
     self.assertEqual(result["workspace"]["artifacts"][0]["status"], "modified")
 
+  def test_commit_recreates_a_prepared_blob_removed_before_metadata_publish(self):
+    upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "recover.txt", "size": 7}]})
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"recover"), 7)
+    self.manager.complete(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    worker_state = self.manager.local_worker.load(upload["id"])
+    while worker_state["status"] != "ready" and time.monotonic() < deadline:
+      time.sleep(0.02)
+      worker_state = self.manager.local_worker.load(upload["id"])
+    self.assertEqual(worker_state["status"], "ready")
+    prepared = self.manager.local_worker.result(upload["id"])
+    digest = prepared["files"]["recover.txt"]["blob"]
+    self.store.blob_path(digest).unlink()
+
+    result = self.manager.status(upload["id"], USER)
+    self.assertEqual(result["status"], "committed")
+    self.assertTrue(self.store.blob_path(digest).is_file())
+
   def test_manifest_limits_are_rejected_before_staging(self):
     manager = UploadManager(self.store, settings=settings(max_file_bytes=2))
     with self.assertRaisesRegex(StorageError, "per-file limit"):

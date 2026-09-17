@@ -141,28 +141,6 @@ class ChatStore:
           items.append(item)
     return items
 
-  def migrate_from_metadata(self, metadata: dict) -> bool:
-    old_sessions = metadata.pop("chatSessions", None)
-    old_runs = metadata.pop("runs", None)
-    old_events = metadata.pop("events", None)
-    changed = any(value is not None for value in [old_sessions, old_runs, old_events])
-    if old_sessions:
-      sessions = self.sessions()
-      sessions.update(old_sessions)
-      self.save_sessions(sessions)
-    if old_runs:
-      runs = self.runs()
-      runs.update({run_id: self.sanitize_run(run) for run_id, run in old_runs.items()})
-      self.save_runs(runs)
-    if old_events:
-      for session_id, events in old_events.items():
-        path = self.events_path(session_id)
-        if path.exists():
-          continue
-        for event in events:
-          self.append_event(session_id, event)
-    return changed
-
   def sanitize_run(self, run: dict) -> dict:
     cleaned = dict(run)
     cleaned.pop("codexSettings", None)

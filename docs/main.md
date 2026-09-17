@@ -25,7 +25,7 @@ The first version targets a single private cluster:
 
 - Main node: runs the web frontend, backend API, authentication, metadata database access, scheduling, websocket/SSE streaming, budget checks, and admin workflows.
 - Compute workers: run worker agents that launch isolated Codex Docker containers.
-- Shared filesystem: stores uploaded workspaces, workspace snapshots, and artifacts. It is mounted by the main node and every compute worker.
+- Shared filesystem: stores uploaded workspaces, content-addressed current/previous file blobs, and artifacts. It is mounted by the main node and every compute worker.
 - Metadata database: stores users, groups, budgets, workspaces, chat sessions, runs, artifacts, usage records, and audit logs.
 
 One active chat run maps to one isolated Codex container. The scheduler assigns runs to healthy compute workers with available capacity.

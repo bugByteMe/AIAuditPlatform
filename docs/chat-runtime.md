@@ -75,8 +75,8 @@ When a run completes:
 
 1. Worker reports completion.
 2. Backend records final usage.
-3. Backend creates a final workspace snapshot.
-4. Backend compares snapshots and records artifacts.
+3. Backend scans the final workspace state and records a lightweight checkpoint.
+4. Backend compares the pre-run current files with the final scan, records artifacts, and retains at most one previous version per path.
 5. Frontend updates the chat and artifact views.
 
 ## Failure Handling

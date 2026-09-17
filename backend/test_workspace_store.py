@@ -60,6 +60,9 @@ class WorkspaceStoreTest(unittest.TestCase):
   def test_workspace_creation_writes_files_and_initial_snapshot(self) -> None:
     workspace = self.create_workspace()
     metadata = self.store.load_metadata()
+    self.assertTrue((self.store.root / "workspace.sqlite3").is_file())
+    self.assertFalse((self.store.root / "metadata.json").exists())
+    self.assertFalse((self.store.root / "manifests").exists())
     self.assertEqual(workspace["fileCount"], 2)
     self.assertEqual(workspace["sessions"], [])
     self.assertIn(workspace["id"], metadata["workspaces"])
@@ -67,6 +70,51 @@ class WorkspaceStoreTest(unittest.TestCase):
     snapshot = metadata["snapshots"][workspace["latestSnapshotId"]]
     self.assertIn("workpapers/income.txt", snapshot["files"])
     self.assertTrue(self.store.blob_path(snapshot["files"]["workpapers/income.txt"]["blob"]).exists())
+
+  def test_each_file_retains_only_its_immediately_previous_content(self) -> None:
+    workspace = self.create_workspace()
+    root = self.store.workspace_path(workspace["id"])
+    initial_income = self.store.database.file_versions(workspace["id"], "workpapers/income.txt")["current"]["blob"]
+
+    (root / "workpapers" / "income.txt").write_text("income v2", encoding="utf-8")
+    self.store.refresh_artifacts(workspace["id"], OWNER)
+    income_v2 = self.store.database.file_versions(workspace["id"], "workpapers/income.txt")["current"]["blob"]
+
+    (root / "reports" / "summary.md").write_text("summary v2", encoding="utf-8")
+    self.store.refresh_artifacts(workspace["id"], OWNER)
+    income_versions = self.store.database.file_versions(workspace["id"], "workpapers/income.txt")
+    summary_versions = self.store.database.file_versions(workspace["id"], "reports/summary.md")
+    self.assertEqual(income_versions["current"]["blob"], income_v2)
+    self.assertEqual(income_versions["previous"]["blob"], initial_income)
+    self.assertEqual(set(summary_versions), {"current", "previous"})
+
+    (root / "workpapers" / "income.txt").write_text("income v3", encoding="utf-8")
+    self.store.refresh_artifacts(workspace["id"], OWNER)
+    income_versions = self.store.database.file_versions(workspace["id"], "workpapers/income.txt")
+    self.assertEqual(income_versions["previous"]["blob"], income_v2)
+    self.assertFalse(self.store.blob_path(initial_income).exists())
+
+  def test_deleted_file_retains_last_content_until_workspace_deletion(self) -> None:
+    workspace = self.create_workspace()
+    digest = self.store.database.file_versions(workspace["id"], "workpapers/income.txt")["current"]["blob"]
+    self.store.delete_workspace_path(workspace["id"], OWNER, "workpapers/income.txt")
+    versions = self.store.database.file_versions(workspace["id"], "workpapers/income.txt")
+    self.assertEqual(set(versions), {"previous"})
+    self.assertEqual(versions["previous"]["blob"], digest)
+    self.assertTrue(self.store.blob_path(digest).exists())
+
+    self.store.delete_workspace(workspace["id"], OWNER)
+    self.assertFalse(self.store.blob_path(digest).exists())
+
+  def test_populated_legacy_metadata_requires_fresh_storage(self) -> None:
+    legacy_root = Path(self.tempdir.name) / "legacy_workspace_storage"
+    legacy_root.mkdir()
+    (legacy_root / "metadata.json").write_text(
+      json.dumps({"workspaces": {"ws_old": {"id": "ws_old"}}, "snapshots": {}, "artifacts": {}}),
+      encoding="utf-8",
+    )
+    with self.assertRaisesRegex(RuntimeError, "fresh workspace storage directory"):
+      WorkspaceStore(legacy_root)
 
   def test_duplicate_workspace_names_create_distinct_generated_paths(self) -> None:
     first = self.store.create_workspace(OWNER, "Same Name", False, [UploadedFile("folder/a.txt", b"one")])
@@ -161,6 +209,10 @@ class WorkspaceStoreTest(unittest.TestCase):
 
   def test_delete_workspace_requires_owner_or_admin_and_removes_active_files(self) -> None:
     workspace = self.create_workspace(shared=True)
+    blobs = {
+      entry["blob"]
+      for entry in self.store.load_metadata()["snapshots"][workspace["latestSnapshotId"]]["files"].values()
+    }
     preview_cache = self.store.preview_dir / workspace["id"] / "cache"
     preview_cache.mkdir(parents=True)
     (preview_cache / "preview.pdf").write_bytes(b"cached")
@@ -171,6 +223,7 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertFalse(self.store.workspace_path(workspace["id"]).exists())
     self.assertFalse((self.store.preview_dir / workspace["id"]).exists())
     self.assertEqual(self.store.load_metadata()["workspaces"], {})
+    self.assertTrue(all(not self.store.blob_path(digest).exists() for digest in blobs))
 
   def test_add_files_to_workspace_refreshes_tree_and_artifacts(self) -> None:
     workspace = self.create_workspace(shared=True)

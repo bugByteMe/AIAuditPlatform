@@ -22,7 +22,7 @@ Network progress and server processing are separate phases. The UI reports compl
 
 ## Storage Model
 
-The active workspace directory is the mutable working tree used by a Codex run. Snapshots should not be stored as full directory copies because audit workspaces may contain large binary files.
+The active workspace directory is the mutable working tree used by a Codex run. Historical content is not stored as full directory copies because audit workspaces may contain large binary files.
 
 ## Group Disk Accounting
 
@@ -32,14 +32,15 @@ Groups are unlimited unless an administrator sets `diskLimitBytes`. Workspace cr
 
 Agent writes are not continuously metered inside the running container. A run that starts below the limit may finish above it; the final snapshot refreshes usage, and subsequent growth or runs are blocked until usage is reduced or the limit is raised. Snapshots, blobs, previews, bundles, chat files, and Codex homes are excluded from quota accounting.
 
-Instead, snapshots use content-addressed storage:
+Workspace history uses content-addressed storage backed by normalized SQLite metadata:
 
 - File content is stored as immutable blobs keyed by checksum, for example `blobs/sha256/ab/cd/<hash>`.
-- Identical file content is stored once, even if referenced by many workspaces, snapshots, or artifacts.
-- Snapshot manifests reference blobs by checksum and store file metadata.
-- The metadata database stores snapshot records, parent relationships, and manifest locations.
+- Identical file content is stored once, even if referenced by many workspaces or file versions.
+- Each workspace path retains its current content and at most one immediately previous distinct content version.
+- Deleted paths retain their last content as the previous version until the path changes again or the workspace is deleted.
+- SQLite stores workspaces, lightweight checkpoint records, current/previous file versions, session links, and the latest artifact diff. Full file maps are not duplicated into checkpoint JSON manifests.
 
-This model gives Git-like deduplication without depending on Git semantics for user-uploaded folders and binary audit files.
+This model gives content deduplication without unbounded binary history or dependence on Git semantics for user-uploaded folders. Retention is bounded per normalized path; a workspace that continually creates and deletes new path names can still accumulate one retained version for every deleted path.
 
 ## Permissions
 
@@ -64,9 +65,9 @@ Fork metadata should preserve:
 - Fork creator.
 - Fork timestamp.
 
-## Snapshots and Checkpoints
+## Checkpoints and File History
 
-The system records workspace snapshots for:
+The system records lightweight workspace checkpoints for:
 
 - Initial upload state.
 - Chat stop and resume.
@@ -74,7 +75,7 @@ The system records workspace snapshots for:
 - Workspace fork source points.
 - Artifact comparison.
 
-A snapshot is a manifest of workspace file state, not a full copy of every file. Each manifest entry should include:
+A checkpoint records a workspace lifecycle boundary and retains a lightweight identifier, parent identifier, reason, actor, and timestamp. The current file table records:
 
 - Relative file path.
 - Content checksum.
@@ -83,27 +84,21 @@ A snapshot is a manifest of workspace file state, not a full copy of every file.
 - File mode when relevant.
 - Blob storage location or blob identifier.
 
-Each snapshot should also record:
-
-- Workspace.
-- Parent snapshot, when one exists.
-- Creating user or run.
-- Creation timestamp.
-- Snapshot reason, such as upload, stop, resume, completion, or fork.
-
 Checkpoint creation should:
 
 1. Scan the active workspace directory.
 2. Compute checksums for new or changed files.
 3. Add missing blobs to content-addressed storage.
-4. Write a new snapshot manifest.
-5. Link the snapshot to the previous snapshot.
+4. Compare the scan with the current file-version rows.
+5. Shift changed or deleted current content into the single previous slot and discard any displaced older version.
+6. Commit the checkpoint, file versions, workspace size, and artifact diff in one SQLite transaction.
+7. Delete displaced blobs only when no current or previous version in any workspace references them.
 
-The active workspace directory can remain materialized on the shared filesystem for normal browsing and future runs. Historical versions are reconstructed from manifests and blobs only when needed.
+The active workspace directory remains materialized on the shared filesystem for normal browsing and future runs. Previous file versions are retained internally for bounded recovery and are not currently exposed through download or restore APIs. Historical whole-workspace checkpoints are not materializable.
 
 ## Snapshot Diffs
 
-The backend computes diffs by comparing two snapshot manifests:
+The backend computes a checkpoint diff by comparing the pre-scan current file rows with the new workspace scan:
 
 - Same path and same checksum: unchanged.
 - Same path and different checksum: modified.
@@ -111,13 +106,13 @@ The backend computes diffs by comparing two snapshot manifests:
 - Path exists only in the older manifest: deleted.
 - Same checksum at a different path: possible rename or copy.
 
-The primary diff used for artifacts is the pre-run snapshot compared with the post-run snapshot. The primary diff used for workspace history is any snapshot compared with its parent.
+The primary diff used for artifacts is the current file state before a run compared with the final scan after that run.
 
 Line-level text diffs are optional and should be generated on demand for supported text files. For common audit binaries such as spreadsheets, PDFs, archives, and scanned documents, the system should treat checksum changes as file-level modifications.
 
 ## Artifact Detection
 
-Artifacts are files created or modified by a Codex run. The backend detects artifacts by comparing the pre-run snapshot manifest with the post-run snapshot manifest.
+Artifacts are files created or modified by a Codex run. The backend detects artifacts by comparing the pre-run current file rows with the final workspace scan.
 
 Artifact records should include:
 
@@ -194,22 +189,27 @@ Sync should never write files outside the selected folder. Before writing, the f
 
 ## Retention
 
-Because uploaded audit data is sensitive, the system should support configurable retention policies for:
+Because uploaded audit data is sensitive, the system retains:
 
 - Uploaded workspace files.
-- Workspace snapshots.
+- Lightweight checkpoint headers.
+- At most one previous content version per workspace path.
 - Unreferenced content-addressed blobs.
 - Chat transcripts and run events.
 - Artifact bundles.
 
-Deleting a workspace should remove or tombstone associated manifests, active workspace files, and artifact records according to the configured retention policy.
+Deleting a workspace removes its database records, active files, preview cache, and artifact records, then invokes blob garbage collection.
 
 Blob deletion should be reference-counted or mark-and-sweep:
 
-- Keep blobs referenced by any retained snapshot or artifact.
-- Mark blobs with no retained references as garbage.
-- Delete garbage only after a retention grace period.
+- Keep blobs referenced by any current or previous file-version row.
+- Delete blobs after the database transaction only when no retained file version references them.
+- A prepared upload verifies or recreates every blob from its materialized active file before publishing metadata, so collection cannot leave a committed upload with missing content.
 
-This prevents one workspace deletion from removing file content still referenced by another workspace, fork, snapshot, or artifact.
+This prevents one workspace deletion from removing file content still referenced by another workspace, fork, or retained file version.
 
-User and group cascade deletion applies the same retained-reference rule: owned workspaces, manifests, previews, chats, and Codex homes are removed, then only blobs unreferenced by every retained snapshot are collected.
+User and group cascade deletion applies the same retained-reference rule: owned workspaces, previews, chats, and Codex homes are removed, then only blobs unreferenced by every retained file version are collected.
+
+## Metadata Compatibility
+
+New installations persist workspace metadata in `workspace_storage/workspace.sqlite3` and do not create `metadata.json` or per-checkpoint manifest JSON files. Automatic migration of populated legacy workspace metadata is intentionally unsupported. Startup refuses a populated legacy `metadata.json` and requires a fresh workspace storage directory; an empty legacy file is tolerated and ignored.

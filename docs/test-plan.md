@@ -51,6 +51,10 @@
 - Workspace fork creates an independent workspace from the selected snapshot.
 - Group-shared workspace is visible to group members.
 - Snapshot comparison detects added, modified, and deleted files.
+- Repeated checkpoints retain current plus at most one previous distinct content version independently for each file path.
+- Deleting a file retains its last content as the previous version; deleting the workspace collects that blob unless another workspace references it.
+- Ordinary workspace deletion collects exclusive blobs without deleting content shared by another workspace or fork.
+- Fresh storage initializes SQLite metadata, while populated legacy `metadata.json` storage fails safely with no mutation.
 
 ## Chat Lifecycle
 
