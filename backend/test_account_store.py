@@ -3,6 +3,7 @@ from __future__ import annotations
 import sys
 import tempfile
 import threading
+import json
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from unittest.mock import patch
@@ -55,6 +56,25 @@ class AccountStoreTest(unittest.TestCase):
       self.assertEqual(reloaded.users["alice"]["id"], alice_id)
       self.assertEqual(reloaded.users["bob"]["groupId"], group_id)
       self.assertEqual(reloaded.groups[group_id]["name"], "Audit")
+      self.assertIsNone(reloaded.groups[group_id]["diskLimitBytes"])
+
+  def test_v2_groups_migrate_to_unlimited_disk(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      path = Path(tempdir) / "accounts.json"
+      path.write_text(
+        json.dumps(
+          {
+            "schemaVersion": 2,
+            "users": {"alice": {"id": "usr_1", "username": "alice", "groupId": "grp_1"}},
+            "pendingAccounts": {},
+            "groups": {"grp_1": {"id": "grp_1", "name": "Audit"}},
+          }
+        ),
+        encoding="utf-8",
+      )
+      store = AccountStore(path, {})
+      self.assertEqual(store.state()["schemaVersion"], 3)
+      self.assertIsNone(store.groups["grp_1"]["diskLimitBytes"])
 
   def test_batch_invites_have_unique_ids_tokens_and_no_credentials(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
@@ -132,6 +152,22 @@ class AccountStoreTest(unittest.TestCase):
         results = list(executor.map(activate, ["first.user", "second.user"]))
       self.assertEqual(sorted(results), ["activated", "rejected"])
       self.assertEqual(len(store.users), 1)
+
+  def test_group_limit_and_user_budget_reset_persist(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      path = Path(tempdir) / "accounts.json"
+      store = AccountStore(path, {})
+      group, accounts = store.create_batch(new_group_name="Audit", count=1, budget_tokens=100, max_sessions=1)
+      user = store.activate(accounts[0]["inviteToken"], "alice", "hash")
+      store.users["alice"]["usedTokens"] = 75
+      store.save()
+      store.update_group_disk_limit(group["id"], 1024)
+      reset = store.reset_user_budget(user["id"], 500)
+      self.assertEqual(reset["budgetTokens"], 500)
+      self.assertEqual(reset["usedTokens"], 0)
+      reloaded = AccountStore(path, {})
+      self.assertEqual(reloaded.groups[group["id"]]["diskLimitBytes"], 1024)
+      self.assertEqual(reloaded.users["alice"]["usedTokens"], 0)
 
 
 if __name__ == "__main__":

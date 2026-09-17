@@ -1,5 +1,5 @@
 import { t } from "./i18n.js";
-import { fallbackAccounts, fallbackAuditEvents } from "./mockData.js";
+import { fallbackAuditEvents } from "./mockData.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { state } from "./state.js";
 
@@ -322,32 +322,70 @@ export function renderFileExplorer() {
 }
 
 export function renderAdmin() {
-  const accountRows = state.accounts.length
-    ? state.accounts
-        .map((account) => {
-          const status = account.status === "active" && !account.enabled ? "disabled" : account.status || "active";
-          const name = account.username || account.id;
-          const token = account.inviteToken || "";
-          const actions = token
-            ? `<div class="admin-actions"><button class="btn" data-copy-invite="${escapeHtml(token)}">${t("admin.copy")}</button><button class="btn danger" data-revoke-invite="${escapeHtml(account.id)}">${t("admin.revoke")}</button></div>`
-            : "";
-          return `
-            <article class="admin-item">
-              <div>
-                <h3>${escapeHtml(name)}</h3>
-                <div class="meta-line"><span>${escapeHtml(account.group || "-")}</span><span>${escapeHtml(account.role || "user")}</span><span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span><span>${Number(account.usedTokens || 0).toLocaleString()} / ${Number(account.budgetTokens || 0).toLocaleString()} tokens</span></div>
-                ${token ? `<code class="invite-token">${escapeHtml(token)}</code>` : ""}
-              </div>
-              ${actions}
-            </article>`;
-        })
-        .join("")
-    : fallbackAccounts
-        .map(
-          ([name, role, budget]) => `<article class="admin-item"><div><h3>${escapeHtml(name)}</h3><div class="meta-line"><span>${escapeHtml(role)}</span><span>${escapeHtml(budget)}</span></div></div></article>`,
-        )
-        .join("");
-  document.querySelector("#admin-grid").innerHTML = accountRows;
+  const formatBytes = (value) => {
+    let size = Math.max(0, Number(value || 0));
+    const units = ["B", "KB", "MB", "GB", "TB"];
+    let index = 0;
+    while (size >= 1024 && index < units.length - 1) {
+      size /= 1024;
+      index += 1;
+    }
+    return `${index ? size.toFixed(size >= 10 ? 1 : 2) : Math.round(size)} ${units[index]}`;
+  };
+  const accountRow = (account) => {
+    const status = account.status === "active" && !account.enabled ? "disabled" : account.status || "active";
+    const name = account.username || account.id;
+    const token = account.inviteToken || "";
+    const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
+    const actions = [
+      token ? `<button class="btn" data-copy-invite="${escapeHtml(token)}">${t("admin.copy")}</button>` : "",
+      token ? `<button class="btn" data-revoke-invite="${escapeHtml(account.id)}">${t("admin.revoke")}</button>` : "",
+      account.username ? `<button class="btn" data-reset-budget="${escapeHtml(account.id)}">${t("admin.resetBudget")}</button>` : "",
+      `<button class="btn danger" data-delete-account="${escapeHtml(account.id)}" ${isCurrentUser ? "disabled" : ""}>${t("admin.deleteUser")}</button>`,
+    ].join("");
+    return `
+      <article class="admin-item admin-user-item">
+        <div>
+          <h3>${escapeHtml(name)}</h3>
+          <div class="meta-line">
+            <span>${escapeHtml(account.role || "user")}</span>
+            <span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span>
+            <span>${Number(account.usedTokens || 0).toLocaleString()} / ${Number(account.budgetTokens || 0).toLocaleString()} ${t("admin.tokens")}</span>
+            <span>${formatBytes(account.diskUsageBytes)} · ${Number(account.workspaceCount || 0)} ${t("admin.workspaces")}</span>
+          </div>
+          ${token ? `<code class="invite-token">${escapeHtml(token)}</code>` : ""}
+        </div>
+        <div class="admin-actions">${actions}</div>
+      </article>`;
+  };
+  const groups = state.groups.map((group) => {
+    const accounts = state.accounts.filter((account) => account.groupId === group.id);
+    const containsCurrentUser = accounts.some((account) => account.id === state.user?.id || account.username === state.user?.username);
+    const used = Number(group.diskUsageBytes || 0);
+    const limit = group.diskLimitBytes === null || group.diskLimitBytes === undefined ? null : Number(group.diskLimitBytes);
+    const percent = limit === null ? 0 : limit === 0 ? (used > 0 ? 100 : 0) : Math.min(100, Math.round((used / limit) * 100));
+    const usage = limit === null ? `${formatBytes(used)} / ${t("admin.unlimited")}` : `${formatBytes(used)} / ${formatBytes(limit)}`;
+    return `
+      <details class="admin-group" open>
+        <summary>
+          <div>
+            <h3>${escapeHtml(group.name)}</h3>
+            <div class="meta-line"><span>${Number(group.userCount || 0)} ${t("admin.usersCount")}</span><span>${Number(group.workspaceCount || 0)} ${t("admin.workspaces")}</span><span>${usage}</span></div>
+          </div>
+          <div class="admin-actions">
+            <button class="btn" data-set-group-limit="${escapeHtml(group.id)}">${t("admin.setDiskLimit")}</button>
+            <button class="btn danger" data-delete-group="${escapeHtml(group.id)}" ${containsCurrentUser ? "disabled" : ""}>${t("admin.deleteGroup")}</button>
+          </div>
+        </summary>
+        <div class="meter ${limit !== null && used > limit ? "danger" : ""}"><span style="width: ${percent}%"></span></div>
+        <div class="admin-group-users">${accounts.length ? accounts.map(accountRow).join("") : `<p class="admin-empty">${t("admin.emptyGroup")}</p>`}</div>
+      </details>`;
+  });
+  const ungrouped = state.accounts.filter((account) => !state.groups.some((group) => group.id === account.groupId));
+  if (ungrouped.length) {
+    groups.push(`<section class="admin-group"><h3>${t("admin.ungrouped")}</h3>${ungrouped.map(accountRow).join("")}</section>`);
+  }
+  document.querySelector("#admin-grid").innerHTML = groups.length ? groups.join("") : `<p class="admin-empty">${t("admin.noGroups")}</p>`;
 
   const logs = state.auditLogs.length
     ? state.auditLogs.map((log) => `${log.actor} ${log.event}${log.detail ? ` - ${log.detail}` : ""}`)

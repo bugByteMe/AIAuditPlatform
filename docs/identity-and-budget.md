@@ -22,7 +22,7 @@ System administrators may batch-create pending accounts for an existing or newly
 
 Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Successful registration preserves the pending account's user ID, group, budget, and session limit, consumes the token, stores the password hash, activates the account, and creates a login session.
 
-Named groups are persisted independently from accounts. Group-level budget enforcement is not part of the current implementation; each invited account receives the per-user budget selected for its batch.
+Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
 The initial design does not require SSO, device binding, or multi-factor authentication.
 
@@ -51,6 +51,8 @@ Token usage should be recorded by:
 - Model.
 - Time range.
 
+The current runtime persists the input, cached-input, output, and total token counts reported by Codex's terminal `turn.completed` event. Total charged usage is input plus output tokens because cached-input tokens are already included in the input count. Run totals roll up into the chat session and the owning user's persisted `usedTokens`; API reads do not recalculate historical usage.
+
 ## Enforcement
 
 The system uses hard budget limits:
@@ -72,5 +74,10 @@ System admins can:
 - Disable or re-enable users and groups.
 - View usage summaries by user, group, workspace, model, and date range.
 - Inspect budget stop events and failed run records.
+- Reset a user's consumed-token counter while replacing the user's allowance.
+- Set or clear a group's logical workspace disk limit.
+- Permanently delete users or groups and their owned workspaces and chat data.
 
 All admin actions should be written to the audit log.
+
+Permanent deletion protects the signed-in administrator and must leave at least one system administrator. Active runs are stopped and checkpointed before deletion; if they do not reach a terminal state within the bounded shutdown period, deletion is rejected without removing the account. Security audit entries are retained after deletion.

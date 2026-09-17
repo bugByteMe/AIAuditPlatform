@@ -106,6 +106,10 @@
     grid-template-columns: 1fr;
   }
 
+  .admin-group > summary {
+    grid-template-columns: 1fr;
+  }
+
   .event {
     grid-template-columns: 1fr;
   }

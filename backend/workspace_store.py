@@ -8,6 +8,7 @@ import posixpath
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -109,10 +110,71 @@ class WorkspaceStore:
     self.preview_dir = root / "previews"
     self.metadata_path = root / "metadata.json"
     self.chat_session_provider: Callable[[dict], list[dict]] | None = None
+    self.account_provider: Callable[[], tuple[dict[str, dict], dict[str, dict]]] | None = None
+    self.lock = threading.RLock()
     self.ensure_layout()
 
   def set_chat_session_provider(self, provider: Callable[[dict], list[dict]]) -> None:
     self.chat_session_provider = provider
+
+  def set_account_provider(self, provider: Callable[[], tuple[dict[str, dict], dict[str, dict]]]) -> None:
+    self.account_provider = provider
+
+  def usage_summaries(self, metadata: dict | None = None) -> tuple[dict[str, dict], dict[str, dict]]:
+    metadata = metadata or self.load_metadata()
+    users, groups = self.account_provider() if self.account_provider else ({}, {})
+    user_usage = {
+      str(user.get("id") or username): {"diskUsageBytes": 0, "workspaceCount": 0}
+      for username, user in users.items()
+    }
+    group_usage = {
+      group_id: {"diskUsageBytes": 0, "workspaceCount": 0, "userCount": 0}
+      for group_id in groups
+    }
+    users_by_name = {username: user for username, user in users.items()}
+    for user in users.values():
+      group_id = str(user.get("groupId") or "")
+      if group_id in group_usage:
+        group_usage[group_id]["userCount"] += 1
+    for workspace in metadata.get("workspaces", {}).values():
+      owner = users_by_name.get(str(workspace.get("owner") or ""))
+      if not owner:
+        continue
+      size = max(0, int(workspace.get("sizeBytes") or 0))
+      user_id = str(owner.get("id") or owner.get("username") or "")
+      summary = user_usage.setdefault(user_id, {"diskUsageBytes": 0, "workspaceCount": 0})
+      summary["diskUsageBytes"] += size
+      summary["workspaceCount"] += 1
+      group_id = str(owner.get("groupId") or "")
+      if group_id in group_usage:
+        group_usage[group_id]["diskUsageBytes"] += size
+        group_usage[group_id]["workspaceCount"] += 1
+    return user_usage, group_usage
+
+  def assert_group_quota(self, user: dict, added_bytes: int = 0, metadata: dict | None = None, require_available: bool = False) -> None:
+    if not self.account_provider:
+      return
+    _, groups = self.account_provider()
+    group_id = str(user.get("groupId") or "")
+    group = groups.get(group_id)
+    if not group:
+      return
+    limit = group.get("diskLimitBytes")
+    if limit is None:
+      return
+    if not require_available and int(added_bytes) <= 0:
+      return
+    _, group_usage = self.usage_summaries(metadata)
+    used = int(group_usage.get(group_id, {}).get("diskUsageBytes") or 0)
+    projected = used + max(0, int(added_bytes))
+    if projected > int(limit) or (require_available and projected >= int(limit)):
+      raise StorageError("group_disk_quota_exceeded", "group workspace disk limit is exceeded")
+
+  def workspace_quota_owner(self, workspace: dict, fallback: dict) -> dict:
+    if not self.account_provider:
+      return fallback
+    users, _ = self.account_provider()
+    return users.get(str(workspace.get("owner") or ""), fallback)
 
   def ensure_layout(self) -> None:
     for path in [self.active_dir, self.blob_dir, self.manifest_dir, self.bundle_dir, self.preview_dir]:
@@ -210,11 +272,18 @@ class WorkspaceStore:
     return ensure_under_root(self.active_dir, self.active_dir / workspace_id)
 
   def create_workspace(self, user: dict, name: str, shared: bool, files: list[UploadedFile]) -> dict:
+    with self.lock:
+      upload_sizes = {normalize_relative_path(item.path): len(item.content) for item in files}
+      self.assert_group_quota(user, sum(upload_sizes.values()))
+      return self._create_workspace(user, name, shared, files)
+
+  def _create_workspace(self, user: dict, name: str, shared: bool, files: list[UploadedFile]) -> dict:
     if not files:
       raise StorageError("empty_upload", "at least one uploaded file is required")
     workspace_id = generated_id("ws")
     workspace_path = self.workspace_path(workspace_id)
     workspace_path.mkdir(parents=True, exist_ok=False)
+    sizes: dict[str, int] = {}
     total = 0
     try:
       for item in files:
@@ -222,9 +291,12 @@ class WorkspaceStore:
         size = len(item.content)
         if size > MAX_FILE_BYTES:
           raise StorageError("file_too_large", f"{relative} exceeds the per-file limit")
-        total += size
+        total += size - sizes.get(relative, 0)
+        sizes[relative] = size
         if total > MAX_WORKSPACE_BYTES:
           raise StorageError("workspace_too_large", "workspace exceeds the total size limit")
+        if len(sizes) > MAX_FILE_COUNT:
+          raise StorageError("too_many_files", "workspace exceeds file count limit")
         destination = ensure_under_root(workspace_path, workspace_path / relative)
         destination.parent.mkdir(parents=True, exist_ok=True)
         destination.write_bytes(item.content)
@@ -281,6 +353,23 @@ class WorkspaceStore:
     return user["role"] == "system_admin" or workspace["owner"] == user["username"]
 
   def add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
+    with self.lock:
+      metadata = self.load_metadata()
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      workspace_path = self.workspace_path(workspace_id)
+      sizes = {
+        path.relative_to(workspace_path).as_posix(): path.stat().st_size
+        for path in workspace_path.rglob("*")
+        if path.is_file()
+      }
+      for item in files:
+        sizes[normalize_relative_path(item.path)] = len(item.content)
+      projected_size = sum(sizes.values())
+      quota_owner = self.workspace_quota_owner(workspace, user)
+      self.assert_group_quota(quota_owner, max(0, projected_size - int(workspace.get("sizeBytes") or 0)), metadata)
+      return self._add_files_to_workspace(workspace_id, user, files)
+
+  def _add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
     if not files:
       raise StorageError("empty_upload", "at least one uploaded file is required")
     metadata = self.load_metadata()
@@ -291,19 +380,26 @@ class WorkspaceStore:
       raise StorageError("workspace_locked", "workspace has an active write lock")
 
     workspace_path = self.workspace_path(workspace_id)
-    current_size = sum(path.stat().st_size for path in workspace_path.rglob("*") if path.is_file())
-    current_count = sum(1 for path in workspace_path.rglob("*") if path.is_file())
+    sizes = {
+      path.relative_to(workspace_path).as_posix(): path.stat().st_size
+      for path in workspace_path.rglob("*")
+      if path.is_file()
+    }
+    total_size = sum(sizes.values())
+    normalized_files: list[tuple[str, UploadedFile]] = []
     for item in files:
       relative = normalize_relative_path(item.path)
       size = len(item.content)
       if size > MAX_FILE_BYTES:
         raise StorageError("file_too_large", f"{relative} exceeds the per-file limit")
-      current_size += size
-      current_count += 1
-      if current_size > MAX_WORKSPACE_BYTES:
+      total_size += size - sizes.get(relative, 0)
+      sizes[relative] = size
+      if total_size > MAX_WORKSPACE_BYTES:
         raise StorageError("workspace_too_large", "workspace exceeds the total size limit")
-      if current_count > MAX_FILE_COUNT:
+      if len(sizes) > MAX_FILE_COUNT:
         raise StorageError("too_many_files", "workspace exceeds file count limit")
+      normalized_files.append((relative, item))
+    for relative, item in normalized_files:
       destination = ensure_under_root(workspace_path, workspace_path / relative)
       destination.parent.mkdir(parents=True, exist_ok=True)
       destination.write_bytes(item.content)
@@ -346,6 +442,13 @@ class WorkspaceStore:
     return snapshot
 
   def fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
+    with self.lock:
+      metadata = self.load_metadata()
+      source = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.assert_group_quota(user, int(source.get("sizeBytes") or 0), metadata)
+      return self._fork_workspace(workspace_id, user, name)
+
+  def _fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
     metadata = self.load_metadata()
     source = self.get_workspace_from_metadata(metadata, workspace_id, user)
     source_snapshot_id = source.get("latestSnapshotId")
@@ -410,6 +513,49 @@ class WorkspaceStore:
     shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
     self.save_metadata(metadata)
     return deleted
+
+  def delete_owned_workspaces(self, usernames: set[str]) -> list[dict]:
+    with self.lock:
+      metadata = self.load_metadata()
+      targets = [workspace_id for workspace_id, workspace in metadata.get("workspaces", {}).items() if workspace.get("owner") in usernames]
+      deleted = []
+      for workspace_id in targets:
+        workspace = metadata["workspaces"].pop(workspace_id)
+        deleted.append({"id": workspace_id, "name": workspace.get("name", ""), "owner": workspace.get("owner", "")})
+        metadata.get("artifacts", {}).pop(workspace_id, None)
+        for snapshot_id, snapshot in list(metadata.get("snapshots", {}).items()):
+          if snapshot.get("workspaceId") != workspace_id:
+            continue
+          metadata["snapshots"].pop(snapshot_id, None)
+          manifest = self.manifest_dir / snapshot.get("manifestPath", "")
+          if manifest.exists():
+            manifest.unlink()
+        shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
+        shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
+      self.save_metadata(metadata)
+      self.garbage_collect_blobs(metadata)
+      return deleted
+
+  def garbage_collect_blobs(self, metadata: dict | None = None) -> int:
+    metadata = metadata or self.load_metadata()
+    referenced = {
+      str(entry.get("blob") or "")
+      for snapshot in metadata.get("snapshots", {}).values()
+      for entry in snapshot.get("files", {}).values()
+      if entry.get("blob")
+    }
+    removed = 0
+    if self.blob_dir.exists():
+      for path in self.blob_dir.rglob("*"):
+        if path.is_file() and path.name not in referenced:
+          path.unlink()
+          removed += 1
+      for path in sorted((item for item in self.blob_dir.rglob("*") if item.is_dir()), reverse=True):
+        try:
+          path.rmdir()
+        except OSError:
+          pass
+    return removed
 
   def get_workspace_from_metadata(self, metadata: dict, workspace_id: str, user: dict) -> dict:
     workspace = metadata["workspaces"].get(workspace_id)

@@ -265,7 +265,10 @@
                   <h2 data-i18n="admin.users">用户与小组</h2>
                   <p data-i18n="admin.usersHelp">批量创建账号、分组并设置预算。</p>
                 </div>
-                <button class="btn primary" id="batch-create-button" data-i18n="admin.batchCreate">批量创建</button>
+                <div class="toolbar-actions">
+                  <button class="btn" id="create-group-button" data-i18n="admin.createGroup">新建小组</button>
+                  <button class="btn primary" id="batch-create-button" data-i18n="admin.batchCreate">批量创建</button>
+                </div>
               </div>
               <div class="admin-grid" id="admin-grid"></div>
             </section>
@@ -277,31 +280,6 @@
                 </div>
               </div>
               <ol class="audit-list" id="audit-list"></ol>
-            </section>
-            <section class="panel">
-              <div class="panel-head">
-                <div>
-                  <h2 data-i18n="workspace.capacity">资源与预算</h2>
-                  <p data-i18n="workspace.capacityHelp">运行前进行权限、锁和预算检查。</p>
-                </div>
-              </div>
-              <div class="quota-list">
-                <div class="quota-item">
-                  <span data-i18n="quota.user">个人 Token</span>
-                  <strong>1.9M / 3.0M</strong>
-                  <div class="meter"><span style="width: 62%"></span></div>
-                </div>
-                <div class="quota-item">
-                  <span data-i18n="quota.group">小组 Token</span>
-                  <strong>8.4M / 12.0M</strong>
-                  <div class="meter"><span style="width: 70%"></span></div>
-                </div>
-                <div class="quota-item">
-                  <span data-i18n="quota.workers">计算节点</span>
-                  <strong>4 / 6</strong>
-                  <div class="meter green"><span style="width: 67%"></span></div>
-                </div>
-              </div>
             </section>
           </div>
         </section>
@@ -441,7 +419,7 @@
       <button type="button" class="danger" data-file-menu-action="delete" data-i18n="files.delete">删除</button>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=20260916-login-fix"></script>
+    <script type="module" src="app.js?v=20260917-admin-controls"></script>
     <script>
       window.setTimeout(function () {
         if (!window.aiAuditAppReady) {

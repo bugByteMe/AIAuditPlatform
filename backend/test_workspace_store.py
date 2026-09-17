@@ -181,6 +181,36 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual(artifact_statuses["uploads/new.txt"], "added")
     self.assertNotEqual(workspace["latestSnapshotId"], updated["latestSnapshotId"])
 
+  def test_group_disk_usage_and_quota_cover_create_replace_and_fork(self) -> None:
+    owner = {**OWNER, "id": "usr_owner", "groupId": "grp_a"}
+    users = {owner["username"]: owner}
+    groups = {"grp_a": {"id": "grp_a", "name": "Audit", "diskLimitBytes": 6}}
+    self.store.set_account_provider(lambda: (users, groups))
+    workspace = self.store.create_workspace(owner, "Small", False, [UploadedFile("a.txt", b"123")])
+    user_usage, group_usage = self.store.usage_summaries()
+    self.assertEqual(user_usage["usr_owner"]["diskUsageBytes"], 3)
+    self.assertEqual(group_usage["grp_a"]["diskUsageBytes"], 3)
+    self.store.add_files_to_workspace(workspace["id"], owner, [UploadedFile("a.txt", b"456")])
+    with self.assertRaisesRegex(StorageError, "disk limit"):
+      self.store.add_files_to_workspace(workspace["id"], owner, [UploadedFile("b.txt", b"1234")])
+    self.store.fork_workspace(workspace["id"], owner, "Copy")
+    with self.assertRaisesRegex(StorageError, "disk limit"):
+      self.store.create_workspace(owner, "Over", False, [UploadedFile("c.txt", b"x")])
+
+  def test_unlimited_group_and_unreferenced_blob_collection(self) -> None:
+    first = {**OWNER, "id": "usr_one", "groupId": "grp_a"}
+    second = {**SAME_GROUP, "id": "usr_two", "groupId": "grp_a"}
+    users = {first["username"]: first, second["username"]: second}
+    groups = {"grp_a": {"id": "grp_a", "name": "Audit", "diskLimitBytes": None}}
+    self.store.set_account_provider(lambda: (users, groups))
+    one = self.store.create_workspace(first, "One", False, [UploadedFile("same.txt", b"shared")])
+    two = self.store.create_workspace(second, "Two", False, [UploadedFile("same.txt", b"shared")])
+    digest = self.store.load_metadata()["snapshots"][one["latestSnapshotId"]]["files"]["same.txt"]["blob"]
+    self.store.delete_owned_workspaces({first["username"]})
+    self.assertTrue(self.store.blob_path(digest).exists())
+    self.store.delete_owned_workspaces({second["username"]})
+    self.assertFalse(self.store.blob_path(digest).exists())
+
   def test_add_files_to_workspace_requires_owner_or_admin(self) -> None:
     workspace = self.create_workspace(shared=True)
     with self.assertRaises(StorageError):

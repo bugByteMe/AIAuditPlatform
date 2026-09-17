@@ -11,7 +11,7 @@ from pathlib import Path
 from config import SETTINGS
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 def _new_id(prefix: str) -> str:
@@ -37,7 +37,10 @@ class AccountStore:
     existed = self.path.exists()
     raw = json.loads(self.path.read_text(encoding="utf-8")) if existed else deepcopy(self.seed_users)
     migrated = not (isinstance(raw, dict) and raw.get("schemaVersion") == SCHEMA_VERSION)
-    state = self.migrate_legacy(raw) if migrated else raw
+    if isinstance(raw, dict) and raw.get("schemaVersion") == 2:
+      state = self.migrate_v2(raw)
+    else:
+      state = self.migrate_legacy(raw) if migrated else raw
     self.users.update(deepcopy(state.get("users") or {}))
     self.pending_accounts.update(deepcopy(state.get("pendingAccounts") or {}))
     self.groups.update(deepcopy(state.get("groups") or {}))
@@ -60,7 +63,7 @@ class AccountStore:
         if not group_id:
           group_id = _new_id("grp")
           group_ids_by_name[normalized] = group_id
-          groups[group_id] = {"id": group_id, "name": group_name, "createdAt": now}
+          groups[group_id] = {"id": group_id, "name": group_name, "createdAt": now, "diskLimitBytes": None}
       user.update(
         {
           "id": str(user.get("id") or _new_id("usr")),
@@ -77,6 +80,13 @@ class AccountStore:
       "pendingAccounts": {},
       "groups": groups,
     }
+
+  def migrate_v2(self, state: dict) -> dict:
+    migrated = deepcopy(state)
+    migrated["schemaVersion"] = SCHEMA_VERSION
+    for group in (migrated.get("groups") or {}).values():
+      group.setdefault("diskLimitBytes", None)
+    return migrated
 
   def state(self) -> dict:
     return {
@@ -120,7 +130,7 @@ class AccountStore:
     if self.group_by_name(name):
       raise ValueError("group name already exists")
     group_id = _new_id("grp")
-    group = {"id": group_id, "name": name, "createdAt": _timestamp()}
+    group = {"id": group_id, "name": name, "createdAt": _timestamp(), "diskLimitBytes": None}
     self.groups[group_id] = group
     try:
       self.save()
@@ -158,7 +168,7 @@ class AccountStore:
       if self.group_by_name(new_group_name):
         raise ValueError("group name already exists")
       group_id = _new_id("grp")
-      new_group = {"id": group_id, "name": new_group_name, "createdAt": _timestamp()}
+      new_group = {"id": group_id, "name": new_group_name, "createdAt": _timestamp(), "diskLimitBytes": None}
       group = new_group
     else:
       group = self.groups.get(group_id)
@@ -269,3 +279,93 @@ class AccountStore:
     account["revokedAt"] = _timestamp()
     self.save()
     return account
+
+  def update_group_disk_limit(self, group_id: str, disk_limit_bytes: int | None) -> dict:
+    with self.lock:
+      group = self.groups.get(group_id)
+      if not group:
+        raise ValueError("group not found")
+      if disk_limit_bytes is not None and disk_limit_bytes < 0:
+        raise ValueError("diskLimitBytes must be non-negative or null")
+      previous = group.get("diskLimitBytes")
+      group["diskLimitBytes"] = disk_limit_bytes
+      try:
+        self.save()
+      except Exception:
+        group["diskLimitBytes"] = previous
+        raise
+      return deepcopy(group)
+
+  def reset_user_budget(self, identifier: str, budget_tokens: int) -> dict:
+    if budget_tokens < 0:
+      raise ValueError("budgetTokens must be non-negative")
+    with self.lock:
+      user = self.user_by_identifier(identifier)
+      if not user:
+        raise ValueError("user not found")
+      previous_budget = user.get("budgetTokens", 0)
+      previous_used = user.get("usedTokens", 0)
+      user["budgetTokens"] = budget_tokens
+      user["usedTokens"] = 0
+      try:
+        self.save()
+      except Exception:
+        user["budgetTokens"] = previous_budget
+        user["usedTokens"] = previous_used
+        raise
+      return deepcopy(user)
+
+  def user_by_identifier(self, identifier: str) -> dict | None:
+    user = self.users.get(identifier)
+    if user:
+      return user
+    return next((item for item in self.users.values() if item.get("id") == identifier), None)
+
+  def remove_accounts(self, user_ids: set[str]) -> tuple[list[dict], list[dict]]:
+    with self.lock:
+      removed_users = [deepcopy(user) for user in self.users.values() if str(user.get("id")) in user_ids]
+      removed_pending = [deepcopy(account) for account in self.pending_accounts.values() if str(account.get("id")) in user_ids]
+      previous_users = deepcopy(self.users)
+      previous_pending = deepcopy(self.pending_accounts)
+      try:
+        for username, user in list(self.users.items()):
+          if str(user.get("id")) in user_ids:
+            self.users.pop(username, None)
+        for user_id in user_ids:
+          self.pending_accounts.pop(user_id, None)
+        self.save()
+      except Exception:
+        self.users.clear()
+        self.users.update(previous_users)
+        self.pending_accounts.clear()
+        self.pending_accounts.update(previous_pending)
+        raise
+      return removed_users, removed_pending
+
+  def remove_group_and_accounts(self, group_id: str, user_ids: set[str]) -> tuple[dict, list[dict], list[dict]]:
+    with self.lock:
+      group = self.groups.get(group_id)
+      if not group:
+        raise ValueError("group not found")
+      previous_groups = deepcopy(self.groups)
+      previous_users = deepcopy(self.users)
+      previous_pending = deepcopy(self.pending_accounts)
+      removed_users = [deepcopy(user) for user in self.users.values() if str(user.get("id")) in user_ids]
+      removed_pending = [deepcopy(account) for account in self.pending_accounts.values() if str(account.get("id")) in user_ids]
+      try:
+        for username, user in list(self.users.items()):
+          if str(user.get("id")) in user_ids:
+            self.users.pop(username, None)
+        for user_id in user_ids:
+          self.pending_accounts.pop(user_id, None)
+        removed_group = deepcopy(self.groups.pop(group_id))
+        self.save()
+      except Exception:
+        self.groups.clear()
+        self.groups.update(previous_groups)
+        self.users.clear()
+        self.users.update(previous_users)
+        self.pending_accounts.clear()
+        self.pending_accounts.update(previous_pending)
+        raise
+      return removed_group, removed_users, removed_pending

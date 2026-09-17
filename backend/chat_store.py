@@ -168,3 +168,27 @@ class ChatStore:
     cleaned.pop("codexSettings", None)
     cleaned.pop("codexHome", None)
     return cleaned
+
+  def delete_workspaces(self, workspace_ids: set[str]) -> dict:
+    sessions = self.sessions()
+    runs = self.runs()
+    removed_session_ids = {
+      session_id
+      for session_id, session in sessions.items()
+      if str(session.get("workspaceId") or "") in workspace_ids
+    }
+    removed_run_ids = {
+      run_id
+      for run_id, run in runs.items()
+      if str(run.get("workspaceId") or "") in workspace_ids
+    }
+    for session_id in removed_session_ids:
+      sessions.pop(session_id, None)
+      path = self.events_path(session_id)
+      if path.exists():
+        path.unlink()
+    for run_id in removed_run_ids:
+      runs.pop(run_id, None)
+    self.save_sessions(sessions)
+    self.save_runs(runs)
+    return {"sessionIds": sorted(removed_session_ids), "runIds": sorted(removed_run_ids)}

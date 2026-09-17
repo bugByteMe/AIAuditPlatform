@@ -87,6 +87,7 @@ SEED_USERS = {
 
 ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS)
 USERS = ACCOUNT_STORE.users
+WORKSPACE_STORE.set_account_provider(lambda: (ACCOUNT_STORE.users, ACCOUNT_STORE.groups))
 CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=SETTINGS.local_run_capacity, save_users=ACCOUNT_STORE.save)
 
 SESSIONS: dict[str, dict] = {}
@@ -211,12 +212,22 @@ class Handler(BaseHTTPRequestHandler):
         self.accounts()
       elif method == "POST" and path == "/api/accounts/batch":
         self.create_account_batch()
+      elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/reset-budget"):
+        self.reset_account_budget(path.split("/")[-2])
       elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/revoke-invite"):
         self.revoke_invite(path.split("/")[-2])
       elif method == "POST" and path == "/api/accounts":
         self.create_account()
+      elif method == "DELETE" and path.startswith("/api/accounts/"):
+        self.delete_account(path.rsplit("/", 1)[-1])
       elif method == "PATCH" and path.startswith("/api/accounts/"):
         self.update_account(path.rsplit("/", 1)[-1])
+      elif method == "POST" and path == "/api/groups":
+        self.create_group()
+      elif method == "PATCH" and path.startswith("/api/groups/"):
+        self.update_group(path.rsplit("/", 1)[-1])
+      elif method == "DELETE" and path.startswith("/api/groups/"):
+        self.delete_group(path.rsplit("/", 1)[-1])
       elif method == "GET" and path == "/api/audit-logs":
         self.audit_logs()
       elif method == "GET" and path == "/api/codex-settings":
@@ -246,13 +257,13 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.NOT_FOUND
     if exc.code == "forbidden":
       return HTTPStatus.FORBIDDEN
-    if exc.code in {"workspace_locked"}:
+    if exc.code in {"workspace_locked", "runs_not_stopped", "protected_admin"}:
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
       return HTTPStatus.PAYMENT_REQUIRED
     if exc.code in {"codex_auth_required"}:
       return HTTPStatus.PRECONDITION_REQUIRED
-    if exc.code in {"file_too_large", "workspace_too_large", "too_many_files"}:
+    if exc.code in {"file_too_large", "workspace_too_large", "too_many_files", "group_disk_quota_exceeded"}:
       return HTTPStatus.REQUEST_ENTITY_TOO_LARGE
     return HTTPStatus.BAD_REQUEST
 
@@ -319,9 +330,27 @@ class Handler(BaseHTTPRequestHandler):
 
   def accounts(self) -> None:
     self.require_admin()
-    active = [admin_account(user) for user in USERS.values()]
-    pending = [admin_account(account) for account in ACCOUNT_STORE.pending_accounts.values()]
-    self.write_json({"accounts": active + pending, "groups": list(ACCOUNT_STORE.groups.values())})
+    user_usage, group_usage = WORKSPACE_STORE.usage_summaries()
+    active = [
+      {**admin_account(user), **user_usage.get(str(user.get("id") or ""), {"diskUsageBytes": 0, "workspaceCount": 0})}
+      for user in USERS.values()
+    ]
+    pending = [
+      {**admin_account(account), "diskUsageBytes": 0, "workspaceCount": 0}
+      for account in ACCOUNT_STORE.pending_accounts.values()
+    ]
+    all_accounts = [*USERS.values(), *ACCOUNT_STORE.pending_accounts.values()]
+    groups = []
+    for group_id, group in ACCOUNT_STORE.groups.items():
+      summary = group_usage.get(group_id, {"diskUsageBytes": 0, "workspaceCount": 0, "userCount": 0})
+      groups.append(
+        {
+          **group,
+          **summary,
+          "userCount": sum(1 for account in all_accounts if str(account.get("groupId") or "") == group_id),
+        }
+      )
+    self.write_json({"accounts": active + pending, "groups": groups})
 
   def create_account_batch(self) -> None:
     actor = self.require_admin()
@@ -346,6 +375,100 @@ class Handler(BaseHTTPRequestHandler):
       return
     add_audit(actor["username"], "account invitation revoked", str(account["id"]))
     self.write_json({"account": admin_account(account)})
+
+  def reset_account_budget(self, raw_identifier: str) -> None:
+    actor = self.require_admin()
+    identifier = unquote(raw_identifier)
+    payload = self.read_json()
+    if "budgetTokens" not in payload:
+      raise ValueError("budgetTokens is required")
+    account = ACCOUNT_STORE.reset_user_budget(identifier, int(payload["budgetTokens"]))
+    add_audit(actor["username"], "account token budget reset", f"{account['id']} budget={account['budgetTokens']}")
+    self.write_json({"account": admin_account(account)})
+
+  def create_group(self) -> None:
+    actor = self.require_admin()
+    payload = self.read_json()
+    raw_limit = payload.get("diskLimitBytes") if "diskLimitBytes" in payload else None
+    parsed_limit = None if raw_limit is None else int(raw_limit)
+    if parsed_limit is not None and parsed_limit < 0:
+      raise ValueError("diskLimitBytes must be non-negative or null")
+    group = ACCOUNT_STORE.create_group(str(payload.get("name") or ""))
+    if "diskLimitBytes" in payload:
+      group = ACCOUNT_STORE.update_group_disk_limit(group["id"], parsed_limit)
+    add_audit(actor["username"], "group created", str(group["id"]))
+    self.write_json({"group": group}, HTTPStatus.CREATED)
+
+  def update_group(self, raw_group_id: str) -> None:
+    actor = self.require_admin()
+    group_id = unquote(raw_group_id)
+    payload = self.read_json()
+    if "diskLimitBytes" not in payload:
+      raise ValueError("diskLimitBytes is required")
+    raw_limit = payload.get("diskLimitBytes")
+    group = ACCOUNT_STORE.update_group_disk_limit(group_id, None if raw_limit is None else int(raw_limit))
+    add_audit(actor["username"], "group disk limit updated", f"{group_id} limit={group['diskLimitBytes']}")
+    self.write_json({"group": group})
+
+  def delete_account(self, raw_identifier: str) -> None:
+    actor = self.require_admin()
+    identifier = unquote(raw_identifier)
+    user = ACCOUNT_STORE.user_by_identifier(identifier)
+    pending = ACCOUNT_STORE.pending_accounts.get(identifier)
+    account = user or pending
+    if not account:
+      self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+      return
+    user_ids = {str(account["id"])}
+    active_users = [user] if user else []
+    self.validate_admin_deletion(actor, user_ids)
+    deleted_resources = self.stop_and_delete_resources(actor, active_users)
+    removed_users, removed_pending = ACCOUNT_STORE.remove_accounts(user_ids)
+    self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
+    add_audit(actor["username"], "account deleted", str(account["id"]))
+    self.write_json({"deleted": {"accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
+
+  def delete_group(self, raw_group_id: str) -> None:
+    actor = self.require_admin()
+    group_id = unquote(raw_group_id)
+    group = ACCOUNT_STORE.groups.get(group_id)
+    if not group:
+      self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
+      return
+    active_users = [user for user in USERS.values() if str(user.get("groupId") or "") == group_id]
+    pending = [account for account in ACCOUNT_STORE.pending_accounts.values() if str(account.get("groupId") or "") == group_id]
+    user_ids = {str(account["id"]) for account in [*active_users, *pending]}
+    self.validate_admin_deletion(actor, user_ids)
+    deleted_resources = self.stop_and_delete_resources(actor, active_users)
+    removed_group, removed_users, removed_pending = ACCOUNT_STORE.remove_group_and_accounts(group_id, user_ids)
+    self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
+    add_audit(actor["username"], "group deleted", f"{group_id} accounts={len(removed_users) + len(removed_pending)}")
+    self.write_json({"deleted": {"group": removed_group, "accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
+
+  def validate_admin_deletion(self, actor: dict, user_ids: set[str]) -> None:
+    if str(actor.get("id") or "") in user_ids:
+      raise StorageError("protected_admin", "the signed-in system administrator cannot be deleted")
+    remaining_admins = [
+      user
+      for user in USERS.values()
+      if user.get("role") == "system_admin" and str(user.get("id") or "") not in user_ids
+    ]
+    if not remaining_admins:
+      raise StorageError("protected_admin", "at least one system administrator must remain")
+
+  def stop_and_delete_resources(self, actor: dict, active_users: list[dict]) -> dict:
+    usernames = {str(user.get("username") or "") for user in active_users if user.get("username")}
+    if not usernames:
+      return {"workspaces": [], "sessionIds": [], "runIds": []}
+    remaining = CHAT_RUNTIME.stop_and_wait_for_users(usernames, actor)
+    if remaining:
+      raise StorageError("runs_not_stopped", f"runs did not stop: {', '.join(sorted(remaining))}")
+    return CHAT_RUNTIME.delete_user_resources(usernames)
+
+  def invalidate_user_sessions(self, usernames: set[str]) -> None:
+    for token, session in list(SESSIONS.items()):
+      if session.get("username") in usernames:
+        SESSIONS.pop(token, None)
 
   def create_account(self) -> None:
     actor = self.require_admin()

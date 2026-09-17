@@ -7,10 +7,12 @@ import time
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from chat_runtime import ChatRuntime, CodexRunner, DockerCodexRunner
+from config import SETTINGS
 from workspace_store import StorageError, UploadedFile, WorkspaceStore
 
 
@@ -209,6 +211,44 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual(event["message"], "Hello. What would you like to work on?")
     self.assertEqual(event["raw"]["type"], "item.completed")
 
+  def test_docker_runner_parses_turn_completed_usage_without_double_counting_cached_input(self) -> None:
+    runner = DockerCodexRunner()
+    event = runner.parse_json_event(
+      json.dumps(
+        {
+          "type": "turn.completed",
+          "usage": {"input_tokens": 100, "cached_input_tokens": 80, "output_tokens": 25},
+        }
+      )
+    )
+    self.assertEqual(event["type"], "usage")
+    self.assertEqual(event["tokens"], 125)
+    self.assertEqual(event["inputTokens"], 100)
+    self.assertEqual(event["cachedInputTokens"], 80)
+    self.assertEqual(event["outputTokens"], 25)
+
+  def test_duplicate_terminal_usage_only_counts_positive_delta(self) -> None:
+    workspace = self.create_workspace()
+    usage = {"type": "usage", "message": "usage", "tokens": 125, "inputTokens": 100, "cachedInputTokens": 80, "outputTokens": 25}
+    runtime = ChatRuntime(self.store, self.users, FakeRunner([usage, usage]))
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Count usage"})
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+    run = runtime.chat_store.get_run(result["run"]["id"])
+    self.assertEqual(self.users["li.review"]["usedTokens"], 125)
+    self.assertEqual(run["tokens"], 125)
+    self.assertEqual(run["cachedInputTokens"], 80)
+
+  def test_run_is_rejected_when_group_disk_limit_is_reached(self) -> None:
+    user = self.users["li.review"]
+    user.update({"id": "usr_1", "groupId": "grp_1"})
+    groups = {"grp_1": {"id": "grp_1", "name": "Audit", "diskLimitBytes": len(b"initial income")}}
+    self.store.set_account_provider(lambda: (self.users, groups))
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(workspace["id"], user, {"prompt": "No capacity"})
+    self.assertEqual(context.exception.code, "group_disk_quota_exceeded")
+
   def test_docker_runner_parses_command_execution_events(self) -> None:
     runner = DockerCodexRunner()
     item_event = runner.parse_json_event(json.dumps({"type": "item.started", "item": {"id": "call_1", "type": "command_execution", "command": "python3 -m unittest"}}))
@@ -274,6 +314,22 @@ class ChatRuntimeTest(unittest.TestCase):
     stored_run = runtime.chat_store.get_run(result["run"]["id"])
     self.assertNotIn("codexSettings", stored_run)
     self.assertNotIn("codexHome", stored_run)
+
+  def test_delete_user_resources_removes_workspace_chat_and_codex_home(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Complete first"})
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+    codex_root = Path(self.tempdir.name) / "codex_homes"
+    home = codex_root / "li.review" / result["session"]["id"]
+    home.mkdir(parents=True)
+    (home / "config.toml").write_text("test", encoding="utf-8")
+    with patch.object(SETTINGS, "codex_home_root", codex_root):
+      deleted = runtime.delete_user_resources({"li.review"})
+    self.assertEqual([item["id"] for item in deleted["workspaces"]], [workspace["id"]])
+    self.assertIsNone(runtime.chat_store.get_session(result["session"]["id"]))
+    self.assertIsNone(runtime.chat_store.get_run(result["run"]["id"]))
+    self.assertFalse((codex_root / "li.review").exists())
 
   def test_legacy_chat_metadata_migrates_out_of_workspace_metadata(self) -> None:
     workspace = self.create_workspace()

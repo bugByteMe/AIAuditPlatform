@@ -12,6 +12,14 @@ Large folder uploads should be handled as resumable or chunked uploads when supp
 
 The active workspace directory is the mutable working tree used by a Codex run. Snapshots should not be stored as full directory copies because audit workspaces may contain large binary files.
 
+## Group Disk Accounting
+
+Administrative disk usage is logical current-workspace usage rather than physical storage consumption. A user's usage is the sum of `sizeBytes` for workspaces they own, and a group's usage is the sum for all current members. Forked workspaces count their full logical size even when content-addressed blobs are deduplicated.
+
+Groups are unlimited unless an administrator sets `diskLimitBytes`. Workspace creation, uploads, replacements, forks, and new runs check the owner's group before proceeding. Deleting files or workspaces is always allowed so an over-limit group can recover. An administrator may set a limit below current usage, which freezes growth and new runs.
+
+Agent writes are not continuously metered inside the running container. A run that starts below the limit may finish above it; the final snapshot refreshes usage, and subsequent growth or runs are blocked until usage is reduced or the limit is raised. Snapshots, blobs, previews, bundles, chat files, and Codex homes are excluded from quota accounting.
+
 Instead, snapshots use content-addressed storage:
 
 - File content is stored as immutable blobs keyed by checksum, for example `blobs/sha256/ab/cd/<hash>`.
@@ -191,3 +199,5 @@ Blob deletion should be reference-counted or mark-and-sweep:
 - Delete garbage only after a retention grace period.
 
 This prevents one workspace deletion from removing file content still referenced by another workspace, fork, snapshot, or artifact.
+
+User and group cascade deletion applies the same retained-reference rule: owned workspaces, manifests, previews, chats, and Codex homes are removed, then only blobs unreferenced by every retained snapshot are collected.

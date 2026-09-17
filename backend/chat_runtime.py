@@ -101,6 +101,9 @@ class DockerCodexRunner(CodexRunner):
       payload = json.loads(line)
     except json.JSONDecodeError:
       return {"type": "progress", "message": line.strip()}
+    usage_event = self.parse_usage_event(payload)
+    if usage_event:
+      return usage_event
     item_event = self.parse_item_event(payload)
     if item_event:
       return item_event
@@ -127,6 +130,34 @@ class DockerCodexRunner(CodexRunner):
       total = usage.get("total_tokens") or usage.get("totalTokens") or 0
       if total:
         result["tokens"] = int(total)
+    return result
+
+  def parse_usage_event(self, payload: dict) -> dict | None:
+    event_type = str(payload.get("type") or payload.get("event") or "")
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+      return None
+    if event_type not in {"turn.completed", "turn.complete"} and not any(
+      key in usage for key in ["total_tokens", "totalTokens"]
+    ):
+      return None
+    input_tokens = int(usage.get("input_tokens") or usage.get("inputTokens") or 0)
+    cached_input_tokens = int(usage.get("cached_input_tokens") or usage.get("cachedInputTokens") or 0)
+    output_tokens = int(usage.get("output_tokens") or usage.get("outputTokens") or 0)
+    total_tokens = usage.get("total_tokens") or usage.get("totalTokens")
+    total = int(total_tokens) if total_tokens is not None else input_tokens + output_tokens
+    result = {
+      "type": "usage",
+      "message": "Token usage updated.",
+      "tokens": max(0, total),
+      "inputTokens": max(0, input_tokens),
+      "cachedInputTokens": max(0, cached_input_tokens),
+      "outputTokens": max(0, output_tokens),
+      "raw": payload,
+    }
+    native_id = self.extract_codex_session_id(payload)
+    if native_id:
+      result["codexSessionId"] = native_id
     return result
 
   def parse_item_event(self, payload: dict) -> dict | None:
@@ -420,6 +451,8 @@ class ChatRuntime:
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      quota_owner = self.store.workspace_quota_owner(workspace, user)
+      self.store.assert_group_quota(quota_owner, metadata=metadata, require_available=True)
       if workspace.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
       session_id = str(payload.get("sessionId") or "")
@@ -448,6 +481,9 @@ class ChatRuntime:
         "baseSnapshotId": workspace.get("latestSnapshotId"),
         "resultSnapshotId": None,
         "tokens": 0,
+        "inputTokens": 0,
+        "cachedInputTokens": 0,
+        "outputTokens": 0,
         "codexResume": bool(session.get("codexNativeResumable")),
         "codexSessionId": session.get("codexSessionId"),
       }
@@ -493,13 +529,19 @@ class ChatRuntime:
         raise StorageError("not_found", "run not found")
       if run["status"] in TERMINAL_STATES:
         return {"run": run}
+      was_queued = run["status"] == "queued"
       run["status"] = "stopping"
       run["updated"] = now_string()
       self.stop_requested.add(run_id)
       self.append_event(run["sessionId"], "stopping", "Stop requested. Creating a resumable checkpoint.", run_id)
       self.chat_store.save_run(run)
+      if was_queued:
+        self.finalize_run(metadata, run, "stopped", None)
+        self.chat_store.save_run(run)
+        self.store.save_metadata(metadata)
       self.condition.notify_all()
-    self.runner.stop(run)
+    if not was_queued:
+      self.runner.stop(run)
     return {"run": run}
 
   def events(self, workspace_id: str, session_id: str, after: int, user: dict) -> list[dict]:
@@ -536,6 +578,14 @@ class ChatRuntime:
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
         if not run:
+          return
+        if run.get("status") in TERMINAL_STATES:
+          return
+        if run_id in self.stop_requested:
+          self.finalize_run(metadata, run, "stopped", None)
+          self.chat_store.save_run(run)
+          self.store.save_metadata(metadata)
+          self.condition.notify_all()
           return
         run["status"] = "starting"
         run["updated"] = now_string()
@@ -604,6 +654,13 @@ class ChatRuntime:
         user["usedTokens"] = int(user.get("usedTokens") or 0) + delta
         if self.save_users:
           self.save_users()
+      for event_key, run_key in [
+        ("inputTokens", "inputTokens"),
+        ("cachedInputTokens", "cachedInputTokens"),
+        ("outputTokens", "outputTokens"),
+      ]:
+        if event_key in event:
+          run[run_key] = max(int(run.get(run_key) or 0), int(event.get(event_key) or 0))
     if event.get("codexSessionId"):
       session = self.chat_store.get_session(run["sessionId"])
       session["codexSessionId"] = event["codexSessionId"]
@@ -687,6 +744,45 @@ class ChatRuntime:
     if not api_key:
       raise StorageError("codex_auth_required", "configure Codex API key before starting a run")
     return {"baseUrl": base_url, "apiKey": api_key}
+
+  def stop_and_wait_for_users(self, usernames: set[str], actor: dict, timeout: float | None = None) -> set[str]:
+    timeout = timeout if timeout is not None else SETTINGS.docker_stop_timeout_seconds + SETTINGS.process_wait_timeout_seconds + 5
+    with self.lock:
+      runs = [
+        run
+        for run in self.chat_store.runs().values()
+        if run.get("user") in usernames and run.get("status") in RUNNING_STATES
+      ]
+    for run in runs:
+      self.stop_run(str(run["workspaceId"]), str(run["id"]), actor)
+    deadline = time.monotonic() + timeout
+    with self.condition:
+      while True:
+        remaining = {
+          str(run["id"])
+          for run in self.chat_store.runs().values()
+          if run.get("user") in usernames and run.get("status") in RUNNING_STATES
+        }
+        if not remaining:
+          return set()
+        wait_for = deadline - time.monotonic()
+        if wait_for <= 0:
+          return remaining
+        self.condition.wait(min(0.25, wait_for))
+
+  def delete_user_resources(self, usernames: set[str]) -> dict:
+    with self.lock:
+      metadata = self.store.load_metadata()
+      workspace_ids = {
+        workspace_id
+        for workspace_id, workspace in metadata.get("workspaces", {}).items()
+        if workspace.get("owner") in usernames
+      }
+      chat_deleted = self.chat_store.delete_workspaces(workspace_ids)
+      workspaces = self.store.delete_owned_workspaces(usernames)
+      for username in usernames:
+        shutil.rmtree(SETTINGS.codex_home_root / safe_segment(username), ignore_errors=True)
+      return {"workspaces": workspaces, **chat_deleted}
 
 
 def safe_segment(value: str) -> str:

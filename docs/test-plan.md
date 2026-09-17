@@ -14,6 +14,16 @@
 - An active run is stopped when usage exhausts the user or group budget.
 - Usage is recorded for completed, stopped, and failed runs.
 - Admin budget increases allow new runs after exhaustion.
+- `turn.completed` input and output usage is persisted once even if the terminal event is duplicated; cached input is not double-counted.
+- Resetting a user's budget replaces the allowance and clears consumed tokens.
+
+## Disk Quotas
+
+- Per-user and per-group usage sums current logical sizes of owned workspaces.
+- Unlimited groups accept workspace creation, uploads, forks, and runs.
+- Limited groups reject operations whose projected logical size exceeds the limit.
+- Same-size replacements and deletion remain possible at or above the limit.
+- A post-run overshoot is reflected in admin usage and blocks subsequent growth and runs.
 
 ## Scheduling
 
@@ -66,3 +76,8 @@
 - Admin can disable users and groups.
 - Admin can inspect usage by user, group, workspace, model, and date range.
 - Admin actions are written to the audit log.
+- Admin can create an empty group and set, clear, or lower its disk limit.
+- User deletion stops active runs, removes owned workspace/chat/Codex-home data, and invalidates sessions.
+- Group deletion cascades through active and pending members and their owned resources.
+- The signed-in administrator and the last remaining system administrator cannot be deleted.
+- A run stop timeout rejects cascading deletion without removing the account or group.

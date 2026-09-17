@@ -4,7 +4,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -79,6 +79,100 @@ class AccountApiTest(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "at least 8"):
           Handler.register(handler)
       self.assertIn(accounts[0]["id"], store.pending_accounts)
+
+  def test_admin_can_create_group_set_limit_and_reset_budget(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      actor = {"id": "usr_admin", "username": "admin", "role": "system_admin"}
+      create_handler = self.handler({"name": "Audit"}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+        Handler.create_group(create_handler)
+      group = create_handler.responses[0][0]["group"]
+      update_handler = self.handler({"diskLimitBytes": 2048}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+        Handler.update_group(update_handler, group["id"])
+      self.assertEqual(store.groups[group["id"]]["diskLimitBytes"], 2048)
+
+      _, invitations = store.create_batch(group_id=group["id"], count=1, budget_tokens=100, max_sessions=1)
+      user = store.activate(invitations[0]["inviteToken"], "alice", "hash")
+      store.users["alice"]["usedTokens"] = 90
+      reset_handler = self.handler({"budgetTokens": 500}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+        Handler.reset_account_budget(reset_handler, user["id"])
+      self.assertEqual(store.users["alice"]["budgetTokens"], 500)
+      self.assertEqual(store.users["alice"]["usedTokens"], 0)
+
+  def test_self_deletion_is_protected(self) -> None:
+    actor = {"id": "usr_admin", "username": "admin", "role": "system_admin"}
+    handler = self.handler({}, actor)
+    with self.assertRaisesRegex(Exception, "signed-in"):
+      Handler.validate_admin_deletion(handler, actor, {"usr_admin"})
+
+  def test_account_delete_cascades_resources_and_invalidates_sessions(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      seed = {
+        "admin": {"id": "usr_admin", "username": "admin", "role": "system_admin", "group": "", "passwordHash": "hash"},
+        "alice": {"id": "usr_alice", "username": "alice", "role": "user", "group": "", "passwordHash": "hash"},
+      }
+      store = AccountStore(Path(tempdir) / "accounts.json", seed)
+      actor = store.users["admin"]
+      handler = self.handler({}, actor)
+      runtime = MagicMock()
+      runtime.stop_and_wait_for_users.return_value = set()
+      runtime.delete_user_resources.return_value = {"workspaces": [{"id": "ws_1"}], "sessionIds": ["chat_1"], "runIds": ["run_1"]}
+      sessions = {"token-a": {"username": "alice"}, "token-admin": {"username": "admin"}}
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.CHAT_RUNTIME", runtime),
+        patch("server.SESSIONS", sessions),
+        patch("server.add_audit"),
+      ):
+        Handler.delete_account(handler, "usr_alice")
+      self.assertNotIn("alice", store.users)
+      self.assertNotIn("token-a", sessions)
+      self.assertIn("token-admin", sessions)
+      runtime.delete_user_resources.assert_called_once_with({"alice"})
+
+  def test_account_delete_keeps_account_when_run_does_not_stop(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      seed = {
+        "admin": {"id": "usr_admin", "username": "admin", "role": "system_admin", "group": "", "passwordHash": "hash"},
+        "alice": {"id": "usr_alice", "username": "alice", "role": "user", "group": "", "passwordHash": "hash"},
+      }
+      store = AccountStore(Path(tempdir) / "accounts.json", seed)
+      handler = self.handler({}, store.users["admin"])
+      runtime = MagicMock()
+      runtime.stop_and_wait_for_users.return_value = {"run_busy"}
+      with patch("server.ACCOUNT_STORE", store), patch("server.USERS", store.users), patch("server.CHAT_RUNTIME", runtime):
+        with self.assertRaisesRegex(Exception, "did not stop"):
+          Handler.delete_account(handler, "usr_alice")
+      self.assertIn("alice", store.users)
+      runtime.delete_user_resources.assert_not_called()
+
+  def test_group_delete_removes_active_and_pending_members(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      seed = {
+        "admin": {"id": "usr_admin", "username": "admin", "role": "system_admin", "group": "Admins", "passwordHash": "hash"},
+        "alice": {"id": "usr_alice", "username": "alice", "role": "user", "group": "Audit", "passwordHash": "hash"},
+      }
+      store = AccountStore(Path(tempdir) / "accounts.json", seed)
+      audit_group = store.group_by_name("Audit")
+      _, pending = store.create_batch(group_id=audit_group["id"], count=1, budget_tokens=0, max_sessions=1)
+      handler = self.handler({}, store.users["admin"])
+      runtime = MagicMock()
+      runtime.stop_and_wait_for_users.return_value = set()
+      runtime.delete_user_resources.return_value = {"workspaces": [], "sessionIds": [], "runIds": []}
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.CHAT_RUNTIME", runtime),
+        patch("server.add_audit"),
+      ):
+        Handler.delete_group(handler, audit_group["id"])
+      self.assertIsNone(store.group_by_name("Audit"))
+      self.assertNotIn("alice", store.users)
+      self.assertNotIn(pending[0]["id"], store.pending_accounts)
 
 
 if __name__ == "__main__":

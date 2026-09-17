@@ -373,6 +373,78 @@ async function revokeInvite(userId) {
   }
 }
 
+async function createAdminGroup() {
+  const name = window.prompt(t("admin.promptGroupName"));
+  if (name === null || !name.trim()) return;
+  try {
+    await api("/api/groups", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
+    await loadAccountControlData();
+    showToast(t("toast.groupCreated"));
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function setGroupDiskLimit(groupId) {
+  const group = state.groups.find((item) => item.id === groupId);
+  const initial = group?.diskLimitBytes === null || group?.diskLimitBytes === undefined ? "" : String(Math.round(Number(group.diskLimitBytes) / (1024 * 1024)));
+  const raw = window.prompt(t("admin.promptDiskLimit"), initial);
+  if (raw === null) return;
+  const trimmed = raw.trim();
+  const mebibytes = trimmed === "" ? null : Number(trimmed);
+  if (mebibytes !== null && (!Number.isFinite(mebibytes) || mebibytes < 0)) return;
+  try {
+    await api(`/api/groups/${encodeURIComponent(groupId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ diskLimitBytes: mebibytes === null ? null : Math.round(mebibytes * 1024 * 1024) }),
+    });
+    await loadAccountControlData();
+    showToast(t("toast.groupLimitSaved"));
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function resetAccountBudget(userId) {
+  const account = state.accounts.find((item) => item.id === userId);
+  const raw = window.prompt(t("admin.promptBudget"), String(account?.budgetTokens || 0));
+  if (raw === null) return;
+  const budgetTokens = Number(raw.trim());
+  if (!Number.isInteger(budgetTokens) || budgetTokens < 0) return;
+  try {
+    await api(`/api/accounts/${encodeURIComponent(userId)}/reset-budget`, {
+      method: "POST",
+      body: JSON.stringify({ budgetTokens }),
+    });
+    await loadAccountControlData();
+    showToast(t("toast.budgetReset"));
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function deleteAdminAccount(userId) {
+  if (!window.confirm(t("admin.confirmDeleteUser"))) return;
+  try {
+    await api(`/api/accounts/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    await loadAccountControlData();
+    showToast(t("toast.accountDeleted"));
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
+async function deleteAdminGroup(groupId) {
+  if (!window.confirm(t("admin.confirmDeleteGroup"))) return;
+  try {
+    await api(`/api/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+    await loadAccountControlData();
+    showToast(t("toast.groupDeleted"));
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 function selectWorkspace(index) {
   state.selectedWorkspace = Number(index);
   state.selectedSession = 0;
@@ -569,6 +641,37 @@ function bindGlobalClicks() {
 
     if (event.target.closest("#batch-create-button")) {
       openBatchAccountModal();
+      return;
+    }
+
+    if (event.target.closest("#create-group-button")) {
+      createAdminGroup();
+      return;
+    }
+
+    const setGroupLimit = event.target.closest("[data-set-group-limit]");
+    if (setGroupLimit) {
+      event.preventDefault();
+      setGroupDiskLimit(setGroupLimit.dataset.setGroupLimit);
+      return;
+    }
+
+    const deleteGroup = event.target.closest("[data-delete-group]");
+    if (deleteGroup) {
+      event.preventDefault();
+      deleteAdminGroup(deleteGroup.dataset.deleteGroup);
+      return;
+    }
+
+    const resetBudget = event.target.closest("[data-reset-budget]");
+    if (resetBudget) {
+      resetAccountBudget(resetBudget.dataset.resetBudget);
+      return;
+    }
+
+    const deleteAccount = event.target.closest("[data-delete-account]");
+    if (deleteAccount) {
+      deleteAdminAccount(deleteAccount.dataset.deleteAccount);
       return;
     }
 
