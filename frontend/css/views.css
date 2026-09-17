@@ -134,6 +134,36 @@
   background: var(--danger);
 }
 
+.worker-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px;
+  padding-top: 10px;
+}
+
+.worker-card {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: #fbfdfd;
+}
+
+.worker-card-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 10px;
+}
+
+.worker-resource {
+  margin-top: 10px;
+}
+
+.worker-resource .meter {
+  margin-top: 4px;
+  height: 6px;
+}
+
 .invite-token {
   display: block;
   max-width: 100%;

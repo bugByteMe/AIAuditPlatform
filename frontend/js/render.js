@@ -22,6 +22,17 @@ function safeClass(value) {
   return String(value).replace(/[^a-z0-9_-]/gi, "-");
 }
 
+function formatResourceBytes(value) {
+  let size = Math.max(0, Number(value || 0));
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let index = 0;
+  while (size >= 1024 && index < units.length - 1) {
+    size /= 1024;
+    index += 1;
+  }
+  return `${index ? size.toFixed(size >= 10 ? 1 : 2) : Math.round(size)} ${units[index]}`;
+}
+
 function inlineMarkdown(value) {
   return escapeHtml(value)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -211,6 +222,13 @@ export function renderChatSessions() {
     document.querySelector("#chat-session-title").textContent = "";
     document.querySelector("#token-count").textContent = "0";
     document.querySelector("#run-state-label").textContent = statusLabel("stopped");
+    document.querySelector("#chat-worker-id").textContent = "-";
+    document.querySelector("#chat-container-id").textContent = "-";
+    document.querySelector("#chat-lock-label").textContent = "-";
+    document.querySelector("#chat-cpu-label").textContent = "CPU 0 / 0";
+    document.querySelector("#chat-memory-label").textContent = `${t("chat.memory")} 0 / 0`;
+    document.querySelector("#chat-cpu-meter").style.width = "0%";
+    document.querySelector("#chat-memory-meter").style.width = "0%";
     document.querySelector("#chat-session-list").innerHTML = "";
     return;
   }
@@ -218,6 +236,18 @@ export function renderChatSessions() {
   document.querySelector("#chat-session-title").textContent = session.title;
   document.querySelector("#token-count").textContent = session.tokens;
   document.querySelector("#run-state-label").textContent = statusLabel(session.status);
+  document.querySelector("#chat-worker-id").textContent = session.workerId || "-";
+  document.querySelector("#chat-container-id").textContent = session.container || "-";
+  document.querySelector("#chat-lock-label").textContent = workspace.locked ? t("chat.locked") : t("chat.unlocked");
+  const resources = session.resources || {};
+  const cpuTotal = Number(resources.cpuTotal || 0);
+  const cpuAvailable = Number(resources.cpuAvailable || 0);
+  const memoryTotal = Number(resources.memoryTotalBytes || 0);
+  const memoryAvailable = Number(resources.memoryAvailableBytes || 0);
+  document.querySelector("#chat-cpu-label").textContent = `CPU ${cpuAvailable.toLocaleString()} / ${cpuTotal.toLocaleString()}`;
+  document.querySelector("#chat-memory-label").textContent = `${t("chat.memory")} ${formatResourceBytes(memoryAvailable)} / ${formatResourceBytes(memoryTotal)}`;
+  document.querySelector("#chat-cpu-meter").style.width = `${cpuTotal ? Math.max(0, Math.min(100, (cpuAvailable / cpuTotal) * 100)) : 0}%`;
+  document.querySelector("#chat-memory-meter").style.width = `${memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0}%`;
   document.querySelector(".status-dot").classList.toggle("running", session.status === "running");
   document.querySelector(".status-dot").classList.toggle("stopped", session.status !== "running");
   document.querySelector("#chat-session-list").innerHTML = workspace.sessions
@@ -392,5 +422,31 @@ export function renderAdmin() {
     : fallbackAuditEvents;
   document.querySelector("#audit-list").innerHTML = logs
     .map((event, index) => `<li>${event}<div class="meta-line">${state.auditLogs[index]?.time || `2026-09-12 23:${String(index + 12).padStart(2, "0")}`}</div></li>`)
+    .join("");
+}
+
+export function renderWorkers() {
+  const grid = document.querySelector("#worker-grid");
+  if (!grid) return;
+  if (!state.workers.length) {
+    grid.innerHTML = `<p class="admin-empty">${t("admin.noWorkers")}</p>`;
+    return;
+  }
+  grid.innerHTML = state.workers
+    .map((worker) => {
+      const cpuTotal = Number(worker.cpuTotal || 0);
+      const cpuAvailable = Number(worker.cpuAvailable || 0);
+      const memoryTotal = Number(worker.memoryTotalBytes || 0);
+      const memoryAvailable = Number(worker.memoryAvailableBytes || 0);
+      const cpuPercent = cpuTotal ? Math.max(0, Math.min(100, (cpuAvailable / cpuTotal) * 100)) : 0;
+      const memoryPercent = memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0;
+      return `<article class="worker-card">
+        <div class="worker-card-head"><h3>${escapeHtml(worker.id)}</h3><span class="pill ${worker.healthy ? "" : "danger"}">${t(worker.enabled === false ? "admin.workerDisabled" : worker.healthy ? "admin.workerHealthy" : "admin.workerUnhealthy")}</span></div>
+        <div class="meta-line"><span>${escapeHtml(worker.ip || "-")}${worker.port ? `:${Number(worker.port)}` : ""}</span><span>${Number(worker.activeRunCount || 0)} ${t("admin.activeRuns")}</span></div>
+        <div class="worker-resource"><span>CPU ${cpuAvailable.toLocaleString()} / ${cpuTotal.toLocaleString()}</span><div class="meter"><span style="width:${cpuPercent}%"></span></div></div>
+        <div class="worker-resource"><span>${t("chat.memory")} ${formatResourceBytes(memoryAvailable)} / ${formatResourceBytes(memoryTotal)}</span><div class="meter green"><span style="width:${memoryPercent}%"></span></div></div>
+        <div class="meta-line"><span>${t("admin.lastContact")}: ${escapeHtml(worker.lastContact || "-")}</span>${worker.error ? `<span>${escapeHtml(worker.error)}</span>` : ""}</div>
+      </article>`;
+    })
     .join("");
 }

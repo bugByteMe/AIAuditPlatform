@@ -26,7 +26,10 @@ class ServerStreamingTest(unittest.TestCase):
     handler.write_json = lambda payload, status=200, headers=None: responses.append(payload)
     with patch("server.CHAT_RUNTIME", FakeChatRuntime()):
       Handler.chat_api(handler, "GET", "workspace-1", "events", "", "sessionId=chat-1&after=9")
-    self.assertEqual(responses, [{"events": [], "sessionStatus": "completed"}])
+    self.assertEqual(
+      responses,
+      [{"events": [], "sessionStatus": "completed", "session": {"id": "chat-1", "status": "completed"}}],
+    )
 
 
 if __name__ == "__main__":

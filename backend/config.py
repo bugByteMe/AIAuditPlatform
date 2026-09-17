@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import ipaddress
 import json
+import math
 import os
+import re
 from pathlib import Path
 
 
@@ -52,6 +55,62 @@ def _list(key: str, env_name: str, default: list[str]) -> list[str]:
   return [str(item).strip() for item in value if str(item).strip()]
 
 
+def parse_memory_bytes(value: str | int | float) -> int:
+  if isinstance(value, (int, float)):
+    return int(value)
+  match = re.fullmatch(r"\s*(\d+(?:\.\d+)?)\s*([kmgt]?)(?:i?b)?\s*", str(value), re.IGNORECASE)
+  if not match:
+    raise ValueError(f"invalid memory value: {value}")
+  scale = {"": 1, "k": 1024, "m": 1024**2, "g": 1024**3, "t": 1024**4}[match.group(2).lower()]
+  return int(float(match.group(1)) * scale)
+
+
+def normalize_compute_nodes(raw_nodes) -> list[dict]:
+  if not raw_nodes:
+    return []
+  if not isinstance(raw_nodes, list):
+    raise ValueError("compute_nodes must be a list")
+  nodes = []
+  used_ids = set()
+  for index, source in enumerate(raw_nodes):
+    if not isinstance(source, dict):
+      raise ValueError("each compute node must be an object")
+    node_id = str(source.get("id") or "").strip()
+    ip = str(source.get("ip") or "").strip()
+    port = int(source.get("port") or 0)
+    cpu = float(source.get("cpu") or 0)
+    memory_bytes = parse_memory_bytes(source.get("memory") or 0)
+    storage = str(source.get("workspace_storage_dir") or "").strip()
+    if not re.fullmatch(r"[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?", node_id) or node_id in used_ids:
+      raise ValueError(f"compute node {index} has a missing or duplicate id")
+    try:
+      ipaddress.ip_address(ip)
+    except ValueError as exc:
+      raise ValueError(f"compute node {node_id} has an invalid ip") from exc
+    if not 1 <= port <= 65535:
+      raise ValueError(f"compute node {node_id} has an invalid ip or port")
+    if not math.isfinite(cpu) or cpu <= 0 or memory_bytes <= 0:
+      raise ValueError(f"compute node {node_id} must have positive cpu and memory")
+    if not storage:
+      raise ValueError(f"compute node {node_id} requires workspace_storage_dir")
+    used_ids.add(node_id)
+    nodes.append(
+      {
+        "id": node_id,
+        "ip": ip,
+        "port": port,
+        "cpu": cpu,
+        "memory": str(source.get("memory")),
+        "memoryBytes": memory_bytes,
+        "workspaceStorageDir": storage,
+        "tlsCertFile": str(source.get("tls_cert_file") or ""),
+        "tlsKeyFile": str(source.get("tls_key_file") or ""),
+        "enabled": bool(source.get("enabled", True)),
+      }
+    )
+  return nodes
+
+
 class Settings:
   def __init__(self) -> None:
     self.root = ROOT
@@ -63,6 +122,15 @@ class Settings:
     self.host = str(_value("host", "AI_AUDIT_HOST", "0.0.0.0"))
     self.port = _int("port", "AI_AUDIT_PORT", 8000)
     self.local_run_capacity = _int("local_run_capacity", "AI_AUDIT_LOCAL_RUN_CAPACITY", 1)
+    raw_nodes = os.environ.get("AI_AUDIT_COMPUTE_NODES_JSON")
+    self.compute_nodes = normalize_compute_nodes(json.loads(raw_nodes) if raw_nodes else FILE_CONFIG.get("compute_nodes", []))
+    self.worker_auth_token = str(os.environ.get("AI_AUDIT_WORKER_AUTH_TOKEN") or "")
+    self.worker_ca_file = _path("worker_ca_file", "AI_AUDIT_WORKER_CA_FILE", "") if _value("worker_ca_file", "AI_AUDIT_WORKER_CA_FILE", "") else None
+    self.worker_health_interval_seconds = _float("worker_health_interval_seconds", "AI_AUDIT_WORKER_HEALTH_INTERVAL_SECONDS", 5)
+    self.worker_unhealthy_after_seconds = _float("worker_unhealthy_after_seconds", "AI_AUDIT_WORKER_UNHEALTHY_AFTER_SECONDS", 15)
+    self.worker_run_lease_seconds = _float("worker_run_lease_seconds", "AI_AUDIT_WORKER_RUN_LEASE_SECONDS", 30)
+    self.worker_request_timeout_seconds = _float("worker_request_timeout_seconds", "AI_AUDIT_WORKER_REQUEST_TIMEOUT_SECONDS", 10)
+    self.worker_node_id = str(os.environ.get("AI_AUDIT_WORKER_NODE_ID") or "")
     self.default_codex_base_url = str(_value("default_codex_base_url", "AI_AUDIT_DEFAULT_CODEX_BASE_URL", "https://api.openai.com/v1"))
     self.default_codex_api_key = str(_value("default_codex_api_key", "AI_AUDIT_DEFAULT_CODEX_API_KEY", ""))
     self.codex_image = str(_value("codex_image", "AI_AUDIT_CODEX_IMAGE", "ai-audit-codex-runner:0.153.4"))

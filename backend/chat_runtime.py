@@ -11,7 +11,8 @@ from pathlib import Path
 from typing import Iterable
 
 from chat_store import ChatStore
-from config import SETTINGS
+from compute_nodes import WorkerRegistry, WorkerUnavailable
+from config import SETTINGS, parse_memory_bytes
 from workspace_store import StorageError, WorkspaceStore, generated_id, now_string
 
 
@@ -50,9 +51,12 @@ class DockerCodexRunner(CodexRunner):
     self.lock = threading.Lock()
 
   def start(self, run: dict, workspace_path: Path) -> Iterable[dict]:
+    codex_home = self.prepare_codex_home(run)
+    yield from self.start_prepared(run, workspace_path, codex_home)
+
+  def start_prepared(self, run: dict, workspace_path: Path, codex_home: Path) -> Iterable[dict]:
     container_name = f"ai-audit-{run['id']}"
     run["container"] = container_name
-    codex_home = self.prepare_codex_home(run)
     self.make_tree_writable_for_container(workspace_path)
     command = [
       "docker",
@@ -63,9 +67,9 @@ class DockerCodexRunner(CodexRunner):
       "--network",
       self.run_network,
       "--cpus",
-      self.run_cpus,
+      str(run.get("requestedCpu") or self.run_cpus),
       "--memory",
-      self.run_memory,
+      str(run.get("requestedMemoryBytes") or self.run_memory),
       "--user",
       f"{self.container_uid}:{self.container_gid}",
       "-v",
@@ -80,6 +84,8 @@ class DockerCodexRunner(CodexRunner):
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     with self.lock:
       self.processes[run["id"]] = process
+    if run.get("status") == "stopping":
+      self.stop(run)
     try:
       if process.stdout:
         for line in process.stdout:
@@ -380,6 +386,7 @@ class ChatRuntime:
     capacity: int = 1,
     chat_store: ChatStore | None = None,
     save_users=None,
+    worker_registry: WorkerRegistry | None = None,
   ):
     self.store = store
     self.users = users
@@ -387,6 +394,10 @@ class ChatRuntime:
     self.chat_store = chat_store or ChatStore(store.root / "chat")
     self.save_users = save_users
     self.capacity = max(1, capacity)
+    self.requested_cpu = float(SETTINGS.run_cpus)
+    self.requested_memory_bytes = parse_memory_bytes(SETTINGS.run_memory)
+    self.worker_registry = worker_registry or (WorkerRegistry(SETTINGS) if SETTINGS.compute_nodes else None)
+    self.codex_preparer = self.runner if isinstance(self.runner, DockerCodexRunner) else DockerCodexRunner()
     self.scheduler_poll_seconds = max(0.01, SETTINGS.scheduler_poll_seconds)
     self.lock = threading.RLock()
     self.condition = threading.Condition(self.lock)
@@ -394,16 +405,42 @@ class ChatRuntime:
     self.active_runs: set[str] = set()
     self.stop_requested: set[str] = set()
     self.shutdown = False
-    self.store.set_chat_session_provider(self.chat_store.public_workspace_sessions)
+    self.store.set_chat_session_provider(self.public_workspace_sessions)
     self.migrate_legacy_chat_metadata()
+    self.recover_persisted_runs()
     self.scheduler = threading.Thread(target=self.scheduler_loop, name="ai-audit-chat-scheduler", daemon=True)
     self.scheduler.start()
+
+  def public_workspace_sessions(self, workspace: dict) -> list[dict]:
+    return [self.public_session(item["id"]) for item in workspace.get("sessions", []) if self.chat_store.get_session(item.get("id"))]
 
   def migrate_legacy_chat_metadata(self) -> None:
     metadata = self.store.load_metadata()
     self.ensure_chat_metadata(metadata)
     if self.chat_store.migrate_from_metadata(metadata):
       self.store.save_metadata(metadata)
+
+  def recover_persisted_runs(self) -> None:
+    for run in self.chat_store.runs().values():
+      status = str(run.get("status") or "")
+      if status == "queued":
+        self.queue.put(str(run["id"]))
+        continue
+      if status not in RUNNING_STATES:
+        continue
+      node_id = str(run.get("workerId") or "")
+      if self.worker_registry and node_id in self.worker_registry.nodes:
+        self.worker_registry.reserve(node_id, str(run["id"]), float(run.get("requestedCpu") or self.requested_cpu), int(run.get("requestedMemoryBytes") or self.requested_memory_bytes))
+        self.active_runs.add(str(run["id"]))
+        threading.Thread(target=self.execute_run, args=(str(run["id"]), node_id), name=f"ai-audit-recover-{run['id']}", daemon=True).start()
+        continue
+      with self.lock:
+        metadata = self.store.load_metadata()
+        stored = self.chat_store.get_run(str(run["id"]))
+        if stored:
+          self.finalize_run(metadata, stored, "failed", "control plane restarted before the local run completed")
+          self.chat_store.save_run(stored)
+          self.store.save_metadata(metadata)
 
   def ensure_chat_metadata(self, metadata: dict) -> None:
     for workspace in metadata.get("workspaces", {}).values():
@@ -447,6 +484,8 @@ class ChatRuntime:
     if int(user.get("usedTokens") or 0) >= int(user.get("budgetTokens") or 0):
       raise StorageError("budget_exhausted", "user token budget is exhausted")
     self.user_codex_settings(user)
+    if self.worker_registry and not self.worker_registry.compatible(self.requested_cpu, self.requested_memory_bytes):
+      raise StorageError("no_compatible_worker", "no configured compute node can satisfy the run resources")
     with self.lock:
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
@@ -474,7 +513,11 @@ class ChatRuntime:
         "prompt": prompt,
         "model": str(payload.get("model") or "gpt-5.6-sol"),
         "reasoning": str(payload.get("reasoning") or "high"),
-        "worker": "local-docker",
+        "worker": "queued",
+        "workerId": None,
+        "requestedCpu": self.requested_cpu,
+        "requestedMemoryBytes": self.requested_memory_bytes,
+        "workerEventCursor": 0,
         "container": "",
         "created": timestamp,
         "updated": timestamp,
@@ -495,7 +538,8 @@ class ChatRuntime:
       session["updated"] = timestamp
       self.chat_store.save_session(session)
       self.append_event(session["id"], "user", prompt, run["id"])
-      self.append_event(session["id"], "queued", "Run queued. Waiting for local Docker capacity.", run["id"])
+      queue_message = "Run queued. Waiting for compute capacity." if self.worker_registry else "Run queued. Waiting for local Docker capacity."
+      self.append_event(session["id"], "queued", queue_message, run["id"])
       self.store.save_metadata(metadata)
       self.queue.put(run["id"])
       self.condition.notify_all()
@@ -541,7 +585,10 @@ class ChatRuntime:
         self.store.save_metadata(metadata)
       self.condition.notify_all()
     if not was_queued:
-      self.runner.stop(run)
+      if self.worker_registry and run.get("workerId"):
+        self.worker_registry.client(str(run["workerId"])).stop(str(run["id"]))
+      else:
+        self.runner.stop(run)
     return {"run": run}
 
   def events(self, workspace_id: str, session_id: str, after: int, user: dict) -> list[dict]:
@@ -566,12 +613,26 @@ class ChatRuntime:
   def scheduler_loop(self) -> None:
     while not self.shutdown:
       run_id = self.queue.get()
-      while len(self.active_runs) >= self.capacity:
-        time.sleep(self.scheduler_poll_seconds)
+      node_id = None
+      if self.worker_registry:
+        run = self.chat_store.get_run(run_id)
+        if not run or run.get("status") != "queued":
+          continue
+        node_id = self.worker_registry.claim(run_id, float(run["requestedCpu"]), int(run["requestedMemoryBytes"]))
+        if not node_id:
+          self.queue.put(run_id)
+          time.sleep(max(self.scheduler_poll_seconds, 0.1))
+          continue
+        run["workerId"] = node_id
+        run["worker"] = node_id
+        self.chat_store.save_run(run)
+      else:
+        while len(self.active_runs) >= self.capacity:
+          time.sleep(self.scheduler_poll_seconds)
       self.active_runs.add(run_id)
-      threading.Thread(target=self.execute_run, args=(run_id,), name=f"ai-audit-run-{run_id}", daemon=True).start()
+      threading.Thread(target=self.execute_run, args=(run_id, node_id), name=f"ai-audit-run-{run_id}", daemon=True).start()
 
-  def execute_run(self, run_id: str) -> None:
+  def execute_run(self, run_id: str, node_id: str | None = None) -> None:
     try:
       with self.lock:
         metadata = self.store.load_metadata()
@@ -592,14 +653,22 @@ class ChatRuntime:
         session = self.chat_store.get_session(run["sessionId"])
         session["status"] = "running"
         session["updated"] = run["updated"]
-        self.append_event(run["sessionId"], "starting", "Starting Codex container.", run_id)
+        start_message = f"Starting Codex container on {node_id}." if node_id else "Starting local Codex container."
+        self.append_event(run["sessionId"], "starting", start_message, run_id)
         self.chat_store.save_session(session)
         self.chat_store.save_run(run)
         self.store.save_metadata(metadata)
         self.condition.notify_all()
       workspace_path = self.store.workspace_path(run["workspaceId"])
       run_for_worker = {**run, "codexSettings": self.user_codex_settings(self.users[run["user"]])}
-      for event in self.runner.start(run_for_worker, workspace_path):
+      if node_id and self.worker_registry:
+        self.codex_preparer.prepare_codex_home(run_for_worker)
+        run_for_worker.pop("codexSettings", None)
+        started, event_stream = self.worker_registry.client(node_id).start(run_for_worker)
+        run_for_worker["container"] = str(started.get("container") or "")
+      else:
+        event_stream = self.runner.start(run_for_worker, workspace_path)
+      for event in event_stream:
         with self.lock:
           metadata = self.store.load_metadata()
           self.ensure_chat_metadata(metadata)
@@ -612,6 +681,7 @@ class ChatRuntime:
             break
           stored_run["status"] = "running"
           stored_run["container"] = run_for_worker.get("container", stored_run.get("container", ""))
+          stored_run["workerEventCursor"] = int(run_for_worker.get("workerEventCursor") or stored_run.get("workerEventCursor") or 0)
           self.record_runner_event(stored_run, event)
           self.chat_store.save_run(stored_run)
           self.condition.notify_all()
@@ -620,12 +690,15 @@ class ChatRuntime:
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
         if run:
-          final_status = "stopped" if run_id in self.stop_requested or run["status"] == "stopping" else "completed"
+          remote_status = str(run_for_worker.get("remoteStatus") or "")
+          final_status = "stopped" if run_id in self.stop_requested or run["status"] == "stopping" or remote_status == "stopped" else "completed"
           self.finalize_run(metadata, run, final_status, None)
           self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
           self.condition.notify_all()
     except Exception as exc:
+      if node_id and self.worker_registry and isinstance(exc, WorkerUnavailable):
+        time.sleep(max(0.0, SETTINGS.worker_run_lease_seconds))
       with self.lock:
         metadata = self.store.load_metadata()
         self.ensure_chat_metadata(metadata)
@@ -636,6 +709,15 @@ class ChatRuntime:
           self.store.save_metadata(metadata)
           self.condition.notify_all()
     finally:
+      if node_id and self.worker_registry:
+        stored_run = self.chat_store.get_run(run_id)
+        if stored_run and stored_run.get("status") in TERMINAL_STATES:
+          try:
+            self.worker_registry.client(node_id).acknowledge(run_id)
+          except WorkerUnavailable:
+            pass
+      if self.worker_registry:
+        self.worker_registry.release(node_id, run_id)
       self.active_runs.discard(run_id)
       self.stop_requested.discard(run_id)
 
@@ -731,7 +813,52 @@ class ChatRuntime:
     return self.chat_store.append_event(session_id, event)
 
   def public_session(self, session_id: str) -> dict:
-    return self.chat_store.public_session(session_id)
+    session = self.chat_store.public_session(session_id)
+    stored = self.chat_store.get_session(session_id)
+    run = self.chat_store.get_run(str(stored.get("latestRunId") or "")) if stored else None
+    if not run:
+      session["resources"] = self.worker_registry.aggregate_status() if self.worker_registry else self.local_resource_status()
+      return session
+    node_id = str(run.get("workerId") or "")
+    worker = self.worker_registry.node_status(node_id) if self.worker_registry and node_id else None
+    if worker:
+      session["resources"] = worker
+    elif self.worker_registry:
+      session["resources"] = self.worker_registry.aggregate_status()
+    else:
+      session["resources"] = self.local_resource_status()
+    session["workerId"] = node_id or ("compute-pool" if self.worker_registry else "local-docker")
+    session["container"] = str(run.get("container") or "")
+    session["requestedCpu"] = float(run.get("requestedCpu") or self.requested_cpu)
+    session["requestedMemoryBytes"] = int(run.get("requestedMemoryBytes") or self.requested_memory_bytes)
+    return session
+
+  def local_resource_status(self) -> dict:
+    active = len(self.active_runs)
+    return {
+      "id": "local-docker",
+      "healthy": True,
+      "cpuTotal": self.requested_cpu * self.capacity,
+      "cpuUsed": self.requested_cpu * active,
+      "cpuAvailable": self.requested_cpu * max(0, self.capacity - active),
+      "memoryTotalBytes": self.requested_memory_bytes * self.capacity,
+      "memoryUsedBytes": self.requested_memory_bytes * active,
+      "memoryAvailableBytes": self.requested_memory_bytes * max(0, self.capacity - active),
+      "activeRunCount": active,
+    }
+
+  def worker_status(self) -> list[dict]:
+    if self.worker_registry:
+      return self.worker_registry.status()
+    active = len(self.active_runs)
+    return [{
+      **self.local_resource_status(),
+      "ip": "127.0.0.1",
+      "port": None,
+      "activeRunIds": sorted(self.active_runs),
+      "lastContact": time.strftime("%Y-%m-%d %H:%M:%S"),
+      "error": "",
+    }]
 
   def session_title(self, prompt: str) -> str:
     compact = " ".join(prompt.split())

@@ -149,6 +149,11 @@ p {
   color: var(--blue);
 }
 
+.pill.danger {
+  background: #fcebec;
+  color: var(--danger);
+}
+
 .meter {
   overflow: hidden;
   height: 8px;

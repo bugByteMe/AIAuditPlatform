@@ -19,6 +19,7 @@ import {
   renderOperationProgress,
   renderPanelState,
   renderWorkspaceManagement,
+  renderWorkers,
   renderWorkspaces,
 } from "./js/render.js";
 import { currentWorkspace } from "./js/selectors.js";
@@ -27,6 +28,7 @@ const VALID_VIEWS = new Set(["workspace", "chat", "admin"]);
 let activeChatStream = null;
 let activePollTimer = null;
 let activeStreamGeneration = 0;
+let workerStatusLoading = false;
 
 export function renderDynamic() {
   renderCurrentUser();
@@ -39,6 +41,7 @@ export function renderDynamic() {
   renderOperationProgress();
   renderPanelState();
   renderAdmin();
+  renderWorkers();
 }
 
 function showToast(message) {
@@ -128,7 +131,12 @@ async function pollChatEvents(workspaceId, sessionId, generation) {
     const serverStatus = result.sessionStatus || session.status;
     const statusChanged = serverStatus !== session.status;
     session.status = serverStatus;
-    if (changed || statusChanged) renderDynamic();
+    if (result.session) {
+      session.resources = result.session.resources;
+      session.workerId = result.session.workerId;
+      session.container = result.session.container;
+    }
+    if (changed || statusChanged || result.session) renderDynamic();
     if (TERMINAL_CHAT_STATES.has(serverStatus)) {
       stopChatStream();
       await refreshWorkspaceById(workspaceId);
@@ -268,20 +276,39 @@ async function loadAccountControlData() {
   if (state.user?.role !== "system_admin") {
     state.accounts = [];
     state.groups = [];
+    state.workers = [];
     renderAdmin();
+    renderWorkers();
     return;
   }
   try {
-    const [accounts, logs] = await Promise.all([api("/api/accounts"), api("/api/audit-logs")]);
+    const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), api("/api/audit-logs"), api("/api/workers")]);
     state.accounts = accounts.accounts || [];
     state.groups = accounts.groups || [];
     state.auditLogs = logs.logs || [];
+    state.workers = workers.workers || [];
   } catch {
     state.accounts = [];
     state.groups = [];
     state.auditLogs = [];
+    state.workers = [];
   }
   renderAdmin();
+  renderWorkers();
+}
+
+async function refreshWorkerStatus() {
+  if (workerStatusLoading || state.user?.role !== "system_admin" || viewFromLocation() !== "admin") return;
+  workerStatusLoading = true;
+  try {
+    const result = await api("/api/workers");
+    state.workers = result.workers || [];
+    renderWorkers();
+  } catch (error) {
+    console.warn("Worker status refresh failed", error);
+  } finally {
+    workerStatusLoading = false;
+  }
 }
 
 async function loadRuntimeConfig() {
@@ -1433,6 +1460,7 @@ function syncRouteFromLocation() {
 
 window.addEventListener("hashchange", syncRouteFromLocation);
 window.addEventListener("popstate", syncRouteFromLocation);
+window.setInterval(refreshWorkerStatus, 5_000);
 
 bindGlobalClicks();
 bindForms();

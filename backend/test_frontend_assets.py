@@ -77,6 +77,17 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("data-delete-account", render_source)
         self.assertIn("data-set-group-limit", render_source)
 
+    def test_compute_resource_status_and_slim_header_are_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="chat-cpu-meter"', html)
+        self.assertIn('id="chat-memory-meter"', html)
+        self.assertIn('id="worker-grid"', html)
+        self.assertIn('api("/api/workers")', app_source)
+        self.assertIn("export function renderWorkers", render_source)
+        self.assertNotRegex(html, r'<header class="topbar">\s*<div[^>]+>\s*<h1')
+
 
 if __name__ == "__main__":
     unittest.main()

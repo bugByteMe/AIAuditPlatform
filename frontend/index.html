@@ -99,10 +99,6 @@
 
       <main class="main">
         <header class="topbar">
-          <div>
-            <p class="eyebrow" data-i18n="topbar.eyebrow">私有集群 · 受控工作流</p>
-            <h1 data-i18n="topbar.title">审计工作台</h1>
-          </div>
           <div class="topbar-actions">
             <div class="segmented" role="group" aria-label="Language">
               <button class="segment active" data-lang="zh">中文</button>
@@ -203,12 +199,16 @@
                   <span class="status-dot running"></span>
                   <span id="run-state-label" data-i18n="chat.running">运行中</span>
                 </div>
+                <div class="chat-resource-status">
+                  <div class="resource-line"><span id="chat-cpu-label">CPU 0 / 0</span><div class="meter"><span id="chat-cpu-meter" style="width: 0%"></span></div></div>
+                  <div class="resource-line"><span id="chat-memory-label">Memory 0 / 0</span><div class="meter green"><span id="chat-memory-meter" style="width: 0%"></span></div></div>
+                </div>
               </div>
 
               <div class="runtime-strip" aria-label="Runtime details">
-                <span><strong data-i18n="chat.worker">节点</strong> worker-03</span>
-                <span><strong data-i18n="chat.container">容器</strong> codex-run-a41f</span>
-                <span><strong data-i18n="chat.lock">工作区锁</strong> <span data-i18n="chat.locked">已占用</span></span>
+                <span><strong data-i18n="chat.worker">节点</strong> <span id="chat-worker-id">-</span></span>
+                <span><strong data-i18n="chat.container">容器</strong> <span id="chat-container-id">-</span></span>
+                <span><strong data-i18n="chat.lock">工作区锁</strong> <span id="chat-lock-label">-</span></span>
                 <span><strong data-i18n="chat.tokens">本次消耗</strong> <span id="token-count">128,420</span></span>
               </div>
 
@@ -271,6 +271,15 @@
                 </div>
               </div>
               <div class="admin-grid" id="admin-grid"></div>
+            </section>
+            <section class="panel wide">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="admin.workers">计算节点</h2>
+                  <p data-i18n="admin.workersHelp">节点健康、资源占用和活动任务。</p>
+                </div>
+              </div>
+              <div class="worker-grid" id="worker-grid"></div>
             </section>
             <section class="panel">
               <div class="panel-head">

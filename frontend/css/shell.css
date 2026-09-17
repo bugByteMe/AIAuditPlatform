@@ -150,18 +150,13 @@
 
 .topbar {
   display: flex;
-  justify-content: space-between;
+  justify-content: flex-end;
   align-items: center;
-  gap: 20px;
-  margin-bottom: 14px;
-  padding-bottom: 12px;
+  gap: 10px;
+  min-height: 38px;
+  margin-bottom: 10px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
-}
-
-.eyebrow {
-  margin: 0 0 4px;
-  color: var(--muted);
-  font-size: 13px;
 }
 
 .topbar-actions,

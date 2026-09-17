@@ -27,10 +27,15 @@
 
 ## Scheduling
 
+- Config parsing rejects duplicate IDs, invalid endpoints, and non-positive CPU or memory and accepts byte/unit memory values.
 - Runs are assigned only to workers with fresh heartbeats.
 - Runs stay queued when all workers are full.
 - New runs are not assigned to unhealthy workers.
-- Worker capacity updates affect scheduling decisions.
+- CPU and memory reservations are atomic and the least-utilized compatible node wins with a stable tie-break.
+- A configured remote pool never silently falls back to local Docker; an empty pool retains local execution.
+- Start is idempotent by run ID and restart recovery continues from the persisted worker event cursor.
+- Lost control-plane leases stop orphaned worker containers; worker loss fails the run without automatic retry after the lease fence.
+- Worker HTTPS rejects missing/incorrect bearer credentials and the control plane verifies the configured CA.
 - Workspace lock prevents two active mutating runs on the same workspace.
 
 ## Workspace Lifecycle
@@ -81,3 +86,5 @@
 - Group deletion cascades through active and pending members and their owned resources.
 - The signed-in administrator and the last remaining system administrator cannot be deleted.
 - A run stop timeout rejects cascading deletion without removing the account or group.
+- Only system admins can read compute-worker health and resource summaries.
+- The admin worker cards and chat header render available/total CPU and memory without restoring the removed large console heading.

@@ -17,7 +17,7 @@ The primary user workflow is:
 5. Stop, resume, or complete the task.
 6. Download generated or modified artifacts.
 
-Administrators can create users and groups in batch, assign token budgets, inspect usage, disable accounts or groups, and review audit logs.
+Administrators can create users and groups, reset per-user token budgets, set group disk limits, inspect usage and compute-node health, delete accounts or groups, and review audit logs.
 
 ## Architecture Overview
 
@@ -36,7 +36,7 @@ See [architecture.md](architecture.md) for the control-plane and worker design.
 
 ### Accounts and Budgets
 
-The system uses internal username/password accounts. Each user can belong to a group. Both users and groups can have token budgets, and the system enforces hard budget limits before and during chat execution.
+The system uses internal username/password accounts. Each user can belong to a group. Each user has a token budget, while each group can have a logical workspace disk limit. The system enforces these controls before starting chat execution or accepting workspace growth.
 
 Account sharing is discouraged through concurrent session limits and audit logs for IP/device changes. Strong device binding and SSO are not part of the initial design.
 

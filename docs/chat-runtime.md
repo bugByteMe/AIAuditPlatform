@@ -24,7 +24,7 @@ When a user starts a chat:
 
 1. Backend checks authentication, workspace permission, workspace lock, and budget.
 2. Backend creates a chat session and run record.
-3. Scheduler assigns the run to a healthy worker with capacity.
+3. Scheduler reserves CPU and memory on the least-utilized compatible healthy worker (stable configuration order breaks ties).
 4. Worker launches a Docker container with the workspace mounted.
 5. Worker streams events back to the backend.
 6. Backend persists events and fans them out to the frontend.
@@ -85,7 +85,7 @@ Failures should preserve as much recoverable state as possible:
 
 - If the worker reports an error, persist the error event.
 - If the container exits unexpectedly, mark the run failed and checkpoint the workspace if possible.
-- If the worker disappears, mark active runs as uncertain until heartbeat timeout handling resolves them.
+- If contact with a worker is lost, stop renewing its run lease, wait for the bounded lease interval, then mark the run failed after attempting a final workspace checkpoint. The run remains resumable when its persisted Codex transcript/checkpoint is usable; it is not automatically retried.
 - If budget is exhausted, stop the run and record the stop reason as budget-related.
 
 ## V1 Implementation Surface
@@ -99,7 +99,9 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 - `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`
 - `GET /api/workspaces/{workspace_id}/chat/stream?sessionId={session_id}&after={event_id}`
 
-The first implementation uses a local scheduler with configurable capacity. It persists chat sessions, runs, and events in dedicated chat storage, locks the workspace before queueing a run, releases the lock on terminal states, and records a checkpoint/artifact refresh after completion, stop, or failure. Workspace metadata keeps only workspace-level state and lightweight chat session references.
+The implementation uses the statically configured compute-node inventory whenever that inventory is nonempty. The control-plane scheduler polls enabled workers over authenticated HTTPS, reserves the per-run `run_cpus` and `run_memory`, and queues work until a compatible healthy node has capacity. It uses local Docker with `local_run_capacity` only when no compute nodes are configured; configuring every node as disabled intentionally prevents execution rather than falling back locally. It persists the assigned worker, container, event cursor, chat sessions, runs, and events; locks the workspace before queueing; releases the lock on terminal states; and records a checkpoint/artifact refresh after completion, stop, or failure. Workspace metadata keeps only workspace-level state and lightweight chat session references.
+
+The worker persists its run state and event stream beneath `<workspace_storage_dir>/worker_state/<node_id>/`. Start is idempotent by run ID, and the control plane can reconnect from its last persisted event cursor after restart. A worker restart marks its interrupted work failed rather than launching a duplicate container. The lease watchdog stops orphaned containers when the control plane disappears. After the control plane has checkpointed a terminal run, it acknowledges the result so the worker removes its duplicate run/event record.
 
 Live updates use Server-Sent Events. A lightweight event-list reconciliation poll runs alongside SSE so proxy buffering, silent connection stalls, or reconnect races cannot leave the visible history stale. Both paths merge by persisted event ID into the session they were opened for, and terminal status is returned even when no new event payload is available.
 
@@ -117,11 +119,13 @@ codex --ask-for-approval never --sandbox danger-full-access exec resume --json -
 
 If Codex does not expose a session id in JSON events, the backend falls back to `codex exec resume --last` within that chat session's isolated `CODEX_HOME`.
 
-Each user account stores its own Codex `baseUrl` and API key in account storage. Before every run, the backend generates a writable session-scoped `CODEX_HOME` under `workspace_storage/codex_homes/<username>/<chat_session_id>/` with:
+Each user account stores its own Codex `baseUrl` and API key in account storage. Before every run, the backend generates a writable session-scoped `CODEX_HOME` under `workspace_storage/codex/homes/<username>/<chat_session_id>/` with:
 
 - `config.toml`: model provider, base URL, model, reasoning effort, and trusted `/workspace`.
 - `auth.json`: API key authentication for the selected user.
 
 The API key is write-only through the backend API and is never returned in public account/session responses. Run records do not persist Codex credentials or generated `CODEX_HOME` paths.
+
+The chat header shows available/total CPU and memory for the assigned worker. While a run is queued it shows the aggregate capacity of healthy workers. The system-admin view exposes all configured nodes, heartbeat state, reservations, and the same resource meters through `GET /api/workers`.
 
 Docker is not required for unit tests. Tests use a fake runner so lifecycle, lock, budget, and event behavior can be validated on machines where Docker is unavailable or broken.

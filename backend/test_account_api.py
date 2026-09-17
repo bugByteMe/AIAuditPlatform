@@ -49,6 +49,17 @@ class AccountApiTest(unittest.TestCase):
     self.assertNotIn("inviteToken", public_user(pending))
     self.assertEqual(admin_account(pending)["inviteToken"], "secret-token")
 
+  def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
+    actor = {"username": "admin", "role": "system_admin"}
+    handler = self.handler({}, actor)
+    handler.require_admin = MagicMock(return_value=actor)
+    runtime = MagicMock()
+    runtime.worker_status.return_value = [{"id": "worker-1", "healthy": True}]
+    with patch("server.CHAT_RUNTIME", runtime):
+      Handler.workers(handler)
+    handler.require_admin.assert_called_once_with()
+    self.assertEqual(handler.responses[0][0], {"workers": [{"id": "worker-1", "healthy": True}]})
+
   def test_registration_activates_and_starts_session(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})

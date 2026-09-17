@@ -3,6 +3,7 @@ export const state = {
   user: null,
   accounts: [],
   groups: [],
+  workers: [],
   createdInvites: [],
   auditLogs: [],
   workspaces: [],

@@ -14,6 +14,7 @@
   "frontend_dir": "frontend",
   "host": "0.0.0.0",
   "chat_poll_interval_ms": 2000,
+  "compute_nodes": [],
   "local_run_capacity": 1,
   "max_file_bytes": 262144000,
   "max_file_count": 10000,
@@ -35,5 +36,10 @@
   "sse_max_idle_rounds": 24,
   "sse_retry_ms": 2000,
   "sse_wait_timeout_seconds": 5,
+  "worker_ca_file": "",
+  "worker_health_interval_seconds": 5,
+  "worker_request_timeout_seconds": 10,
+  "worker_run_lease_seconds": 30,
+  "worker_unhealthy_after_seconds": 15,
   "workspace_storage_dir": "workspace_storage"
 }

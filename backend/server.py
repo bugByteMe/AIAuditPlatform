@@ -230,6 +230,8 @@ class Handler(BaseHTTPRequestHandler):
         self.delete_group(path.rsplit("/", 1)[-1])
       elif method == "GET" and path == "/api/audit-logs":
         self.audit_logs()
+      elif method == "GET" and path == "/api/workers":
+        self.workers()
       elif method == "GET" and path == "/api/codex-settings":
         self.codex_settings()
       elif method == "PATCH" and path == "/api/codex-settings":
@@ -261,7 +263,7 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
       return HTTPStatus.PAYMENT_REQUIRED
-    if exc.code in {"codex_auth_required"}:
+    if exc.code in {"codex_auth_required", "no_compatible_worker"}:
       return HTTPStatus.PRECONDITION_REQUIRED
     if exc.code in {"file_too_large", "workspace_too_large", "too_many_files", "group_disk_quota_exceeded"}:
       return HTTPStatus.REQUEST_ENTITY_TOO_LARGE
@@ -526,6 +528,10 @@ class Handler(BaseHTTPRequestHandler):
     self.require_admin()
     self.write_json({"logs": AUDIT_LOGS})
 
+  def workers(self) -> None:
+    self.require_admin()
+    self.write_json({"workers": CHAT_RUNTIME.worker_status()})
+
   def codex_settings(self) -> None:
     user = self.require_user()
     codex = user.get("codex") or {}
@@ -684,7 +690,8 @@ class Handler(BaseHTTPRequestHandler):
       session_id = (params.get("sessionId") or [""])[0]
       after = int((params.get("after") or ["0"])[0] or 0)
       events = CHAT_RUNTIME.events(workspace_id, session_id, after, user)
-      self.write_json({"events": events, "sessionStatus": CHAT_RUNTIME.public_session(session_id).get("status")})
+      public_session = CHAT_RUNTIME.public_session(session_id)
+      self.write_json({"events": events, "sessionStatus": public_session.get("status"), "session": public_session})
     elif method == "GET" and action == "stream" and not tail:
       params = parse_query(query)
       session_id = (params.get("sessionId") or [""])[0]

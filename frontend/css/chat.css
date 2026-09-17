@@ -252,6 +252,25 @@
   font-weight: 700;
 }
 
+.chat-resource-status {
+  min-width: 190px;
+  display: grid;
+  gap: 5px;
+}
+
+.resource-line {
+  display: grid;
+  grid-template-columns: 92px minmax(70px, 1fr);
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.resource-line .meter {
+  height: 5px;
+}
+
 .status-dot {
   width: 10px;
   height: 10px;

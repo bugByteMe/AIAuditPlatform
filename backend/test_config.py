@@ -7,7 +7,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import ROOT, SETTINGS
+from config import ROOT, SETTINGS, normalize_compute_nodes, parse_memory_bytes
 
 
 class ConfigurationTest(unittest.TestCase):
@@ -19,6 +19,7 @@ class ConfigurationTest(unittest.TestCase):
       "batch_invite_max_count",
       "blocked_upload_suffixes",
       "chat_poll_interval_ms",
+      "compute_nodes",
       "codex_home_root",
       "codex_image",
       "container_gid",
@@ -40,6 +41,11 @@ class ConfigurationTest(unittest.TestCase):
       "sse_max_idle_rounds",
       "sse_retry_ms",
       "sse_wait_timeout_seconds",
+      "worker_ca_file",
+      "worker_health_interval_seconds",
+      "worker_request_timeout_seconds",
+      "worker_run_lease_seconds",
+      "worker_unhealthy_after_seconds",
     }
     self.assertEqual(set(), expected - set(payload))
     self.assertNotIn("default_codex_api_key", payload)
@@ -50,3 +56,24 @@ class ConfigurationTest(unittest.TestCase):
     self.assertGreaterEqual(SETTINGS.chat_poll_interval_ms, 250)
     self.assertGreater(SETTINGS.sse_wait_timeout_seconds, 0)
     self.assertTrue(SETTINGS.blocked_upload_suffixes)
+
+  def test_compute_node_configuration_is_normalized(self) -> None:
+    nodes = normalize_compute_nodes(
+      [{
+        "id": "gpu-1",
+        "ip": "10.0.0.11",
+        "port": 9443,
+        "cpu": 8,
+        "memory": "32GiB",
+        "workspace_storage_dir": "/srv/ai-audit",
+        "tls_cert_file": "/etc/ai-audit/worker.crt",
+        "tls_key_file": "/etc/ai-audit/worker.key",
+      }]
+    )
+    self.assertEqual(nodes[0]["memoryBytes"], 32 * 1024**3)
+    self.assertEqual(nodes[0]["workspaceStorageDir"], "/srv/ai-audit")
+    self.assertTrue(nodes[0]["enabled"])
+
+  def test_memory_parser_accepts_binary_units(self) -> None:
+    self.assertEqual(parse_memory_bytes("1.5g"), int(1.5 * 1024**3))
+    self.assertEqual(parse_memory_bytes("512MiB"), 512 * 1024**2)
