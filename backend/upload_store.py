@@ -8,6 +8,7 @@ import time
 from hashlib import sha256
 from pathlib import Path
 
+from compute_nodes import WorkerUnavailable
 from config import SETTINGS
 from workspace_store import StorageError, ensure_under_root, generated_id, normalize_relative_path, now_string
 
@@ -22,6 +23,17 @@ def _atomic_json(path: Path, payload: dict) -> None:
   temporary.replace(path)
 
 
+class TrackedReader:
+  def __init__(self, source):
+    self.source = source
+    self.bytes_read = 0
+
+  def read(self, size=-1):
+    block = self.source.read(size)
+    self.bytes_read += len(block or b"")
+    return block
+
+
 class WorkerUploadStore:
   """Worker-side staging and finalization. It never writes authoritative metadata."""
 
@@ -32,6 +44,7 @@ class WorkerUploadStore:
     self.blob_root = root / "blobs" / "sha256"
     self.buffer_bytes = max(64 * 1024, int(buffer_bytes or SETTINGS.upload_stream_buffer_bytes))
     self.lock = threading.RLock()
+    self.file_locks: dict[tuple[str, int], threading.RLock] = {}
     self.finalizing: set[str] = set()
     self.upload_root.mkdir(parents=True, exist_ok=True)
 
@@ -92,19 +105,26 @@ class WorkerUploadStore:
   def file_path(self, upload_id: str, index: int) -> Path:
     return ensure_under_root(self.directory(upload_id), self.directory(upload_id) / "files" / f"{index}.part")
 
+  def file_lock(self, upload_id: str, index: int) -> threading.RLock:
+    with self.lock:
+      return self.file_locks.setdefault((upload_id, index), threading.RLock())
+
   def write_chunk(self, upload_id: str, index: int, offset: int, source, length: int) -> dict:
     if length < 0 or length > SETTINGS.upload_chunk_bytes:
       raise StorageError("bad_request", "invalid upload chunk size")
-    with self.lock:
-      state = self.load(upload_id)
-      if state["status"] != "uploading":
-        raise StorageError("upload_not_writable", "upload is no longer accepting chunks")
-      if index < 0 or index >= len(state["files"]):
-        raise StorageError("bad_request", "invalid upload file index")
-      item = state["files"][index]
-      current = int(item.get("offset") or 0)
-      if offset > current or offset + length > int(item["size"]):
-        raise StorageError("upload_offset_mismatch", f"expected offset {current}")
+    if index < 0:
+      raise StorageError("bad_request", "invalid upload file index")
+    with self.file_lock(upload_id, index):
+      with self.lock:
+        state = self.load(upload_id)
+        if state["status"] != "uploading":
+          raise StorageError("upload_not_writable", "upload is no longer accepting chunks")
+        if index >= len(state["files"]):
+          raise StorageError("bad_request", "invalid upload file index")
+        item = dict(state["files"][index])
+        current = int(item.get("offset") or 0)
+        if offset > current or offset + length > int(item["size"]):
+          raise StorageError("upload_offset_mismatch", f"expected offset {current}")
       destination = self.file_path(upload_id, index)
       destination.parent.mkdir(parents=True, exist_ok=True)
       if offset < current:
@@ -120,16 +140,23 @@ class WorkerUploadStore:
             remaining -= len(incoming)
         return {"offset": current, **self.public(state)}
       remaining = length
-      with destination.open("ab") as output:
+      with destination.open("r+b") as output:
+        output.seek(current)
+        output.truncate(current)
         while remaining:
           block = source.read(min(self.buffer_bytes, remaining))
           if not block:
             raise StorageError("short_upload_chunk", "chunk ended before Content-Length")
           output.write(block)
           remaining -= len(block)
-      item["offset"] = current + length
-      self.save(state)
-      return {"offset": item["offset"], **self.public(state)}
+      with self.lock:
+        state = self.load(upload_id)
+        item = state["files"][index]
+        if int(item.get("offset") or 0) != current:
+          raise StorageError("upload_offset_mismatch", f"expected offset {item.get('offset') or 0}")
+        item["offset"] = current + length
+        self.save(state)
+        return {"offset": item["offset"], **self.public(state)}
 
   def complete(self, upload_id: str) -> dict:
     with self.lock:
@@ -226,6 +253,8 @@ class WorkerUploadStore:
     finally:
       with self.lock:
         self.finalizing.discard(upload_id)
+        for key in [key for key in self.file_locks if key[0] == upload_id]:
+          self.file_locks.pop(key, None)
 
   def result(self, upload_id: str) -> dict:
     path = self.directory(upload_id) / "result.json"
@@ -238,8 +267,18 @@ class WorkerUploadStore:
       state = self.load(upload_id)
       if state["status"] in {"processing", "ready"}:
         raise StorageError("upload_commit_started", "upload processing has already started")
+      locks = [self.file_lock(upload_id, int(item["index"])) for item in state["files"]]
+    for lock in locks:
+      lock.acquire()
+    try:
       shutil.rmtree(self.directory(upload_id), ignore_errors=True)
-      return {"id": upload_id, "status": "cancelled"}
+    finally:
+      for lock in reversed(locks):
+        lock.release()
+      with self.lock:
+        for key in [key for key in self.file_locks if key[0] == upload_id]:
+          self.file_locks.pop(key, None)
+    return {"id": upload_id, "status": "cancelled"}
 
   def public(self, state: dict) -> dict:
     return {
@@ -265,16 +304,11 @@ class UploadManager:
     elif self.worker_registry:
       recovered = self.load()
       for session in recovered.get("sessions", {}).values():
-        if session.get("status") in ACTIVE_UPLOAD_STATES and session.get("workerId") in self.worker_registry.nodes:
-          self.worker_registry.reserve(
-            session["workerId"], session["id"], settings.upload_reservation_cpus,
-            settings.upload_reservation_memory_bytes, "upload",
-          )
-          session["reservationHeld"] = True
+        if session.get("status") in ACTIVE_UPLOAD_STATES:
+          # Reservations are process-local leases. Reclaim one lazily on the
+          # first resumed request instead of blocking capacity after restart.
+          session["reservationHeld"] = False
       self.save(recovered)
-      for session in recovered.get("sessions", {}).values():
-        if session.get("status") == "uploading" and session.get("reservationHeld"):
-          self._schedule_idle_release(session)
     with self.lock, self.store.lock:
       persisted = self.load()
       if self._expire(persisted):
@@ -412,6 +446,8 @@ class UploadManager:
     if node and node.get("healthy") and session.get("reservationHeld"):
       return self.worker_registry.client(node_id)
     self.worker_registry.release(node_id, session["id"])
+    session["reservationHeld"] = False
+    self.save(data)
     replacement = self.worker_registry.claim_upload(session["id"], self.settings.upload_reservation_cpus, self.settings.upload_reservation_memory_bytes)
     if not replacement:
       raise StorageError("no_upload_worker", "no compute worker has upload capacity")
@@ -421,8 +457,20 @@ class UploadManager:
     self.save(data)
     client = self.worker_registry.client(replacement)
     payload = {key: session[key] for key in ["id", "workspaceId", "mode", "files", "parentFiles", "snapshotId"]}
-    client.initialize_upload(payload)
+    try:
+      client.initialize_upload(payload)
+    except WorkerUnavailable as exc:
+      self._release_failed_reservation(data, session, exc)
+      raise StorageError("upload_worker_unavailable", str(exc)) from exc
     return client
+
+  def _release_failed_reservation(self, data: dict, session: dict, error: Exception) -> None:
+    if self.worker_registry:
+      self.worker_registry.release(session.get("workerId"), session["id"])
+    session["reservationHeld"] = False
+    session["updatedAt"] = time.time()
+    session["error"] = str(error)
+    self.save(data)
 
   def _schedule_idle_release(self, session: dict) -> None:
     if not self.worker_registry or not session.get("reservationHeld"):
@@ -469,12 +517,26 @@ class UploadManager:
       with self.lock:
         data, session = self._session(upload_id, user)
         client = self._ensure_worker(data, session)
-      if self.worker_registry:
-        status = client.stream_upload_chunk(upload_id, index, offset, source, length, self.settings.upload_stream_buffer_bytes)
-      else:
-        status = self.local_worker.write_chunk(upload_id, index, offset, source, length)
+      tracked = TrackedReader(source)
+      try:
+        if self.worker_registry:
+          status = client.stream_upload_chunk(upload_id, index, offset, tracked, length, self.settings.upload_stream_buffer_bytes)
+        else:
+          status = self.local_worker.write_chunk(upload_id, index, offset, tracked, length)
+      except WorkerUnavailable as exc:
+        remaining = max(0, length - tracked.bytes_read)
+        while remaining:
+          block = source.read(min(self.settings.upload_stream_buffer_bytes, remaining))
+          if not block:
+            break
+          remaining -= len(block)
+        with self.lock:
+          data, session = self._session(upload_id, user)
+          self._release_failed_reservation(data, session, exc)
+        raise StorageError("upload_worker_unavailable", str(exc)) from exc
       with self.lock:
         data, session = self._session(upload_id, user)
+        session["error"] = ""
         session["updatedAt"] = time.time()
         self.save(data)
         self._schedule_idle_release(session)
@@ -486,7 +548,11 @@ class UploadManager:
       if session["status"] == "committed":
         return self.public(session, {"status": "committed", "offsets": [item["size"] for item in session["files"]], "uploadedBytes": sum(item["size"] for item in session["files"]), "totalBytes": sum(item["size"] for item in session["files"]), "processingBytes": sum(item["size"] for item in session["files"])})
       client = self._ensure_worker(data, session)
-      worker_status = client.upload_status(upload_id) if self.worker_registry else self.local_worker.status(upload_id)
+      try:
+        worker_status = client.upload_status(upload_id) if self.worker_registry else self.local_worker.status(upload_id)
+      except WorkerUnavailable as exc:
+        self._release_failed_reservation(data, session, exc)
+        raise StorageError("upload_worker_unavailable", str(exc)) from exc
       session["status"] = worker_status["status"]
       session["updatedAt"] = time.time()
       if worker_status["status"] == "ready":
@@ -515,7 +581,11 @@ class UploadManager:
       if session["status"] == "committed":
         return self.public(session, {"status": "committed"})
       client = self._ensure_worker(data, session)
-      result = client.complete_upload(upload_id) if self.worker_registry else self.local_worker.complete(upload_id)
+      try:
+        result = client.complete_upload(upload_id) if self.worker_registry else self.local_worker.complete(upload_id)
+      except WorkerUnavailable as exc:
+        self._release_failed_reservation(data, session, exc)
+        raise StorageError("upload_worker_unavailable", str(exc)) from exc
       session["status"] = result["status"]
       session["updatedAt"] = time.time()
       self.save(data)

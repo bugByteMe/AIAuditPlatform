@@ -997,12 +997,24 @@ async function runResumableUpload({ items, mode, workspaceId = "", name = "", sh
           if (signal?.aborted) throw new DOMException("Upload aborted", "AbortError");
           const start = offsets[index];
           const end = Math.min(file.size, start + Number(upload.chunkSizeBytes || state.runtimeConfig.uploadChunkBytes || 8 * 1024 * 1024));
-          const result = await uploadChunkApi(
-            `/api/uploads/${encodeURIComponent(upload.id)}/files/${index}?offset=${start}`,
-            file.slice(start, end),
-            (loaded) => { inflight.set(index, loaded); renderBytes(); },
-            { signal },
-          );
+          let result;
+          let failures = 0;
+          while (!result) {
+            try {
+              result = await uploadChunkApi(
+                `/api/uploads/${encodeURIComponent(upload.id)}/files/${index}?offset=${start}`,
+                file.slice(start, end),
+                (loaded) => { inflight.set(index, loaded); renderBytes(); },
+                { signal },
+              );
+            } catch (error) {
+              inflight.delete(index);
+              renderBytes();
+              if (signal?.aborted || (!error.retryable && Number(error.status || 0) < 500) || failures >= 2) throw error;
+              failures += 1;
+              await new Promise((resolve) => window.setTimeout(resolve, failures * 750));
+            }
+          }
           inflight.delete(index);
           offsets[index] = Number(result.upload.offsets?.[index] ?? end);
           renderBytes();

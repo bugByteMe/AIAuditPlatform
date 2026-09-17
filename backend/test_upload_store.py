@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from compute_nodes import WorkerUnavailable
 from upload_store import UploadManager
 from workspace_store import StorageError, UploadedFile, WorkspaceStore
 
@@ -41,6 +42,36 @@ class BoundedReader(io.BytesIO):
       raise AssertionError("upload streams must always use bounded reads")
     self.largest_read = max(self.largest_read, size)
     return super().read(size)
+
+
+class FailingUploadClient:
+  def initialize_upload(self, _payload):
+    return {"status": "uploading"}
+
+  def stream_upload_chunk(self, *_args, **_kwargs):
+    raise WorkerUnavailable("worker connection dropped")
+
+
+class SingleUploadRegistry:
+  def __init__(self):
+    self.nodes = {"worker": {}}
+    self.reservations = set()
+    self.worker = FailingUploadClient()
+
+  def claim_upload(self, upload_id, *_args):
+    if self.reservations:
+      return None
+    self.reservations.add(upload_id)
+    return "worker"
+
+  def node_status(self, _node_id):
+    return {"healthy": True}
+
+  def client(self, _node_id):
+    return self.worker
+
+  def release(self, _node_id, upload_id):
+    self.reservations.discard(upload_id)
 
 
 class UploadManagerTest(unittest.TestCase):
@@ -86,6 +117,25 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(repeated["offsets"], [3])
     with self.assertRaisesRegex(StorageError, "differs"):
       self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"xyz"), 3)
+
+  def test_retry_overwrites_an_uncommitted_partial_chunk(self):
+    upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "partial.txt", "size": 6}]})
+    with self.assertRaisesRegex(StorageError, "ended before Content-Length"):
+      self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 6)
+    result = self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abcdef"), 6)
+    self.assertEqual(result["offsets"], [6])
+    self.assertEqual(self.manager.local_worker.file_path(upload["id"], 0).read_bytes(), b"abcdef")
+
+  def test_worker_chunk_failure_releases_capacity_and_keeps_session_resumable(self):
+    registry = SingleUploadRegistry()
+    manager = UploadManager(self.store, worker_registry=registry, settings=settings())
+    upload = manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
+    with self.assertRaisesRegex(StorageError, "worker connection dropped"):
+      manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)
+    session = manager.load()["sessions"][upload["id"]]
+    self.assertEqual(session["status"], "uploading")
+    self.assertFalse(session["reservationHeld"])
+    self.assertEqual(registry.reservations, set())
 
   def test_append_upload_locks_workspace_and_cancel_releases_it(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])

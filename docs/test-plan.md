@@ -55,6 +55,8 @@
 - Deleting a file retains its last content as the previous version; deleting the workspace collects that blob unless another workspace references it.
 - Ordinary workspace deletion collects exclusive blobs without deleting content shared by another workspace or fork.
 - Fresh storage initializes SQLite metadata, while populated legacy `metadata.json` storage fails safely with no mutation.
+- A worker failure during a streamed upload releases its compute reservation immediately, preserves resumable offsets, and returns a retryable service-unavailable response after consuming the request body.
+- Concurrent chunks for different files can stream into one upload without blocking behind a process-wide worker upload lock.
 
 ## Chat Lifecycle
 

@@ -118,7 +118,12 @@ function xhrBinary(path, body, base, onProgress, signal) {
       const contentType = xhr.getResponseHeader("Content-Type") || "";
       if (!contentType.includes("application/json")) return reject(Object.assign(new Error("api_not_json"), { retryable: true, status: xhr.status }));
       const payload = JSON.parse(xhr.responseText || "{}");
-      if (xhr.status < 200 || xhr.status >= 300) return reject(Object.assign(new Error(payload.message || payload.error || "request_failed"), { status: xhr.status }));
+      if (xhr.status < 200 || xhr.status >= 300) {
+        const error = new Error(payload.message || payload.error || "request_failed");
+        error.status = xhr.status;
+        error.retryable = xhr.status === 429 || xhr.status >= 500;
+        return reject(error);
+      }
       resolve(payload);
     };
     xhr.send(body);

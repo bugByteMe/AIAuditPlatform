@@ -151,6 +151,7 @@ class Settings:
     self.max_text_preview_bytes = _int("max_text_preview_bytes", "AI_AUDIT_MAX_TEXT_PREVIEW_BYTES", 256 * 1024)
     self.upload_chunk_bytes = _int("upload_chunk_bytes", "AI_AUDIT_UPLOAD_CHUNK_BYTES", 8 * 1024 * 1024)
     self.upload_stream_buffer_bytes = _int("upload_stream_buffer_bytes", "AI_AUDIT_UPLOAD_STREAM_BUFFER_BYTES", 1024 * 1024)
+    self.upload_chunk_timeout_seconds = _float("upload_chunk_timeout_seconds", "AI_AUDIT_UPLOAD_CHUNK_TIMEOUT_SECONDS", 300)
     self.upload_session_ttl_seconds = _int("upload_session_ttl_seconds", "AI_AUDIT_UPLOAD_SESSION_TTL_SECONDS", 24 * 60 * 60)
     self.upload_reservation_idle_seconds = _int("upload_reservation_idle_seconds", "AI_AUDIT_UPLOAD_RESERVATION_IDLE_SECONDS", 60)
     self.upload_max_concurrent_streams = _int("upload_max_concurrent_streams", "AI_AUDIT_UPLOAD_MAX_CONCURRENT_STREAMS", 8)

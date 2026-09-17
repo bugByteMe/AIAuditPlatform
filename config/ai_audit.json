@@ -33,6 +33,7 @@
   "max_text_preview_bytes": 262144,
   "max_workspace_bytes": 5368709120,
   "upload_chunk_bytes": 67108864,
+  "upload_chunk_timeout_seconds": 300,
   "upload_stream_buffer_bytes": 8388608,
   "upload_session_ttl_seconds": 86400,
   "upload_reservation_idle_seconds": 60,

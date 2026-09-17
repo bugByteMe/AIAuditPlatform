@@ -20,10 +20,11 @@ class WorkerRunFailed(RuntimeError):
 
 
 class WorkerClient:
-  def __init__(self, node: dict, *, token: str, ca_file, timeout: float, lease_seconds: float):
+  def __init__(self, node: dict, *, token: str, ca_file, timeout: float, lease_seconds: float, upload_timeout: float = 300):
     self.node = deepcopy(node)
     self.token = token
     self.timeout = timeout
+    self.upload_timeout = upload_timeout
     self.lease_seconds = lease_seconds
     if not token:
       raise ValueError("AI_AUDIT_WORKER_AUTH_TOKEN is required for remote compute nodes")
@@ -120,7 +121,7 @@ class WorkerClient:
 
   def stream_upload_chunk(self, upload_id: str, file_index: int, offset: int, source, length: int, buffer_bytes: int) -> dict:
     parsed = urllib.parse.urlparse(self.base_url)
-    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=max(self.timeout, 60), context=self.ssl_context)
+    connection = http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=max(self.timeout, self.upload_timeout), context=self.ssl_context)
     path = f"/v1/uploads/{urllib.parse.quote(upload_id)}/files/{file_index}?offset={offset}"
     try:
       connection.putrequest("PUT", path)
@@ -162,6 +163,7 @@ class WorkerRegistry:
         ca_file=settings.worker_ca_file,
         timeout=settings.worker_request_timeout_seconds,
         lease_seconds=settings.worker_run_lease_seconds,
+        upload_timeout=getattr(settings, "upload_chunk_timeout_seconds", 300),
       )
       for node_id, node in self.nodes.items()
     }

@@ -47,6 +47,7 @@ class ConfigurationTest(unittest.TestCase):
       "worker_run_lease_seconds",
       "worker_unhealthy_after_seconds",
       "upload_chunk_bytes",
+      "upload_chunk_timeout_seconds",
       "upload_stream_buffer_bytes",
       "upload_session_ttl_seconds",
       "upload_reservation_idle_seconds",
@@ -64,6 +65,7 @@ class ConfigurationTest(unittest.TestCase):
     self.assertGreater(SETTINGS.sse_wait_timeout_seconds, 0)
     self.assertTrue(SETTINGS.blocked_upload_suffixes)
     self.assertGreater(SETTINGS.upload_chunk_bytes, SETTINGS.upload_stream_buffer_bytes)
+    self.assertGreater(SETTINGS.upload_chunk_timeout_seconds, 0)
 
   def test_compute_node_configuration_is_normalized(self) -> None:
     nodes = normalize_compute_nodes(

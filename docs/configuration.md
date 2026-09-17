@@ -7,7 +7,7 @@ The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to us
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.
 - `session_cookie`, `session_ttl_seconds`, `pbkdf2_iterations`, and `audit_log_limit` configure authentication persistence and audit retention.
 - `max_file_bytes`, `max_workspace_bytes`, `max_file_count`, `max_text_preview_bytes`, `blocked_upload_suffixes`, and `office_preview_timeout_seconds` configure upload and preview limits.
-- `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation.
+- `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation; `upload_chunk_timeout_seconds` bounds control-plane forwarding of one chunk to a worker.
 - `upload_session_ttl_seconds` controls abandoned-session retention, `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
 - `upload_reservation_cpus` and `upload_reservation_memory` reserve worker capacity during active upload sessions. Each compute node may set `upload_slots` (default `1`).
 
