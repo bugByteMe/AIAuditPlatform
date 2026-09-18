@@ -50,9 +50,11 @@ Workspaces can be:
 - Shared with the owner's group.
 - Forked by a user with access.
 
-Group-shared workspaces support collaborative access. Users with access can inspect files, start chats when no mutating run is active, and download artifacts.
+Group-shared workspaces support collaborative access. Users with access can inspect files, start chats, and download artifacts.
 
-To prevent conflicting agent writes, only one mutating Codex run may be active for a workspace at a time. Other users can view, fork, or wait until the active run stops or completes.
+The owner controls an exclusive run lock while the workspace is idle. It is disabled by default. When enabled, only one mutating Codex run may be active. When disabled, runs from different chat sessions may share the live workspace after the initiating user confirms an overwrite and artifact-attribution warning. A chat session still permits only one active run.
+
+The operational workspace write lock remains held from the first active run until the last active run reaches a terminal state. Uploads, file replacement, deletion, workspace deletion, and forking remain blocked throughout. Concurrent terminal scans are serialized, but changes made by overlapping shared-directory runs cannot be attributed exclusively; artifact results are therefore best-effort for overlapping runs.
 
 ## Forking
 

@@ -504,11 +504,25 @@ class ChatRuntime:
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       quota_owner = self.store.workspace_quota_owner(workspace, user)
       self.store.assert_group_quota(quota_owner, metadata=metadata, require_available=True)
-      if workspace.get("locked"):
-        raise StorageError("workspace_locked", "workspace has an active write lock")
       session_id = str(payload.get("sessionId") or "")
       if session_id and not self.chat_store.get_session(session_id):
         session_id = ""
+      active_runs = [
+        run
+        for run in self.chat_store.runs().values()
+        if run.get("workspaceId") == workspace_id and run.get("status") in RUNNING_STATES
+      ]
+      if session_id and any(run.get("sessionId") == session_id for run in active_runs):
+        raise StorageError("session_run_active", "this chat session already has an active run")
+      if workspace.get("activeUploadId") or (workspace.get("locked") and not active_runs):
+        raise StorageError("workspace_locked", "workspace has an active non-chat write lock")
+      if active_runs and workspace.get("runLockEnabled"):
+        raise StorageError("workspace_locked", "workspace exclusive run lock is enabled")
+      if active_runs and not bool(payload.get("confirmConcurrent")):
+        raise StorageError(
+          "concurrent_confirmation_required",
+          f"{len(active_runs)} other workspace run(s) are active; confirmation is required",
+        )
       if not session_id:
         session = self._create_session_in_metadata(metadata, workspace, user, self.session_title(prompt))
       else:
@@ -544,7 +558,7 @@ class ChatRuntime:
       }
       self.chat_store.save_run(run)
       workspace["locked"] = True
-      workspace["activeRunId"] = run["id"]
+      workspace["activeRunId"] = workspace.get("activeRunId") or run["id"]
       session["status"] = "queued"
       session["latestRunId"] = run["id"]
       session["updated"] = timestamp
@@ -790,8 +804,15 @@ class ChatRuntime:
         status = "failed"
     run["status"] = status
     run["updated"] = now_string()
-    workspace["locked"] = False
-    workspace["activeRunId"] = None
+    remaining_runs = [
+      item
+      for item in self.chat_store.runs().values()
+      if item.get("workspaceId") == run["workspaceId"]
+      and item.get("id") != run["id"]
+      and item.get("status") in RUNNING_STATES
+    ]
+    workspace["locked"] = bool(remaining_runs or workspace.get("activeUploadId"))
+    workspace["activeRunId"] = remaining_runs[0]["id"] if remaining_runs else None
     session = self.chat_store.get_session(run["sessionId"])
     session["status"] = status
     session["updated"] = run["updated"]

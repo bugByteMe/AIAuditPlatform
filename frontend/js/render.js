@@ -1,9 +1,36 @@
 import { t } from "./i18n.js";
 import { fallbackAuditEvents } from "./mockData.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
+import { isEventStreamNearBottom } from "./scrollPosition.js";
 import { state } from "./state.js";
 
 const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
+let renderedEventSessionId = "";
+let renderedEventSignature = "";
+
+function captureEventScroll(stream) {
+  const top = stream.getBoundingClientRect().top;
+  const anchor = [...stream.querySelectorAll("[data-event-id]")].find((node) => node.getBoundingClientRect().bottom > top);
+  return {
+    follow: isEventStreamNearBottom(stream),
+    scrollTop: stream.scrollTop,
+    anchorId: anchor?.dataset.eventId || "",
+    anchorOffset: anchor ? anchor.getBoundingClientRect().top - top : 0,
+  };
+}
+
+function restoreEventScroll(stream, position) {
+  if (position.follow) {
+    stream.scrollTop = stream.scrollHeight;
+    return;
+  }
+  const anchor = position.anchorId ? stream.querySelector(`[data-event-id="${position.anchorId}"]`) : null;
+  if (anchor) {
+    stream.scrollTop += anchor.getBoundingClientRect().top - stream.getBoundingClientRect().top - position.anchorOffset;
+  } else {
+    stream.scrollTop = position.scrollTop;
+  }
+}
 
 function statusLabel(status) {
   return t(`chat.${status}`) || status;
@@ -215,6 +242,14 @@ export function renderWorkspaceManagement() {
   document.querySelector("#workspace-management-title").innerHTML = workspace
     ? editableName("workspace", workspace.id, workspace.name, `workspace-management:${workspace.id}`, canRenameWorkspace(workspace))
     : escapeHtml(t("workspace.title"));
+  const setting = document.querySelector("#workspace-run-lock-setting");
+  const toggle = document.querySelector("#workspace-run-lock-toggle");
+  const help = document.querySelector("#workspace-run-lock-help");
+  if (!setting || !toggle || !help) return;
+  setting.classList.toggle("hidden", !workspace);
+  toggle.checked = Boolean(workspace?.runLockEnabled);
+  toggle.disabled = !workspace || workspace.owner !== state.user?.username || Boolean(workspace.locked);
+  help.textContent = workspace?.locked ? t("workspace.exclusiveRunLockBusy") : t("workspace.exclusiveRunLockHelp");
 }
 
 export function renderPanelState() {
@@ -295,8 +330,14 @@ export function renderEvents() {
   const session = currentSession();
   if (!session) {
     stream.innerHTML = "";
+    renderedEventSessionId = "";
+    renderedEventSignature = "";
     return;
   }
+  const signature = JSON.stringify([state.lang, session.id, session.status, session.events]);
+  if (renderedEventSessionId === session.id && renderedEventSignature === signature) return;
+  const switchingSession = renderedEventSessionId !== session.id;
+  const scrollPosition = switchingSession ? null : captureEventScroll(stream);
   let previousRunId = "";
   const events = session.events
     .map(([type, zh, en, runId, eventId, status]) => {
@@ -323,7 +364,10 @@ export function renderEvents() {
     const collapsible = fold.dataset.multiline === "true" || summary.scrollWidth > summary.clientWidth;
     fold.classList.toggle("foldable", collapsible);
   });
-  stream.scrollTop = stream.scrollHeight;
+  renderedEventSessionId = session.id;
+  renderedEventSignature = signature;
+  if (switchingSession) stream.scrollTop = stream.scrollHeight;
+  else restoreEventScroll(stream, scrollPosition);
 }
 
 export function renderOperationProgress() {

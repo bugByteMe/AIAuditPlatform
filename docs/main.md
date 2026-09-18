@@ -46,7 +46,7 @@ See [identity-and-budget.md](identity-and-budget.md).
 
 A workspace is a managed directory on the shared filesystem. Users create workspaces by uploading files or folders. Workspaces can be shared with a group, collaboratively accessed, and forked.
 
-To avoid conflicting agent writes, only one mutating Codex run may operate on a workspace at a time. Other users may view, fork, or wait.
+Workspace owners can enable an exclusive run lock or allow confirmed runs from different chat sessions to share the live workspace concurrently. Uploads and manual file mutations remain blocked while any run is active.
 
 Generated and modified files are exposed as downloadable artifacts.
 

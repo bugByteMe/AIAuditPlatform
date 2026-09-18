@@ -1220,6 +1220,23 @@ async function toggleWorkspaceSharing(index = state.selectedWorkspace) {
   }
 }
 
+async function updateWorkspaceRunLock(enabled) {
+  const workspace = safeCurrentWorkspace();
+  if (!workspace) return;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ runLockEnabled: enabled }),
+    });
+    replaceWorkspace(result.workspace);
+    renderDynamic();
+    showToast(t("toast.workspaceLockUpdated"));
+  } catch (error) {
+    renderDynamic();
+    showToast(error.message);
+  }
+}
+
 async function uploadFilesToCurrentWorkspace(files) {
   const workspace = safeCurrentWorkspace();
   const incoming = [...files];
@@ -1410,10 +1427,23 @@ function bindForms() {
     const prompt = textarea.value.trim();
     textarea.value = "";
     try {
-      const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs`, {
-        method: "POST",
-        body: JSON.stringify({ prompt, sessionId: session?.id, model, reasoning }),
-      });
+      const request = { prompt, sessionId: session?.id, model, reasoning };
+      let result;
+      while (!result) {
+        try {
+          result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs`, {
+            method: "POST",
+            body: JSON.stringify(request),
+          });
+        } catch (error) {
+          if (error.code !== "concurrent_confirmation_required" || request.confirmConcurrent) throw error;
+          if (!window.confirm(t("chat.concurrentWarning"))) {
+            textarea.value = prompt;
+            return;
+          }
+          request.confirmConcurrent = true;
+        }
+      }
       const workspaceIndex = workspaceIndexById(workspace.id);
       if (workspaceIndex >= 0) {
         const sessions = [...(workspace.sessions || [])];
@@ -1541,6 +1571,10 @@ function bindInputs() {
         else state.selectedArtifacts.delete(file.path);
       });
     renderArtifacts();
+  });
+
+  document.querySelector("#workspace-run-lock-toggle").addEventListener("change", (event) => {
+    updateWorkspaceRunLock(event.target.checked);
   });
 
   document.querySelector("#download-selected").addEventListener("click", () => downloadCurrentWorkspace("changes"));

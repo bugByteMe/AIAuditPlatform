@@ -66,6 +66,7 @@ async function fetchJson(path, options, base) {
   if (!response.ok) {
     const error = new Error(payload.message || payload.error || "request_failed");
     error.status = response.status;
+    error.code = payload.error || "request_failed";
     throw error;
   }
   rememberSessionToken(path, payload);

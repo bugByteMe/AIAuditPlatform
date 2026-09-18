@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sqlite3
 import sys
 import tempfile
 import unittest
@@ -11,6 +12,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from workspace_store import StorageError, UploadedFile, WorkspaceStore, normalize_relative_path, parse_multipart
+from workspace_database import WorkspaceDatabase
 from server import ascii_download_filename
 
 
@@ -65,11 +67,57 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertFalse((self.store.root / "manifests").exists())
     self.assertEqual(workspace["fileCount"], 2)
     self.assertEqual(workspace["sessions"], [])
+    self.assertFalse(workspace["runLockEnabled"])
     self.assertIn(workspace["id"], metadata["workspaces"])
     self.assertTrue((self.store.workspace_path(workspace["id"]) / "workpapers" / "income.txt").exists())
     snapshot = metadata["snapshots"][workspace["latestSnapshotId"]]
     self.assertIn("workpapers/income.txt", snapshot["files"])
     self.assertTrue(self.store.blob_path(snapshot["files"]["workpapers/income.txt"]["blob"]).exists())
+
+  def test_workspace_owner_controls_exclusive_run_lock_only_while_idle(self) -> None:
+    workspace = self.create_workspace()
+    updated = self.store.update_workspace(workspace["id"], OWNER, {"runLockEnabled": True})
+    self.assertTrue(updated["runLockEnabled"])
+
+    with self.assertRaises(StorageError) as context:
+      self.store.update_workspace(workspace["id"], ADMIN, {"runLockEnabled": False})
+    self.assertEqual(context.exception.code, "forbidden")
+
+    metadata = self.store.load_metadata()
+    metadata["workspaces"][workspace["id"]]["locked"] = True
+    self.store.save_metadata(metadata)
+    with self.assertRaises(StorageError) as context:
+      self.store.update_workspace(workspace["id"], OWNER, {"runLockEnabled": False})
+    self.assertEqual(context.exception.code, "workspace_locked")
+
+  def test_version_one_database_migrates_run_lock_disabled(self) -> None:
+    root = Path(self.tempdir.name) / "version_one"
+    root.mkdir()
+    path = root / "workspace.sqlite3"
+    connection = sqlite3.connect(path)
+    try:
+      connection.execute("CREATE TABLE schema_info (version INTEGER NOT NULL)")
+      connection.execute("INSERT INTO schema_info(version) VALUES (1)")
+      connection.execute(
+        """
+        CREATE TABLE workspaces (
+          id TEXT PRIMARY KEY, name TEXT NOT NULL, owner TEXT NOT NULL, group_name TEXT NOT NULL DEFAULT '',
+          shared INTEGER NOT NULL DEFAULT 0, locked INTEGER NOT NULL DEFAULT 0, created TEXT NOT NULL,
+          updated TEXT NOT NULL, file_count INTEGER NOT NULL DEFAULT 0, size_bytes INTEGER NOT NULL DEFAULT 0,
+          latest_snapshot_id TEXT, initial_snapshot_id TEXT, source_workspace_id TEXT, source_snapshot_id TEXT,
+          active_run_id TEXT, active_upload_id TEXT
+        )
+        """
+      )
+      connection.commit()
+    finally:
+      connection.close()
+    database = WorkspaceDatabase(root)
+    with database.connect() as connection:
+      columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
+      version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
+    self.assertIn("run_lock_enabled", columns)
+    self.assertEqual(version, 2)
 
   def test_each_file_retains_only_its_immediately_previous_content(self) -> None:
     workspace = self.create_workspace()

@@ -270,7 +270,11 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.NOT_FOUND
     if exc.code == "forbidden":
       return HTTPStatus.FORBIDDEN
-    if exc.code in {"workspace_locked", "workspace_changed", "upload_offset_mismatch", "upload_chunk_conflict", "upload_commit_started", "runs_not_stopped", "protected_admin"}:
+    if exc.code in {
+      "workspace_locked", "workspace_changed", "upload_offset_mismatch", "upload_chunk_conflict",
+      "upload_commit_started", "runs_not_stopped", "protected_admin", "session_run_active",
+      "concurrent_confirmation_required",
+    }:
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
       return HTTPStatus.PAYMENT_REQUIRED

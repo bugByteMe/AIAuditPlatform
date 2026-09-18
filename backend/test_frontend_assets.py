@@ -67,6 +67,18 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("initializeEventCursors(state.workspaces", app_source)
         self.assertIn("sessionEventCursor", chat_events_source)
 
+    def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('id="workspace-run-lock-toggle"', html)
+        self.assertIn('error.code = payload.error', api_source)
+        self.assertIn('error.code !== "concurrent_confirmation_required"', app_source)
+        self.assertIn('request.confirmConcurrent = true', app_source)
+        self.assertIn("captureEventScroll", render_source)
+        self.assertIn("restoreEventScroll", render_source)
+
     def test_grouped_admin_actions_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")

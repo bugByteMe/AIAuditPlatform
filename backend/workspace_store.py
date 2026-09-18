@@ -234,6 +234,7 @@ class WorkspaceStore:
     metadata = metadata or self.load_metadata()
     workspace_id = workspace["id"]
     sessions = self.public_workspace_sessions(workspace, metadata)
+    active_run_count = sum(1 for session in sessions if session.get("status") in {"queued", "starting", "running", "stopping"})
     return {
       "id": workspace_id,
       "name": workspace["name"],
@@ -245,6 +246,8 @@ class WorkspaceStore:
       "updated": workspace["updated"],
       "shared": bool(workspace.get("shared")),
       "locked": bool(workspace.get("locked")),
+      "runLockEnabled": bool(workspace.get("runLockEnabled")),
+      "activeRunCount": active_run_count,
       "latestSnapshotId": workspace.get("latestSnapshotId"),
       "sessions": sessions,
       "artifacts": self.workspace_artifacts(workspace_id, metadata),
@@ -324,6 +327,7 @@ class WorkspaceStore:
       "group": user.get("group", ""),
       "shared": shared,
       "locked": False,
+      "runLockEnabled": False,
       "created": timestamp,
       "updated": timestamp,
       "fileCount": 0,
@@ -357,6 +361,14 @@ class WorkspaceStore:
         workspace["name"] = name
       if "shared" in payload:
         workspace["shared"] = bool(payload["shared"])
+      if "runLockEnabled" in payload:
+        if workspace["owner"] != user["username"]:
+          raise StorageError("forbidden", "only the workspace owner can change the exclusive run lock")
+        requested = bool(payload["runLockEnabled"])
+        if requested != bool(workspace.get("runLockEnabled")):
+          if workspace.get("locked"):
+            raise StorageError("workspace_locked", "exclusive run lock cannot change while workspace jobs are active")
+          workspace["runLockEnabled"] = requested
       workspace["updated"] = now_string()
       self.save_metadata(metadata)
       return self.public_workspace(workspace, metadata)
@@ -475,6 +487,7 @@ class WorkspaceStore:
           "group": session.get("group", ""),
           "shared": bool(session.get("shared")),
           "locked": False,
+          "runLockEnabled": False,
           "created": timestamp,
           "updated": timestamp,
           "fileCount": len(files),
@@ -550,6 +563,7 @@ class WorkspaceStore:
       "group": user.get("group", ""),
       "shared": False,
       "locked": False,
+      "runLockEnabled": False,
       "created": timestamp,
       "updated": timestamp,
       "fileCount": 0,

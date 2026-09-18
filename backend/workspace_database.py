@@ -5,7 +5,7 @@ import sqlite3
 from pathlib import Path
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 
 class WorkspaceDatabase:
@@ -57,6 +57,7 @@ class WorkspaceDatabase:
           group_name TEXT NOT NULL DEFAULT '',
           shared INTEGER NOT NULL DEFAULT 0,
           locked INTEGER NOT NULL DEFAULT 0,
+          run_lock_enabled INTEGER NOT NULL DEFAULT 0,
           created TEXT NOT NULL,
           updated TEXT NOT NULL,
           file_count INTEGER NOT NULL DEFAULT 0,
@@ -120,6 +121,11 @@ class WorkspaceDatabase:
       row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
       if row is None:
         connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
+      elif int(row["version"]) == 1:
+        columns = {column[1] for column in connection.execute("PRAGMA table_info(workspaces)")}
+        if "run_lock_enabled" not in columns:
+          connection.execute("ALTER TABLE workspaces ADD COLUMN run_lock_enabled INTEGER NOT NULL DEFAULT 0")
+        connection.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))
       elif int(row["version"]) != SCHEMA_VERSION:
         raise RuntimeError(f"unsupported workspace database schema version: {row['version']}")
 
@@ -145,6 +151,7 @@ class WorkspaceDatabase:
           "group": row["group_name"],
           "shared": bool(row["shared"]),
           "locked": bool(row["locked"]),
+          "runLockEnabled": bool(row["run_lock_enabled"]),
           "created": row["created"],
           "updated": row["updated"],
           "fileCount": int(row["file_count"]),
@@ -231,13 +238,13 @@ class WorkspaceDatabase:
         connection.execute(
           """
           INSERT INTO workspaces(
-            id, name, owner, group_name, shared, locked, created, updated, file_count, size_bytes,
+            id, name, owner, group_name, shared, locked, run_lock_enabled, created, updated, file_count, size_bytes,
             latest_snapshot_id, initial_snapshot_id, source_workspace_id, source_snapshot_id,
             active_run_id, active_upload_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET
             name=excluded.name, owner=excluded.owner, group_name=excluded.group_name,
-            shared=excluded.shared, locked=excluded.locked, created=excluded.created,
+            shared=excluded.shared, locked=excluded.locked, run_lock_enabled=excluded.run_lock_enabled, created=excluded.created,
             updated=excluded.updated, file_count=excluded.file_count, size_bytes=excluded.size_bytes,
             latest_snapshot_id=excluded.latest_snapshot_id, initial_snapshot_id=excluded.initial_snapshot_id,
             source_workspace_id=excluded.source_workspace_id, source_snapshot_id=excluded.source_snapshot_id,
@@ -250,6 +257,7 @@ class WorkspaceDatabase:
             str(workspace.get("group") or ""),
             int(bool(workspace.get("shared"))),
             int(bool(workspace.get("locked"))),
+            int(bool(workspace.get("runLockEnabled"))),
             str(workspace.get("created") or workspace.get("updated") or ""),
             str(workspace.get("updated") or workspace.get("created") or ""),
             int(workspace.get("fileCount") or 0),

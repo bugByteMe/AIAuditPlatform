@@ -36,7 +36,7 @@
 - Start is idempotent by run ID and restart recovery continues from the persisted worker event cursor.
 - Lost control-plane leases stop orphaned worker containers; worker loss fails the run without automatic retry after the lease fence.
 - Worker HTTPS rejects missing/incorrect bearer credentials and the control plane verifies the configured CA.
-- Workspace lock prevents two active mutating runs on the same workspace.
+- Exclusive workspace locking prevents two active runs, while disabled locking requires explicit confirmation for cross-session concurrency and always rejects same-session overlap.
 
 ## Workspace Lifecycle
 
@@ -46,6 +46,7 @@
 - Chunk reads stay bounded independently of total folder size; duplicate chunks are idempotent and conflicting retries fail.
 - Uploads resume from persisted offsets after browser, control-plane, or worker restart, and can move to another healthy worker over shared storage.
 - Existing workspaces remain mutation-locked until commit or cancellation; new workspaces are not visible before commit.
+- Concurrent chat runs keep uploads, replacement, deletion, and forking locked until the final active run exits.
 - Upload progress distinguishes transfer, processing, and commit, and does not show 100% before metadata commit.
 - Worker upload endpoints require cluster authentication and no worker credential or internal upload URL is returned to browsers.
 - Workspace fork creates an independent workspace from the selected snapshot.
@@ -73,6 +74,7 @@
 - Tool call events are streamed and persisted.
 - Token usage and budget warnings are streamed.
 - Page reload can reconstruct chat history from persisted events.
+- Live event refreshes follow the bottom only when the reader is already there and preserve position while older history is being read.
 
 ## Artifacts
 

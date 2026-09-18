@@ -90,14 +90,49 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertTrue(any(event[0] == "assistant" for event in reloaded_session["events"]))
     self.assertTrue(any(event[3] == result["run"]["id"] for event in reloaded_session["events"]))
 
-  def test_workspace_lock_rejects_second_active_run(self) -> None:
+  def test_exclusive_workspace_lock_rejects_second_active_run(self) -> None:
     workspace = self.create_workspace()
+    self.store.update_workspace(workspace["id"], self.users["li.review"], {"runLockEnabled": True})
     runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.2))
     result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "First"})
     with self.assertRaises(StorageError) as context:
       runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Second"})
     self.assertEqual(context.exception.code, "workspace_locked")
     self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+
+  def test_concurrent_workspace_run_requires_confirmation(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.25), capacity=2)
+    first_session = runtime.create_session(workspace["id"], self.users["li.review"], "First session")
+    second_session = runtime.create_session(workspace["id"], self.users["li.review"], "Second session")
+    first = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "First", "sessionId": first_session["id"]})
+
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Second", "sessionId": second_session["id"]})
+    self.assertEqual(context.exception.code, "concurrent_confirmation_required")
+
+    second = runtime.start_run(
+      workspace["id"],
+      self.users["li.review"],
+      {"prompt": "Second", "sessionId": second_session["id"], "confirmConcurrent": True},
+    )
+    active_workspace = self.store.get_workspace(workspace["id"], self.users["li.review"])
+    self.assertTrue(active_workspace["locked"])
+    with self.assertRaises(StorageError) as context:
+      self.store.delete_workspace_path(workspace["id"], self.users["li.review"], "workpapers/income.txt")
+    self.assertEqual(context.exception.code, "workspace_locked")
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(
+        workspace["id"],
+        self.users["li.review"],
+        {"prompt": "Same chat", "sessionId": first_session["id"], "confirmConcurrent": True},
+      )
+    self.assertEqual(context.exception.code, "session_run_active")
+
+    self.wait_for_status(runtime, workspace["id"], first["session"]["id"], "completed")
+    self.assertTrue(self.store.get_workspace(workspace["id"], self.users["li.review"])["locked"])
+    self.wait_for_status(runtime, workspace["id"], second["session"]["id"], "completed")
+    self.assertFalse(self.store.get_workspace(workspace["id"], self.users["li.review"])["locked"])
 
   def test_accessible_user_can_rename_chat_session(self) -> None:
     workspace = self.create_workspace()

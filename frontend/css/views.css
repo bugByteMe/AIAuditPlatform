@@ -437,6 +437,21 @@ td.code {
   justify-content: flex-end;
 }
 
+.workspace-lock-setting {
+  padding: 10px 0;
+  color: var(--text);
+}
+
+.workspace-lock-setting span,
+.workspace-lock-setting small {
+  display: block;
+}
+
+.workspace-lock-setting small {
+  margin-top: 2px;
+  color: var(--muted);
+}
+
 .batch-fields {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
