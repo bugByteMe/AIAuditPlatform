@@ -1,15 +1,20 @@
 #chat-view {
-  min-height: calc(100vh - 92px);
+  min-height: 0;
 }
 
 .chat-view-active .main {
   height: 100vh;
+  height: 100dvh;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  padding-bottom: 0;
   overflow: hidden;
 }
 
 .chat-view-active #chat-view {
-  height: calc(100vh - 92px);
+  height: auto;
   min-height: 0;
+  overflow: hidden;
 }
 
 .chat-layout {
@@ -17,8 +22,8 @@
   grid-template-columns: var(--sessions-width, 280px) minmax(0, 1fr) 38px;
   grid-template-areas: "sessions chat filesRail";
   gap: 0;
-  height: calc(100vh - 114px);
-  min-height: 620px;
+  height: 100%;
+  min-height: 0;
   overflow: hidden;
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
@@ -201,6 +206,44 @@
   background: transparent;
   color: inherit;
   text-align: left;
+  cursor: pointer;
+}
+
+.inline-name,
+.inline-name-static {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  color: inherit;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  vertical-align: bottom;
+}
+
+.inline-name {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  cursor: text;
+}
+
+.inline-name:hover {
+  color: var(--primary-dark);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+}
+
+.inline-name-input {
+  width: min(100%, 360px);
+  min-width: 120px;
+  height: 28px;
+  padding: 2px 7px;
+  border: 1px solid var(--primary);
+  border-radius: 6px;
+  outline: 2px solid rgba(18, 108, 120, 0.12);
+  background: #ffffff;
+  color: var(--text);
 }
 
 .session-main strong {

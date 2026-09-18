@@ -700,6 +700,11 @@ class Handler(BaseHTTPRequestHandler):
       session = CHAT_RUNTIME.create_session(workspace_id, user, str(payload.get("title") or "") or None)
       add_audit(user["username"], "chat session created", f"{workspace_id} {session['id']}")
       self.write_json({"session": session}, HTTPStatus.CREATED)
+    elif method == "PATCH" and action == "sessions" and tail:
+      payload = self.read_json()
+      session = CHAT_RUNTIME.update_session(workspace_id, tail, user, str(payload.get("title") or ""))
+      add_audit(user["username"], "chat session renamed", f"{workspace_id} {session['id']}")
+      self.write_json({"session": session})
     elif method == "POST" and action == "runs" and not tail:
       result = CHAT_RUNTIME.start_run(workspace_id, user, self.read_json())
       add_audit(user["username"], "chat run queued", f"{workspace_id} {result['run']['id']}")

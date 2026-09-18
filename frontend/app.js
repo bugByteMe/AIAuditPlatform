@@ -77,6 +77,77 @@ function replaceWorkspace(updatedWorkspace) {
   if (index >= 0) state.workspaces[index] = updatedWorkspace;
 }
 
+async function refreshCurrentUser() {
+  try {
+    const result = await api("/api/session");
+    if (result.user) state.user = result.user;
+    renderCurrentUser();
+  } catch (error) {
+    console.warn("Current budget refresh failed", error);
+  }
+}
+
+function nameEditorElement(location) {
+  return [...document.querySelectorAll("[data-name-editor]")].find((input) => input.dataset.editorLocation === location);
+}
+
+function beginNameEdit(control) {
+  const kind = control.dataset.nameKind;
+  const id = control.dataset.nameId;
+  const location = control.dataset.editorLocation;
+  const workspace = kind === "workspace" ? state.workspaces.find((item) => item.id === id) : safeCurrentWorkspace();
+  const session = kind === "session" ? workspace?.sessions?.find((item) => item.id === id) : null;
+  const value = kind === "workspace" ? workspace?.name : session?.title;
+  if (!value) return;
+  state.nameEditor = { kind, id, location, draft: value, saving: false };
+  renderDynamic();
+  const input = nameEditorElement(location);
+  input?.focus();
+  input?.select();
+}
+
+function cancelNameEdit() {
+  if (!state.nameEditor) return;
+  state.nameEditor = null;
+  renderDynamic();
+}
+
+async function commitNameEdit() {
+  const editor = state.nameEditor;
+  if (!editor || editor.saving) return;
+  const title = editor.draft.trim();
+  if (!title) {
+    cancelNameEdit();
+    return;
+  }
+  editor.saving = true;
+  const workspace = editor.kind === "workspace" ? state.workspaces.find((item) => item.id === editor.id) : safeCurrentWorkspace();
+  try {
+    if (editor.kind === "workspace") {
+      const result = await api(`/api/workspaces/${encodeURIComponent(editor.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ name: title }),
+      });
+      replaceWorkspace(result.workspace);
+    } else if (workspace) {
+      const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions/${encodeURIComponent(editor.id)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ title }),
+      });
+      const index = workspace.sessions.findIndex((item) => item.id === editor.id);
+      if (index >= 0) workspace.sessions[index] = result.session;
+    }
+    if (state.nameEditor === editor) state.nameEditor = null;
+    renderDynamic();
+    showToast(t("toast.nameSaved"));
+  } catch (error) {
+    editor.saving = false;
+    renderDynamic();
+    if (state.nameEditor === editor) nameEditorElement(editor.location)?.focus();
+    showToast(error.message);
+  }
+}
+
 function setOperationProgress(label, value = 0, indeterminate = false) {
   state.operationProgress = { label, value, indeterminate };
   renderOperationProgress();
@@ -139,7 +210,7 @@ async function pollChatEvents(workspaceId, sessionId, generation) {
     if (changed || statusChanged || result.session) renderDynamic();
     if (TERMINAL_CHAT_STATES.has(serverStatus)) {
       stopChatStream();
-      await refreshWorkspaceById(workspaceId);
+      await Promise.all([refreshWorkspaceById(workspaceId), refreshCurrentUser()]);
       return;
     }
   } catch (error) {
@@ -169,6 +240,7 @@ function startChatStreamForSession(workspaceId, sessionId) {
     if (TERMINAL_CHAT_STATES.has(payload.type)) {
       stopChatStream();
       refreshWorkspaceById(workspaceId);
+      refreshCurrentUser();
     }
   };
   activeChatStream.onmessage = handleEvent;
@@ -654,6 +726,14 @@ async function createNewChatSession() {
 
 function bindGlobalClicks() {
   document.addEventListener("click", (event) => {
+    const editableName = event.target.closest("[data-edit-name]");
+    if (editableName) {
+      event.preventDefault();
+      event.stopPropagation();
+      beginNameEdit(editableName);
+      return;
+    }
+
     const authMode = event.target.closest("[data-auth-mode]");
     if (authMode) {
       setAuthMode(authMode.dataset.authMode);
@@ -1390,7 +1470,25 @@ function bindForms() {
 }
 
 function bindInputs() {
+  document.addEventListener("input", (event) => {
+    if (event.target.matches("[data-name-editor]") && state.nameEditor) state.nameEditor.draft = event.target.value;
+  });
+
+  document.addEventListener("focusout", (event) => {
+    if (event.target.matches("[data-name-editor]")) commitNameEdit();
+  });
+
   document.addEventListener("keydown", (event) => {
+    if (event.target.matches("[data-name-editor]")) {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        commitNameEdit();
+      } else if (event.key === "Escape") {
+        event.preventDefault();
+        cancelNameEdit();
+      }
+      return;
+    }
     if (event.key === "Escape") {
       closePreviewModal();
       closeWorkspaceModal();

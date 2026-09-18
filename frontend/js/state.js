@@ -29,4 +29,5 @@ export const state = {
   isFileExplorerCollapsed: true,
   operationProgress: null,
   workspaceCreateUploadController: null,
+  nameEditor: null,
 };

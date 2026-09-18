@@ -99,6 +99,26 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual(context.exception.code, "workspace_locked")
     self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
 
+  def test_accessible_user_can_rename_chat_session(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Original title")
+
+    renamed = runtime.update_session(workspace["id"], session["id"], self.users["li.review"], "  Revised title  ")
+
+    self.assertEqual(renamed["title"], "Revised title")
+    self.assertEqual(runtime.list_sessions(workspace["id"], self.users["li.review"])[0]["title"], "Revised title")
+
+  def test_chat_session_rename_rejects_empty_title(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Original title")
+
+    with self.assertRaises(StorageError) as context:
+      runtime.update_session(workspace["id"], session["id"], self.users["li.review"], "   ")
+
+    self.assertEqual(context.exception.code, "bad_request")
+
   def test_budget_exhaustion_rejects_run(self) -> None:
     workspace = self.create_workspace()
     self.users["li.review"]["usedTokens"] = self.users["li.review"]["budgetTokens"]

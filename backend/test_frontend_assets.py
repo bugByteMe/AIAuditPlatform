@@ -97,6 +97,16 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('xhr.open("PUT"', api_source)
         self.assertNotIn('uploadApi(\n      "/api/workspaces"', app_source)
 
+    def test_user_budget_inline_renaming_and_viewport_chat_layout_are_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        chat_css = (FRONTEND_ROOT / "css" / "chat.css").read_text(encoding="utf-8")
+        self.assertIn('remaining.toLocaleString()', render_source)
+        self.assertIn('data-edit-name', render_source)
+        self.assertIn('/chat/sessions/${encodeURIComponent(editor.id)}', app_source)
+        self.assertIn('grid-template-rows: auto minmax(0, 1fr)', chat_css)
+        self.assertIn('height: 100dvh', chat_css)
+
 
 if __name__ == "__main__":
     unittest.main()

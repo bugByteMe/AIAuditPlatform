@@ -33,6 +33,21 @@ function formatResourceBytes(value) {
   return `${index ? size.toFixed(size >= 10 ? 1 : 2) : Math.round(size)} ${units[index]}`;
 }
 
+function canRenameWorkspace(workspace) {
+  return Boolean(workspace && state.user && (state.user.role === "system_admin" || workspace.owner === state.user.username));
+}
+
+function editableName(kind, id, value, location, editable = true) {
+  const editor = state.nameEditor;
+  const safeId = escapeHtml(id || "");
+  const safeLocation = escapeHtml(location);
+  if (editor?.kind === kind && editor.id === id && editor.location === location) {
+    return `<input class="inline-name-input" data-name-editor data-name-kind="${kind}" data-name-id="${safeId}" data-editor-location="${safeLocation}" value="${escapeHtml(editor.draft)}" maxlength="200" aria-label="${t("actions.rename")}" />`;
+  }
+  if (!editable) return `<span class="inline-name-static">${escapeHtml(value)}</span>`;
+  return `<button type="button" class="inline-name" data-edit-name data-name-kind="${kind}" data-name-id="${safeId}" data-editor-location="${safeLocation}" title="${t("actions.rename")}">${escapeHtml(value)}</button>`;
+}
+
 function inlineMarkdown(value) {
   return escapeHtml(value)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
@@ -133,9 +148,13 @@ function filesToTree(files, collapsedFolders, options = {}) {
 
 export function renderCurrentUser() {
   if (!state.user) return;
-  const percent = state.user.budgetTokens ? Math.round((state.user.usedTokens / state.user.budgetTokens) * 100) : 0;
+  const budget = Math.max(0, Number(state.user.budgetTokens || 0));
+  const used = Math.max(0, Number(state.user.usedTokens || 0));
+  const remaining = Math.max(0, budget - used);
+  const percent = budget ? Math.round((used / budget) * 100) : 0;
   document.querySelector("#current-username").textContent = state.user.username;
-  document.querySelector("#current-budget-label").textContent = `${percent}%`;
+  document.querySelector("#current-budget-label").textContent = `${remaining.toLocaleString()} / ${budget.toLocaleString()}`;
+  document.querySelector("#current-budget-label").title = `${used.toLocaleString()} ${t("session.budgetUsed")} (${percent}%)`;
   document.querySelector("#current-budget-meter").style.width = `${Math.min(percent, 100)}%`;
 }
 
@@ -148,7 +167,6 @@ export function renderWorkspaces() {
   document.querySelector("#workspace-list").innerHTML = items
     .map((workspace, index) => {
       const safeWorkspaceId = escapeHtml(workspace.id || "");
-      const safeWorkspaceName = escapeHtml(workspace.name);
       const safeOwner = escapeHtml(workspace.owner);
       const safeSize = escapeHtml(workspace.size);
       const safeUpdated = escapeHtml(workspace.updated);
@@ -161,7 +179,7 @@ export function renderWorkspaces() {
       return `
         <article class="workspace-item ${index === state.selectedWorkspace ? "active" : ""}" data-workspace-card="${index}" data-workspace-id="${safeWorkspaceId}" tabindex="0">
           <div>
-            <h3>${safeWorkspaceName}</h3>
+            <h3>${editableName("workspace", workspace.id, workspace.name, `workspace-list:${workspace.id}`, canRenameWorkspace(workspace))}</h3>
             <div class="meta-line">
               <span>${safeOwner}</span>
               <span>${workspace.fileCount.toLocaleString()} files</span>
@@ -194,7 +212,9 @@ export function renderWorkspaces() {
 
 export function renderWorkspaceManagement() {
   const workspace = currentWorkspace();
-  document.querySelector("#workspace-management-title").textContent = workspace ? workspace.name : t("workspace.title");
+  document.querySelector("#workspace-management-title").innerHTML = workspace
+    ? editableName("workspace", workspace.id, workspace.name, `workspace-management:${workspace.id}`, canRenameWorkspace(workspace))
+    : escapeHtml(t("workspace.title"));
 }
 
 export function renderPanelState() {
@@ -218,7 +238,9 @@ export function renderChatSessions() {
   const workspace = currentWorkspace();
   const session = currentSession();
   if (!workspace || !session) {
-    document.querySelector("#chat-workspace-name").textContent = "";
+    document.querySelector("#chat-workspace-name").innerHTML = workspace
+      ? editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace))
+      : "";
     document.querySelector("#chat-session-title").textContent = "";
     document.querySelector("#token-count").textContent = "0";
     document.querySelector("#run-state-label").textContent = statusLabel("stopped");
@@ -232,8 +254,8 @@ export function renderChatSessions() {
     document.querySelector("#chat-session-list").innerHTML = "";
     return;
   }
-  document.querySelector("#chat-workspace-name").textContent = workspace.name;
-  document.querySelector("#chat-session-title").textContent = session.title;
+  document.querySelector("#chat-workspace-name").innerHTML = editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace));
+  document.querySelector("#chat-session-title").innerHTML = editableName("session", session.id, session.title, `chat-session-current:${session.id}`);
   document.querySelector("#token-count").textContent = session.tokens;
   document.querySelector("#run-state-label").textContent = statusLabel(session.status);
   document.querySelector("#chat-worker-id").textContent = session.workerId || "-";
@@ -254,10 +276,10 @@ export function renderChatSessions() {
     .map(
       (item, index) => `
         <article class="session-item ${index === state.selectedSession ? "active" : ""}">
-          <button class="session-main" data-session="${index}">
-            <strong>${item.title}</strong>
+          <div class="session-main" data-session="${index}">
+            <strong>${editableName("session", item.id, item.title, `chat-session-list:${item.id}`)}</strong>
             <span>${statusLabel(item.status)} · ${item.updated}</span>
-          </button>
+          </div>
           <div class="session-actions">
             <button class="session-action-btn" data-session-action="copy" data-session-index="${index}">${t("chat.copy")}</button>
             <button class="session-action-btn" data-session-action="delete" data-session-index="${index}">${t("chat.delete")}</button>

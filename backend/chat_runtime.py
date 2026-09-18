@@ -471,6 +471,24 @@ class ChatRuntime:
       self.store.save_metadata(metadata)
       return self.public_session(session["id"])
 
+  def update_session(self, workspace_id: str, session_id: str, user: dict, title: str) -> dict:
+    with self.lock:
+      metadata = self.store.load_metadata()
+      self.ensure_chat_metadata(metadata)
+      workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      if not any(str(item.get("id") or "") == session_id for item in workspace.get("sessions", [])):
+        raise StorageError("not_found", "chat session not found")
+      session = self.chat_store.get_session(session_id)
+      if not session or session.get("workspaceId") != workspace_id:
+        raise StorageError("not_found", "chat session not found")
+      clean_title = str(title or "").strip()
+      if not clean_title:
+        raise StorageError("bad_request", "chat session title cannot be empty")
+      session["title"] = clean_title
+      session["updated"] = now_string()
+      self.chat_store.save_session(session)
+      return self.public_session(session_id)
+
   def start_run(self, workspace_id: str, user: dict, payload: dict) -> dict:
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:

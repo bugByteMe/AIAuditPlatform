@@ -20,11 +20,12 @@
       "ip": "172.23.72.177",
       "port": 9443,
       "cpu": 16,
-      "memory": "64GiB",
+      "memory": "32GiB",
       "workspace_storage_dir": "/mnt/workspace_storage",
       "tls_cert_file": "/etc/ai-audit/worker-01.crt",
       "tls_key_file": "/etc/ai-audit/worker-01.key",
-      "enabled": true
+      "enabled": true,
+      "upload_slots": 4
     }
   ],
   "local_run_capacity": 1,
@@ -38,7 +39,7 @@
   "upload_session_ttl_seconds": 86400,
   "upload_reservation_idle_seconds": 60,
   "upload_max_concurrent_streams": 8,
-  "upload_reservation_cpus": 0.25,
+  "upload_reservation_cpus": 0.5,
   "upload_reservation_memory": "256MiB",
   "office_preview_timeout_seconds": 45,
   "pbkdf2_iterations": 2000,
