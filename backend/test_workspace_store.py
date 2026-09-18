@@ -113,9 +113,12 @@ class WorkspaceStoreTest(unittest.TestCase):
     finally:
       connection.close()
     database = WorkspaceDatabase(root)
-    with database.connect() as connection:
+    connection = database.connect()
+    try:
       columns = {row[1] for row in connection.execute("PRAGMA table_info(workspaces)")}
       version = connection.execute("SELECT version FROM schema_info").fetchone()[0]
+    finally:
+      connection.close()
     self.assertIn("run_lock_enabled", columns)
     self.assertEqual(version, 2)
 

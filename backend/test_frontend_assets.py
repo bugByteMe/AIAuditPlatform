@@ -119,6 +119,12 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('grid-template-rows: auto minmax(0, 1fr)', chat_css)
         self.assertIn('height: 100dvh', chat_css)
 
+    def test_chat_fork_uses_persisted_unique_session(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn('/chat/sessions/${encodeURIComponent(source.id)}/fork', app_source)
+        self.assertIn("state.chatLastEventIds[result.session.id]", app_source)
+        self.assertNotIn("events: source.events.map", app_source)
+
 
 if __name__ == "__main__":
     unittest.main()

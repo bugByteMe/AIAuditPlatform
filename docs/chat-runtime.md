@@ -69,6 +69,12 @@ Resuming does not keep the old container alive. The backend creates a new run us
 
 The scheduler assigns the new run like any other run. The resumed run appends to the same chat session history.
 
+## Forking a Chat
+
+Forking creates a persisted chat session with a new application session ID, copied stable history, and independent future events and titles. The first run uses Codex native fork against the source conversation; later runs resume the fork's new native session. If the source is active, the fork uses the credential-free Codex-state checkpoint captured immediately before the active run and omits that run's prompt and partial output.
+
+Codex-state copies exclude authentication, generated configuration, skills, temporary files, and logs. Copied history does not duplicate charged usage; the fork starts its own token counter at zero.
+
 ## Completion
 
 When a run completes:
@@ -94,6 +100,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 
 - `GET /api/workspaces/{workspace_id}/chat/sessions`
 - `POST /api/workspaces/{workspace_id}/chat/sessions`
+- `POST /api/workspaces/{workspace_id}/chat/sessions/{session_id}/fork`
 - `POST /api/workspaces/{workspace_id}/chat/runs`
 - `POST /api/workspaces/{workspace_id}/chat/runs/{run_id}/stop`
 - `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`

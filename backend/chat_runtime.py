@@ -305,6 +305,41 @@ class DockerCodexRunner(CodexRunner):
     self.make_tree_writable_for_container(codex_home)
     return codex_home
 
+  def session_home(self, username: str, session_id: str) -> Path:
+    return self.codex_home_root / safe_segment(username) / safe_segment(session_id)
+
+  def fork_base_home(self, run_id: str) -> Path:
+    return self.codex_root / "fork_bases" / safe_segment(run_id)
+
+  def clone_conversation_state(self, source: Path, destination: Path) -> None:
+    """Copy resumable Codex state without credentials or generated configuration."""
+    excluded = {"auth.json", "config.toml", "skills", "tmp", "logs"}
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    if destination.exists():
+      shutil.rmtree(destination)
+    destination.mkdir(parents=True)
+    if not source.is_dir():
+      return
+    for item in source.iterdir():
+      if item.name in excluded:
+        continue
+      target = destination / item.name
+      if item.is_dir():
+        shutil.copytree(item, target)
+      elif item.is_file():
+        shutil.copy2(item, target)
+
+  def capture_fork_base(self, run: dict) -> Path:
+    source = self.session_home(str(run["user"]), str(run["sessionId"]))
+    destination = self.fork_base_home(str(run["id"]))
+    self.clone_conversation_state(source, destination)
+    return destination
+
+  def remove_fork_base(self, run_id: str) -> None:
+    path = self.fork_base_home(run_id)
+    if path.exists():
+      shutil.rmtree(path)
+
   def copy_skills(self, codex_home: Path) -> None:
     if not self.skill_path or not self.skill_path.exists():
       return
@@ -328,6 +363,17 @@ class DockerCodexRunner(CodexRunner):
 
   def codex_command_args(self, run: dict) -> list[str]:
     base = ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "exec"]
+    if run.get("codexFork"):
+      return [
+        *base,
+        "fork",
+        "--json",
+        "--skip-git-repo-check",
+        "-m",
+        run["model"],
+        run["codexSessionId"],
+        run["prompt"],
+      ]
     if run.get("codexResume"):
       base.extend(["resume", "--json", "--skip-git-repo-check", "-m", run["model"]])
       if run.get("codexSessionId"):
@@ -398,6 +444,9 @@ class ChatRuntime:
     self.requested_memory_bytes = parse_memory_bytes(SETTINGS.run_memory)
     self.worker_registry = worker_registry or (WorkerRegistry(SETTINGS) if SETTINGS.compute_nodes else None)
     self.codex_preparer = self.runner if isinstance(self.runner, DockerCodexRunner) else DockerCodexRunner()
+    if runner is not None and not isinstance(runner, DockerCodexRunner):
+      self.codex_preparer.codex_root = store.root / "codex"
+      self.codex_preparer.codex_home_root = store.root / "codex" / "homes"
     self.scheduler_poll_seconds = max(0.01, SETTINGS.scheduler_poll_seconds)
     # Serialize chat lifecycle metadata changes with workspace/upload mutations.
     self.lock = store.lock
@@ -470,6 +519,80 @@ class ChatRuntime:
       workspace["updated"] = timestamp
       self.store.save_metadata(metadata)
       return self.public_session(session["id"])
+
+  def fork_session(self, workspace_id: str, session_id: str, user: dict, title: str | None = None) -> dict:
+    with self.lock:
+      metadata = self.store.load_metadata()
+      self.ensure_chat_metadata(metadata)
+      workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      session_refs = workspace.get("sessions", [])
+      source_index = next((index for index, item in enumerate(session_refs) if str(item.get("id") or "") == session_id), -1)
+      source = self.chat_store.get_session(session_id)
+      if source_index < 0 or not source or source.get("workspaceId") != workspace_id:
+        raise StorageError("not_found", "chat session not found")
+
+      active_run = next(
+        (
+          run
+          for run in self.chat_store.runs().values()
+          if run.get("sessionId") == session_id and run.get("status") in RUNNING_STATES
+        ),
+        None,
+      )
+      source_native_id = str(source.get("codexSessionId") or "")
+      stable_events = self.chat_store.events(session_id)
+      if active_run:
+        stable_events = [event for event in stable_events if event.get("runId") != active_run.get("id")]
+      has_conversation = any(event.get("type") in {"user", "assistant"} for event in stable_events)
+      if not has_conversation:
+        source_native_id = ""
+      if has_conversation and not source_native_id:
+        raise StorageError("session_not_forkable", "chat session does not have resumable Codex context")
+
+      timestamp = now_string()
+      fork_id = generated_id("chat")
+      clean_title = str(title or "").strip() or f'{source.get("title") or "Audit task"} Copy'
+      fork = {
+        "id": fork_id,
+        "workspaceId": workspace_id,
+        "title": clean_title,
+        "status": "stopped",
+        "updated": timestamp,
+        "tokens": "0",
+        "totalTokens": 0,
+        "latestRunId": None,
+        "createdBy": user["username"],
+        "created": timestamp,
+        "forkedFromSessionId": session_id,
+        "codexForkPending": bool(source_native_id),
+        "codexForkSourceId": source_native_id or None,
+        "codexHomeUser": user["username"],
+      }
+
+      source_user = str(source.get("codexHomeUser") or "")
+      if not source_user and source.get("latestRunId"):
+        latest_run = self.chat_store.get_run(str(source["latestRunId"]))
+        source_user = str((latest_run or {}).get("user") or "")
+      source_user = source_user or str(source.get("createdBy") or user["username"])
+      source_home = (
+        self.codex_preparer.fork_base_home(str(active_run["id"]))
+        if active_run
+        else self.codex_preparer.session_home(source_user, session_id)
+      )
+      if source_native_id and not source_home.is_dir():
+        raise StorageError("session_not_forkable", "chat session does not have an available Codex checkpoint")
+      destination_home = self.codex_preparer.session_home(str(user["username"]), fork_id)
+      self.codex_preparer.clone_conversation_state(source_home, destination_home)
+
+      self.chat_store.save_session(fork)
+      for event in stable_events:
+        copied = dict(event)
+        copied.pop("id", None)
+        self.chat_store.append_event(fork_id, copied)
+      session_refs.insert(source_index + 1, {"id": fork_id})
+      workspace["updated"] = timestamp
+      self.store.save_metadata(metadata)
+      return self.public_session(fork_id)
 
   def update_session(self, workspace_id: str, session_id: str, user: dict, title: str) -> dict:
     with self.lock:
@@ -553,15 +676,18 @@ class ChatRuntime:
         "inputTokens": 0,
         "cachedInputTokens": 0,
         "outputTokens": 0,
-        "codexResume": bool(session.get("codexNativeResumable")),
-        "codexSessionId": session.get("codexSessionId"),
+        "codexFork": bool(session.get("codexForkPending") and session.get("codexForkSourceId")),
+        "codexResume": bool(session.get("codexNativeResumable") and not session.get("codexForkPending")),
+        "codexSessionId": session.get("codexForkSourceId") or session.get("codexSessionId"),
       }
+      self.codex_preparer.capture_fork_base(run)
       self.chat_store.save_run(run)
       workspace["locked"] = True
       workspace["activeRunId"] = workspace.get("activeRunId") or run["id"]
       session["status"] = "queued"
       session["latestRunId"] = run["id"]
       session["updated"] = timestamp
+      session["codexHomeUser"] = user["username"]
       self.chat_store.save_session(session)
       self.append_event(session["id"], "user", prompt, run["id"])
       queue_message = "Run queued. Waiting for compute capacity." if self.worker_registry else "Run queued. Waiting for local Docker capacity."
@@ -773,6 +899,9 @@ class ChatRuntime:
       session = self.chat_store.get_session(run["sessionId"])
       session["codexSessionId"] = event["codexSessionId"]
       session["codexNativeResumable"] = True
+      session["codexForkPending"] = False
+      session["codexForkSourceId"] = None
+      session["codexHomeUser"] = run["user"]
       run["codexSessionId"] = event["codexSessionId"]
       self.chat_store.save_session(session)
     self.append_event(
@@ -820,6 +949,7 @@ class ChatRuntime:
       session["codexNativeResumable"] = True
     self.chat_store.save_session(session)
     self.append_event(run["sessionId"], status, f"Run {status}.", run["id"])
+    self.codex_preparer.remove_fork_base(str(run["id"]))
 
   def append_event(
     self,

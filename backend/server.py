@@ -273,7 +273,7 @@ class Handler(BaseHTTPRequestHandler):
     if exc.code in {
       "workspace_locked", "workspace_changed", "upload_offset_mismatch", "upload_chunk_conflict",
       "upload_commit_started", "runs_not_stopped", "protected_admin", "session_run_active",
-      "concurrent_confirmation_required",
+      "concurrent_confirmation_required", "session_not_forkable",
     }:
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
@@ -618,8 +618,9 @@ class Handler(BaseHTTPRequestHandler):
     action = parts[3] if len(parts) > 3 else ""
     subaction = parts[4] if len(parts) > 4 else ""
     tail = parts[5] if len(parts) > 5 else ""
+    subtail = parts[6] if len(parts) > 6 else ""
     if action == "chat":
-      self.chat_api(method, workspace_id, subaction, tail, query)
+      self.chat_api(method, workspace_id, subaction, tail, query, subtail)
       return
     if method == "GET" and not action:
       workspace = WORKSPACE_STORE.get_workspace(workspace_id, user)
@@ -695,7 +696,7 @@ class Handler(BaseHTTPRequestHandler):
     else:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
-  def chat_api(self, method: str, workspace_id: str, action: str, tail: str, query: str) -> None:
+  def chat_api(self, method: str, workspace_id: str, action: str, tail: str, query: str, subtail: str = "") -> None:
     user = self.require_user()
     if method == "GET" and action == "sessions" and not tail:
       self.write_json({"sessions": CHAT_RUNTIME.list_sessions(workspace_id, user)})
@@ -709,6 +710,11 @@ class Handler(BaseHTTPRequestHandler):
       session = CHAT_RUNTIME.update_session(workspace_id, tail, user, str(payload.get("title") or ""))
       add_audit(user["username"], "chat session renamed", f"{workspace_id} {session['id']}")
       self.write_json({"session": session})
+    elif method == "POST" and action == "sessions" and tail and subtail == "fork":
+      payload = self.read_json()
+      session = CHAT_RUNTIME.fork_session(workspace_id, tail, user, str(payload.get("title") or "") or None)
+      add_audit(user["username"], "chat session forked", f"{workspace_id} {tail} -> {session['id']}")
+      self.write_json({"session": session}, HTTPStatus.CREATED)
     elif method == "POST" and action == "runs" and not tail:
       result = CHAT_RUNTIME.start_run(workspace_id, user, self.read_json())
       add_audit(user["username"], "chat run queued", f"{workspace_id} {result['run']['id']}")

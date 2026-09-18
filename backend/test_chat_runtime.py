@@ -111,6 +111,7 @@ class ChatRuntimeTest(unittest.TestCase):
       runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Second", "sessionId": second_session["id"]})
     self.assertEqual(context.exception.code, "concurrent_confirmation_required")
 
+    time.sleep(0.1)
     second = runtime.start_run(
       workspace["id"],
       self.users["li.review"],
@@ -153,6 +154,79 @@ class ChatRuntimeTest(unittest.TestCase):
       runtime.update_session(workspace["id"], session["id"], self.users["li.review"], "   ")
 
     self.assertEqual(context.exception.code, "bad_request")
+
+  def test_fork_session_persists_distinct_history_and_excludes_credentials(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.2))
+    source = runtime.create_session(workspace["id"], self.users["li.review"], "Original")
+    stored = runtime.chat_store.get_session(source["id"])
+    stored["codexSessionId"] = "native-source"
+    stored["codexNativeResumable"] = True
+    stored["codexHomeUser"] = self.users["li.review"]["username"]
+    runtime.chat_store.save_session(stored)
+    runtime.append_event(source["id"], "user", "Earlier question", "run_old")
+    runtime.append_event(source["id"], "assistant", "Earlier answer", "run_old")
+    source_home = runtime.codex_preparer.session_home("li.review", source["id"])
+    (source_home / "sessions").mkdir(parents=True)
+    (source_home / "sessions" / "rollout.jsonl").write_text("conversation", encoding="utf-8")
+    (source_home / "auth.json").write_text("secret", encoding="utf-8")
+    (source_home / "config.toml").write_text("secret config", encoding="utf-8")
+
+    fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Branch")
+
+    self.assertNotEqual(fork["id"], source["id"])
+    self.assertEqual(fork["forkedFromSessionId"], source["id"])
+    self.assertEqual([event[1] for event in fork["events"]], ["Earlier question", "Earlier answer"])
+    self.assertEqual(runtime.list_sessions(workspace["id"], self.users["li.review"])[1]["id"], fork["id"])
+    fork_home = runtime.codex_preparer.session_home("li.review", fork["id"])
+    self.assertEqual((fork_home / "sessions" / "rollout.jsonl").read_text(encoding="utf-8"), "conversation")
+    self.assertFalse((fork_home / "auth.json").exists())
+    self.assertFalse((fork_home / "config.toml").exists())
+
+    run = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Branch question", "sessionId": fork["id"]})
+    self.assertTrue(run["run"]["codexFork"])
+    self.assertEqual(run["run"]["codexSessionId"], "native-source")
+    self.wait_for_status(runtime, workspace["id"], fork["id"], "completed")
+    source_after = next(item for item in runtime.list_sessions(workspace["id"], self.users["li.review"]) if item["id"] == source["id"])
+    self.assertEqual([event[1] for event in source_after["events"]], ["Earlier question", "Earlier answer"])
+
+  def test_active_session_fork_uses_last_completed_turn(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.2))
+    source = runtime.create_session(workspace["id"], self.users["li.review"], "Original")
+    stored = runtime.chat_store.get_session(source["id"])
+    stored["codexSessionId"] = "native-source"
+    stored["codexNativeResumable"] = True
+    runtime.chat_store.save_session(stored)
+    runtime.append_event(source["id"], "user", "Completed question", "run_old")
+    runtime.append_event(source["id"], "assistant", "Completed answer", "run_old")
+    source_home = runtime.codex_preparer.session_home("li.review", source["id"])
+    (source_home / "sessions").mkdir(parents=True)
+    (source_home / "sessions" / "rollout.jsonl").write_text("completed turn", encoding="utf-8")
+
+    active = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "In-progress question", "sessionId": source["id"]})
+    fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Stable branch")
+
+    messages = [event[1] for event in fork["events"]]
+    self.assertEqual(messages, ["Completed question", "Completed answer"])
+    fork_home = runtime.codex_preparer.session_home("li.review", fork["id"])
+    self.assertEqual((fork_home / "sessions" / "rollout.jsonl").read_text(encoding="utf-8"), "completed turn")
+    self.wait_for_status(runtime, workspace["id"], active["session"]["id"], "completed")
+
+  def test_fork_rejects_missing_codex_checkpoint(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    source = runtime.create_session(workspace["id"], self.users["li.review"], "Legacy")
+    stored = runtime.chat_store.get_session(source["id"])
+    stored["codexSessionId"] = "native-source"
+    stored["codexNativeResumable"] = True
+    runtime.chat_store.save_session(stored)
+    runtime.append_event(source["id"], "user", "Earlier question", "run_old")
+
+    with self.assertRaises(StorageError) as context:
+      runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Branch")
+
+    self.assertEqual(context.exception.code, "session_not_forkable")
 
   def test_budget_exhaustion_rejects_run(self) -> None:
     workspace = self.create_workspace()
@@ -247,6 +321,9 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertIn("resume", runner.codex_command_args(followup))
     self.assertIn("019abc", runner.codex_command_args(followup))
     self.assertIn("--last", runner.codex_command_args(fallback))
+    fork = {"model": "gpt-5.6-sol", "prompt": "branch", "codexFork": True, "codexSessionId": "019abc"}
+    self.assertIn("fork", runner.codex_command_args(fork))
+    self.assertIn("019abc", runner.codex_command_args(fork))
 
   def test_docker_runner_parses_completed_agent_message_item(self) -> None:
     runner = DockerCodexRunner()

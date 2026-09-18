@@ -62,6 +62,7 @@ class WorkerClient:
         "prompt",
         "model",
         "reasoning",
+        "codexFork",
         "codexResume",
         "codexSessionId",
         "requestedCpu",

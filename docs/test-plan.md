@@ -62,6 +62,9 @@
 ## Chat Lifecycle
 
 - Start creates a session, a run, and a container assignment.
+- Fork creates a distinct persisted session, copies stable history without duplicating usage, and uses an independent native Codex branch.
+- Forking an active session branches from its pre-run checkpoint and excludes the current prompt and partial output.
+- Forked chat messages, event cursors, and title edits do not mutate the source session.
 - Stop transitions through `stopping` and creates a resumable checkpoint.
 - Resume creates a new run from the latest checkpoint.
 - Completion creates a final snapshot and artifact records.

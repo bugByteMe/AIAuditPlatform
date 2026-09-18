@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
+from contextlib import closing
 from pathlib import Path
 
 
@@ -43,7 +44,7 @@ class WorkspaceDatabase:
     return connection
 
   def ensure_schema(self) -> None:
-    with self.connect() as connection:
+    with closing(self.connect()) as connection, connection:
       connection.executescript(
         """
         CREATE TABLE IF NOT EXISTS schema_info (
@@ -141,7 +142,7 @@ class WorkspaceDatabase:
     }
 
   def load(self) -> dict:
-    with self.connect() as connection:
+    with closing(self.connect()) as connection, connection:
       workspaces: dict[str, dict] = {}
       for row in connection.execute("SELECT * FROM workspaces"):
         workspace = {
@@ -225,7 +226,7 @@ class WorkspaceDatabase:
 
   def save(self, metadata: dict) -> set[str]:
     """Persist a compatibility metadata view and return blobs made unreferenced."""
-    with self.connect() as connection:
+    with closing(self.connect()) as connection, connection:
       connection.execute("BEGIN IMMEDIATE")
       old_references = {row[0] for row in connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")}
       existing_workspaces = {row[0] for row in connection.execute("SELECT id FROM workspaces")}
@@ -377,11 +378,11 @@ class WorkspaceDatabase:
       return old_references - new_references
 
   def referenced_blobs(self) -> set[str]:
-    with self.connect() as connection:
+    with closing(self.connect()) as connection, connection:
       return {row[0] for row in connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")}
 
   def file_versions(self, workspace_id: str, path: str) -> dict[str, dict]:
-    with self.connect() as connection:
+    with closing(self.connect()) as connection, connection:
       return {
         row["slot"]: self._file_entry(row)
         for row in connection.execute(

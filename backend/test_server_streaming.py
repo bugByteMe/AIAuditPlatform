@@ -18,6 +18,9 @@ class FakeChatRuntime:
   def public_session(self, session_id):
     return {"id": session_id, "status": "completed"}
 
+  def fork_session(self, workspace_id, session_id, user, title):
+    return {"id": "chat-fork", "title": title, "forkedFromSessionId": session_id}
+
 
 class FakeUploadManager:
   def __init__(self):
@@ -29,6 +32,18 @@ class FakeUploadManager:
 
 
 class ServerStreamingTest(unittest.TestCase):
+  def test_chat_fork_route_returns_persisted_session(self) -> None:
+    handler = object.__new__(Handler)
+    handler.require_user = lambda: {"username": "user", "role": "user", "group": "Audit"}
+    handler.read_json = lambda: {"title": "Branch"}
+    responses = []
+    handler.write_json = lambda payload, status=200, headers=None: responses.append((payload, status))
+    with patch("server.CHAT_RUNTIME", FakeChatRuntime()), patch("server.add_audit"):
+      Handler.chat_api(handler, "POST", "workspace-1", "sessions", "chat-source", "", "fork")
+    self.assertEqual(responses[0][0]["session"]["id"], "chat-fork")
+    self.assertEqual(responses[0][0]["session"]["forkedFromSessionId"], "chat-source")
+    self.assertEqual(responses[0][1], 201)
+
   def test_event_reconciliation_reports_terminal_status_without_new_events(self) -> None:
     handler = object.__new__(Handler)
     handler.require_user = lambda: {"username": "user", "role": "user", "group": "Audit"}

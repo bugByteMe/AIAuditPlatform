@@ -677,19 +677,31 @@ function renderSelectedUploadFiles() {
     .join("");
 }
 
-function copySession(index) {
+async function copySession(index) {
   const workspace = safeCurrentWorkspace();
   if (!workspace) return;
-  const sessions = workspace.sessions;
-  const source = sessions[index];
-  sessions.splice(index + 1, 0, {
-    ...source,
-    title: `${source.title} ${state.lang === "zh" ? "副本" : "Copy"}`,
-    status: "stopped",
-    events: source.events.map((item) => [...item]),
-  });
-  state.selectedSession = index + 1;
-  showToast(t("toast.copySession"));
+  const source = workspace.sessions[index];
+  if (!source) return;
+  try {
+    const result = await api(
+      `/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions/${encodeURIComponent(source.id)}/fork`,
+      {
+        method: "POST",
+        body: JSON.stringify({ title: `${source.title} ${state.lang === "zh" ? "副本" : "Copy"}` }),
+      },
+    );
+    const workspaceIndex = workspaceIndexById(workspace.id);
+    if (workspaceIndex < 0) return;
+    const sessions = [...(workspace.sessions || [])];
+    sessions.splice(index + 1, 0, result.session);
+    state.workspaces[workspaceIndex] = { ...workspace, sessions };
+    state.selectedSession = index + 1;
+    state.chatLastEventIds[result.session.id] = sessionEventCursor(result.session);
+    renderDynamic();
+    showToast(t("toast.copySession"));
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 function deleteSession(index) {

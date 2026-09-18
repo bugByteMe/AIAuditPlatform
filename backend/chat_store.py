@@ -97,6 +97,7 @@ class ChatStore:
       "tokens": session.get("tokens", "0"),
       "latestRunId": session.get("latestRunId"),
       "codexNativeResumable": bool(session.get("codexNativeResumable")),
+      "forkedFromSessionId": session.get("forkedFromSessionId"),
       "events": [self.public_event_tuple(event) for event in events],
     }
 
