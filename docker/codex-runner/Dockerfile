@@ -22,10 +22,13 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     ca-certificates \
     git \
     libreoffice \
+    ocrmypdf \
     pandoc \
     poppler-utils \
     ripgrep \
     tesseract-ocr \
+    tesseract-ocr-chi-sim \
+    tesseract-ocr-chi-tra \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 

@@ -20,6 +20,7 @@ The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to us
 ## Codex Runtime
 
 - `codex_image`, `codex_root`, `codex_home_root`, and `skill_path` configure runtime paths.
+- The bundled Codex runner image includes OCRmyPDF and Tesseract language data for Simplified Chinese (`chi_sim`) and Traditional Chinese (`chi_tra`) PDF OCR.
 - `container_uid`, `container_gid`, `run_timeout_seconds`, `run_network`, `run_cpus`, and `run_memory` configure container execution.
 - `process_wait_timeout_seconds`, `docker_stop_grace_seconds`, `docker_stop_timeout_seconds`, and `scheduler_poll_seconds` configure process shutdown and scheduling timing.
 - `run_cpus` and `run_memory` are also the reservation requested by every run. A worker is eligible only when both resources are available.
