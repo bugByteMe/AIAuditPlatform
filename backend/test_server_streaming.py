@@ -21,6 +21,9 @@ class FakeChatRuntime:
   def fork_session(self, workspace_id, session_id, user, title):
     return {"id": "chat-fork", "title": title, "forkedFromSessionId": session_id}
 
+  def delete_session(self, workspace_id, session_id, user):
+    return {"id": session_id, "runIds": ["run-1"]}
+
 
 class FakeUploadManager:
   def __init__(self):
@@ -43,6 +46,16 @@ class ServerStreamingTest(unittest.TestCase):
     self.assertEqual(responses[0][0]["session"]["id"], "chat-fork")
     self.assertEqual(responses[0][0]["session"]["forkedFromSessionId"], "chat-source")
     self.assertEqual(responses[0][1], 201)
+
+  def test_chat_delete_route_removes_persisted_session_and_audits(self) -> None:
+    handler = object.__new__(Handler)
+    handler.require_user = lambda: {"username": "owner", "role": "user", "group": "Audit"}
+    responses = []
+    handler.write_json = lambda payload, status=200, headers=None: responses.append((payload, status))
+    with patch("server.CHAT_RUNTIME", FakeChatRuntime()), patch("server.add_audit") as add_audit:
+      Handler.chat_api(handler, "DELETE", "workspace-1", "sessions", "chat-source", "")
+    self.assertEqual(responses[0][0], {"deleted": {"id": "chat-source", "runIds": ["run-1"]}})
+    add_audit.assert_called_once_with("owner", "chat session deleted", "workspace-1 chat-source runs=1")
 
   def test_event_reconciliation_reports_terminal_status_without_new_events(self) -> None:
     handler = object.__new__(Handler)

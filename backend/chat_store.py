@@ -200,3 +200,23 @@ class ChatStore:
     self.save_sessions(sessions)
     self.save_runs(runs)
     return {"sessionIds": sorted(removed_session_ids), "runIds": sorted(removed_run_ids)}
+
+  def delete_session(self, session_id: str) -> dict | None:
+    sessions = self.sessions()
+    removed_session = sessions.pop(session_id, None)
+    if not removed_session:
+      return None
+    runs = self.runs()
+    removed_runs = {
+      run_id: run
+      for run_id, run in runs.items()
+      if str(run.get("sessionId") or "") == session_id
+    }
+    for run_id in removed_runs:
+      runs.pop(run_id, None)
+    self.save_sessions(sessions)
+    self.save_runs(runs)
+    path = self.events_path(session_id)
+    if path.exists():
+      path.unlink()
+    return {"session": removed_session, "runs": removed_runs}

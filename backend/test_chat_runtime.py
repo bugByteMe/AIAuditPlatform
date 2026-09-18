@@ -155,6 +155,103 @@ class ChatRuntimeTest(unittest.TestCase):
 
     self.assertEqual(context.exception.code, "bad_request")
 
+  def test_delete_session_removes_terminal_history_and_allows_empty_workspace(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Delete me")
+    runtime.append_event(session["id"], "assistant", "Completed", "run_delete")
+    runtime.chat_store.save_run({
+      "id": "run_delete",
+      "workspaceId": workspace["id"],
+      "sessionId": session["id"],
+      "user": "li.review",
+      "status": "completed",
+    })
+    home = runtime.codex_preparer.session_home("li.review", session["id"])
+    home.mkdir(parents=True)
+    fork_base = runtime.codex_preparer.fork_base_home("run_delete")
+    fork_base.mkdir(parents=True)
+
+    deleted = runtime.delete_session(workspace["id"], session["id"], self.users["li.review"])
+
+    self.assertEqual(deleted, {"id": session["id"], "runIds": ["run_delete"]})
+    self.assertEqual(runtime.list_sessions(workspace["id"], self.users["li.review"]), [])
+    self.assertIsNone(runtime.chat_store.get_session(session["id"]))
+    self.assertIsNone(runtime.chat_store.get_run("run_delete"))
+    self.assertFalse(runtime.chat_store.events_path(session["id"]).exists())
+    self.assertFalse(home.exists())
+    self.assertFalse(fork_base.exists())
+
+  def test_delete_session_requires_owner_or_system_admin(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Protected")
+    collaborator = {"username": "wang.audit", "role": "user", "group": "审计一组"}
+    administrator = {"username": "root.admin", "role": "system_admin", "group": ""}
+
+    with self.assertRaises(StorageError) as context:
+      runtime.delete_session(workspace["id"], session["id"], collaborator)
+    self.assertEqual(context.exception.code, "forbidden")
+    self.assertIsNotNone(runtime.chat_store.get_session(session["id"]))
+
+    runtime.delete_session(workspace["id"], session["id"], administrator)
+    self.assertIsNone(runtime.chat_store.get_session(session["id"]))
+
+  def test_delete_session_rejects_active_run_without_mutation(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Active")
+    runtime.chat_store.save_run({
+      "id": "run_active",
+      "workspaceId": workspace["id"],
+      "sessionId": session["id"],
+      "user": "li.review",
+      "status": "queued",
+    })
+
+    with self.assertRaises(StorageError) as context:
+      runtime.delete_session(workspace["id"], session["id"], self.users["li.review"])
+
+    self.assertEqual(context.exception.code, "session_run_active")
+    self.assertIsNotNone(runtime.chat_store.get_session(session["id"]))
+    self.assertIsNotNone(runtime.chat_store.get_run("run_active"))
+    self.assertEqual(runtime.list_sessions(workspace["id"], self.users["li.review"])[0]["id"], session["id"])
+
+  def test_delete_session_rejects_missing_or_cross_workspace_session(self) -> None:
+    first_workspace = self.create_workspace()
+    second_workspace = self.store.create_workspace(
+      self.users["li.review"],
+      "Second workspace",
+      False,
+      [UploadedFile("notes.txt", b"notes")],
+    )
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(first_workspace["id"], self.users["li.review"], "First")
+
+    with self.assertRaises(StorageError) as missing:
+      runtime.delete_session(first_workspace["id"], "chat_missing", self.users["li.review"])
+    self.assertEqual(missing.exception.code, "not_found")
+
+    with self.assertRaises(StorageError) as cross_workspace:
+      runtime.delete_session(second_workspace["id"], session["id"], self.users["li.review"])
+    self.assertEqual(cross_workspace.exception.code, "not_found")
+    self.assertIsNotNone(runtime.chat_store.get_session(session["id"]))
+
+  def test_delete_source_session_keeps_independent_fork(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    source = runtime.create_session(workspace["id"], self.users["li.review"], "Source")
+    fork = runtime.create_session(workspace["id"], self.users["li.review"], "Fork")
+    stored_fork = runtime.chat_store.get_session(fork["id"])
+    stored_fork["forkedFromSessionId"] = source["id"]
+    runtime.chat_store.save_session(stored_fork)
+
+    runtime.delete_session(workspace["id"], source["id"], self.users["li.review"])
+
+    remaining = runtime.list_sessions(workspace["id"], self.users["li.review"])
+    self.assertEqual([item["id"] for item in remaining], [fork["id"]])
+    self.assertEqual(remaining[0]["forkedFromSessionId"], source["id"])
+
   def test_fork_session_persists_distinct_history_and_excludes_credentials(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner(delay=0.2))

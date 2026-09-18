@@ -709,14 +709,33 @@ async function copySession(index) {
   }
 }
 
-function deleteSession(index) {
+async function deleteSession(index) {
   const workspace = safeCurrentWorkspace();
   if (!workspace) return;
-  const sessions = workspace.sessions;
-  if (sessions.length <= 1) return;
-  sessions.splice(index, 1);
-  state.selectedSession = Math.max(0, Math.min(state.selectedSession, sessions.length - 1));
-  showToast(t("toast.deleteSession"));
+  const session = workspace.sessions[index];
+  if (!session || !window.confirm(t("chat.confirmDelete"))) return;
+  try {
+    await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions/${encodeURIComponent(session.id)}`, {
+      method: "DELETE",
+    });
+    const workspaceIndex = workspaceIndexById(workspace.id);
+    if (workspaceIndex < 0) return;
+    const latestWorkspace = state.workspaces[workspaceIndex];
+    const selectedSessionId = latestWorkspace.sessions?.[state.selectedSession]?.id;
+    const removedIndex = (latestWorkspace.sessions || []).findIndex((item) => item.id === session.id);
+    const sessions = (latestWorkspace.sessions || []).filter((item) => item.id !== session.id);
+    state.workspaces[workspaceIndex] = { ...latestWorkspace, sessions };
+    delete state.chatLastEventIds[session.id];
+    const retainedSelection = sessions.findIndex((item) => item.id === selectedSessionId);
+    state.selectedSession = retainedSelection >= 0
+      ? retainedSelection
+      : Math.max(0, Math.min(Math.max(removedIndex, 0), sessions.length - 1));
+    renderDynamic();
+    maybeStartChatStream();
+    showToast(t("toast.deleteSession"));
+  } catch (error) {
+    showToast(error.message);
+  }
 }
 
 async function createNewChatSession() {
@@ -912,7 +931,6 @@ function bindGlobalClicks() {
       const index = Number(sessionAction.dataset.sessionIndex);
       if (sessionAction.dataset.sessionAction === "copy") copySession(index);
       if (sessionAction.dataset.sessionAction === "delete") deleteSession(index);
-      renderDynamic();
       return;
     }
 

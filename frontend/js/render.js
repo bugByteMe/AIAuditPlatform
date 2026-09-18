@@ -307,6 +307,7 @@ export function renderChatSessions() {
   document.querySelector("#chat-memory-meter").style.width = `${memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0}%`;
   document.querySelector(".status-dot").classList.toggle("running", session.status === "running");
   document.querySelector(".status-dot").classList.toggle("stopped", session.status !== "running");
+  const canDeleteSessions = canRenameWorkspace(workspace);
   document.querySelector("#chat-session-list").innerHTML = workspace.sessions
     .map(
       (item, index) => `
@@ -317,7 +318,7 @@ export function renderChatSessions() {
           </div>
           <div class="session-actions">
             <button class="session-action-btn" data-session-action="copy" data-session-index="${index}">${t("chat.copy")}</button>
-            <button class="session-action-btn" data-session-action="delete" data-session-index="${index}">${t("chat.delete")}</button>
+            ${canDeleteSessions ? `<button class="session-action-btn" data-session-action="delete" data-session-index="${index}">${t("chat.delete")}</button>` : ""}
           </div>
         </article>
       `,

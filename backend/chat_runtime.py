@@ -612,6 +612,51 @@ class ChatRuntime:
       self.chat_store.save_session(session)
       return self.public_session(session_id)
 
+  def delete_session(self, workspace_id: str, session_id: str, user: dict) -> dict:
+    with self.lock:
+      metadata = self.store.load_metadata()
+      self.ensure_chat_metadata(metadata)
+      workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      if workspace.get("owner") != user.get("username") and user.get("role") != "system_admin":
+        raise StorageError("forbidden", "only the workspace owner or system admin can delete a chat session")
+      session_refs = workspace.get("sessions", [])
+      if not any(str(item.get("id") or "") == session_id for item in session_refs):
+        raise StorageError("not_found", "chat session not found")
+      session = self.chat_store.get_session(session_id)
+      if not session or session.get("workspaceId") != workspace_id:
+        raise StorageError("not_found", "chat session not found")
+      session_runs = {
+        run_id: run
+        for run_id, run in self.chat_store.runs().items()
+        if run.get("sessionId") == session_id
+      }
+      if any(run.get("status") in RUNNING_STATES for run in session_runs.values()):
+        raise StorageError("session_run_active", "stop the active chat run before deleting this session")
+
+      workspace["sessions"] = [item for item in session_refs if str(item.get("id") or "") != session_id]
+      if workspace.get("activeRunId") in session_runs:
+        workspace["activeRunId"] = None
+      workspace["updated"] = now_string()
+      self.store.save_metadata(metadata)
+      removed = self.chat_store.delete_session(session_id)
+      if not removed:
+        raise StorageError("not_found", "chat session not found")
+
+      usernames = {
+        str(candidate or "")
+        for candidate in [
+          removed["session"].get("createdBy"),
+          removed["session"].get("codexHomeUser"),
+          *(run.get("user") for run in removed["runs"].values()),
+        ]
+        if candidate
+      }
+      for username in usernames:
+        shutil.rmtree(self.codex_preparer.session_home(username, session_id), ignore_errors=True)
+      for run_id in removed["runs"]:
+        self.codex_preparer.remove_fork_base(str(run_id))
+      return {"id": session_id, "runIds": sorted(removed["runs"])}
+
   def start_run(self, workspace_id: str, user: dict, payload: dict) -> dict:
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:

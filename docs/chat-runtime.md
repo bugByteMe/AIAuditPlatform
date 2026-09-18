@@ -77,6 +77,10 @@ Codex-state copies include only the selected native conversation rollout rather 
 
 Persisted application events are copied in one atomic linear pass. Appending a new live event reads only the last event record to allocate its ID, so large histories do not make each subsequent user, queue, or runner event rescan the full transcript. The fork response is lightweight: the browser hydrates the branch from the already loaded stable source events, while later workspace loads read the independently persisted fork history.
 
+## Deleting a Chat
+
+Workspace owners and system administrators may permanently delete a chat whose runs are all terminal. Deletion removes the workspace session reference, persisted transcript, run records, session-scoped Codex homes, and stale fork checkpoints. Active or queued runs must be stopped first. Deleting the last chat leaves a valid empty workspace, and independently persisted forks remain available.
+
 ## Completion
 
 When a run completes:
@@ -103,6 +107,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 - `GET /api/workspaces/{workspace_id}/chat/sessions`
 - `POST /api/workspaces/{workspace_id}/chat/sessions`
 - `POST /api/workspaces/{workspace_id}/chat/sessions/{session_id}/fork`
+- `DELETE /api/workspaces/{workspace_id}/chat/sessions/{session_id}`
 - `POST /api/workspaces/{workspace_id}/chat/runs`
 - `POST /api/workspaces/{workspace_id}/chat/runs/{run_id}/stop`
 - `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`

@@ -710,6 +710,10 @@ class Handler(BaseHTTPRequestHandler):
       session = CHAT_RUNTIME.update_session(workspace_id, tail, user, str(payload.get("title") or ""))
       add_audit(user["username"], "chat session renamed", f"{workspace_id} {session['id']}")
       self.write_json({"session": session})
+    elif method == "DELETE" and action == "sessions" and tail and not subtail:
+      deleted = CHAT_RUNTIME.delete_session(workspace_id, tail, user)
+      add_audit(user["username"], "chat session deleted", f"{workspace_id} {tail} runs={len(deleted['runIds'])}")
+      self.write_json({"deleted": deleted})
     elif method == "POST" and action == "sessions" and tail and subtail == "fork":
       payload = self.read_json()
       session = CHAT_RUNTIME.fork_session(workspace_id, tail, user, str(payload.get("title") or "") or None)

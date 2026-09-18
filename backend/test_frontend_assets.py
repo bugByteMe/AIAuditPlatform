@@ -126,12 +126,16 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('grid-template-rows: auto minmax(0, 1fr)', chat_css)
         self.assertIn('height: 100dvh', chat_css)
 
-    def test_chat_fork_uses_persisted_unique_session(self) -> None:
+    def test_chat_fork_and_persistent_delete_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
         self.assertIn('/chat/sessions/${encodeURIComponent(source.id)}/fork', app_source)
         self.assertIn("state.chatLastEventIds[result.session.id]", app_source)
         self.assertIn("activeSourceRunId", app_source)
         self.assertNotIn("events: source.events.map", app_source)
+        self.assertIn('method: "DELETE"', app_source)
+        self.assertIn('window.confirm(t("chat.confirmDelete"))', app_source)
+        self.assertIn("canDeleteSessions", render_source)
 
 
 if __name__ == "__main__":
