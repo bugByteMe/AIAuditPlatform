@@ -11,7 +11,8 @@ from pathlib import Path
 from config import SETTINGS
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
+DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
 def _new_id(prefix: str) -> str:
@@ -37,8 +38,8 @@ class AccountStore:
     existed = self.path.exists()
     raw = json.loads(self.path.read_text(encoding="utf-8")) if existed else deepcopy(self.seed_users)
     migrated = not (isinstance(raw, dict) and raw.get("schemaVersion") == SCHEMA_VERSION)
-    if isinstance(raw, dict) and raw.get("schemaVersion") == 2:
-      state = self.migrate_v2(raw)
+    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3}:
+      state = self.migrate_versioned(raw)
     else:
       state = self.migrate_legacy(raw) if migrated else raw
     self.users.update(deepcopy(state.get("users") or {}))
@@ -63,7 +64,13 @@ class AccountStore:
         if not group_id:
           group_id = _new_id("grp")
           group_ids_by_name[normalized] = group_id
-          groups[group_id] = {"id": group_id, "name": group_name, "createdAt": now, "diskLimitBytes": None}
+          groups[group_id] = {
+            "id": group_id,
+            "name": group_name,
+            "createdAt": now,
+            "diskLimitBytes": None,
+            "liveRunLimit": DEFAULT_GROUP_LIVE_RUN_LIMIT,
+          }
       user.update(
         {
           "id": str(user.get("id") or _new_id("usr")),
@@ -81,11 +88,12 @@ class AccountStore:
       "groups": groups,
     }
 
-  def migrate_v2(self, state: dict) -> dict:
+  def migrate_versioned(self, state: dict) -> dict:
     migrated = deepcopy(state)
     migrated["schemaVersion"] = SCHEMA_VERSION
     for group in (migrated.get("groups") or {}).values():
       group.setdefault("diskLimitBytes", None)
+      group.setdefault("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
     return migrated
 
   def state(self) -> dict:
@@ -130,7 +138,13 @@ class AccountStore:
     if self.group_by_name(name):
       raise ValueError("group name already exists")
     group_id = _new_id("grp")
-    group = {"id": group_id, "name": name, "createdAt": _timestamp(), "diskLimitBytes": None}
+    group = {
+      "id": group_id,
+      "name": name,
+      "createdAt": _timestamp(),
+      "diskLimitBytes": None,
+      "liveRunLimit": DEFAULT_GROUP_LIVE_RUN_LIMIT,
+    }
     self.groups[group_id] = group
     try:
       self.save()
@@ -168,7 +182,13 @@ class AccountStore:
       if self.group_by_name(new_group_name):
         raise ValueError("group name already exists")
       group_id = _new_id("grp")
-      new_group = {"id": group_id, "name": new_group_name, "createdAt": _timestamp(), "diskLimitBytes": None}
+      new_group = {
+        "id": group_id,
+        "name": new_group_name,
+        "createdAt": _timestamp(),
+        "diskLimitBytes": None,
+        "liveRunLimit": DEFAULT_GROUP_LIVE_RUN_LIMIT,
+      }
       group = new_group
     else:
       group = self.groups.get(group_id)
@@ -293,6 +313,22 @@ class AccountStore:
         self.save()
       except Exception:
         group["diskLimitBytes"] = previous
+        raise
+      return deepcopy(group)
+
+  def update_group_live_run_limit(self, group_id: str, live_run_limit: int) -> dict:
+    with self.lock:
+      group = self.groups.get(group_id)
+      if not group:
+        raise ValueError("group not found")
+      if live_run_limit < 1:
+        raise ValueError("liveRunLimit must be at least 1")
+      previous = group.get("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
+      group["liveRunLimit"] = live_run_limit
+      try:
+        self.save()
+      except Exception:
+        group["liveRunLimit"] = previous
         raise
       return deepcopy(group)
 

@@ -57,6 +57,7 @@ class AccountStoreTest(unittest.TestCase):
       self.assertEqual(reloaded.users["bob"]["groupId"], group_id)
       self.assertEqual(reloaded.groups[group_id]["name"], "Audit")
       self.assertIsNone(reloaded.groups[group_id]["diskLimitBytes"])
+      self.assertEqual(reloaded.groups[group_id]["liveRunLimit"], 1)
 
   def test_v2_groups_migrate_to_unlimited_disk(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
@@ -73,8 +74,27 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 3)
+      self.assertEqual(store.state()["schemaVersion"], 4)
       self.assertIsNone(store.groups["grp_1"]["diskLimitBytes"])
+      self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
+
+  def test_v3_groups_migrate_to_default_live_run_limit(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      path = Path(tempdir) / "accounts.json"
+      path.write_text(
+        json.dumps(
+          {
+            "schemaVersion": 3,
+            "users": {"alice": {"id": "usr_1", "username": "alice", "groupId": "grp_1"}},
+            "pendingAccounts": {},
+            "groups": {"grp_1": {"id": "grp_1", "name": "Audit", "diskLimitBytes": None}},
+          }
+        ),
+        encoding="utf-8",
+      )
+      store = AccountStore(path, {})
+      self.assertEqual(store.state()["schemaVersion"], 4)
+      self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
   def test_batch_invites_have_unique_ids_tokens_and_no_credentials(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
@@ -162,12 +182,22 @@ class AccountStoreTest(unittest.TestCase):
       store.users["alice"]["usedTokens"] = 75
       store.save()
       store.update_group_disk_limit(group["id"], 1024)
+      store.update_group_live_run_limit(group["id"], 3)
       reset = store.reset_user_budget(user["id"], 500)
       self.assertEqual(reset["budgetTokens"], 500)
       self.assertEqual(reset["usedTokens"], 0)
       reloaded = AccountStore(path, {})
       self.assertEqual(reloaded.groups[group["id"]]["diskLimitBytes"], 1024)
+      self.assertEqual(reloaded.groups[group["id"]]["liveRunLimit"], 3)
       self.assertEqual(reloaded.users["alice"]["usedTokens"], 0)
+
+  def test_group_live_run_limit_must_be_positive(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      group = store.create_group("Audit")
+      with self.assertRaisesRegex(ValueError, "at least 1"):
+        store.update_group_live_run_limit(group["id"], 0)
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 1)
 
 
 if __name__ == "__main__":

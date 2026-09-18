@@ -22,7 +22,7 @@ System administrators may batch-create pending accounts for an existing or newly
 
 Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Successful registration preserves the pending account's user ID, group, budget, and session limit, consumes the token, stores the password hash, activates the account, and creates a login session.
 
-Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
+Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a positive concurrent live-run limit, defaulting to one for new and migrated groups. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
 The initial design does not require SSO, device binding, or multi-factor authentication.
 
@@ -76,6 +76,7 @@ System admins can:
 - Inspect budget stop events and failed run records.
 - Reset a user's consumed-token counter while replacing the user's allowance.
 - Set or clear a group's logical workspace disk limit.
+- Set a group's concurrent live-run limit.
 - Permanently delete users or groups and their owned workspaces and chat data.
 
 All admin actions should be written to the audit log.

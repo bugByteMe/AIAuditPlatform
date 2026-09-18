@@ -436,9 +436,11 @@ class ChatRuntime:
     chat_store: ChatStore | None = None,
     save_users=None,
     worker_registry: WorkerRegistry | None = None,
+    groups: dict[str, dict] | None = None,
   ):
     self.store = store
     self.users = users
+    self.groups = groups if groups is not None else {}
     self.runner = runner or DockerCodexRunner()
     self.chat_store = chat_store or ChatStore(store.root / "chat")
     self.save_users = save_users
@@ -680,6 +682,20 @@ class ChatRuntime:
         for run in self.chat_store.runs().values()
         if run.get("workspaceId") == workspace_id and run.get("status") in RUNNING_STATES
       ]
+      group_id = str(user.get("groupId") or "")
+      group = self.groups.get(group_id) if group_id else None
+      if group:
+        live_run_limit = int(group.get("liveRunLimit", 1))
+        group_live_runs = [
+          run
+          for run in self.chat_store.runs().values()
+          if run.get("status") in RUNNING_STATES and self.run_group_id(run) == group_id
+        ]
+        if len(group_live_runs) >= live_run_limit:
+          raise StorageError(
+            "group_live_run_limit_reached",
+            f"group concurrent live run limit ({live_run_limit}) is reached",
+          )
       if session_id and any(run.get("sessionId") == session_id for run in active_runs):
         raise StorageError("session_run_active", "this chat session already has an active run")
       if workspace.get("activeUploadId") or (workspace.get("locked") and not active_runs):
@@ -703,6 +719,7 @@ class ChatRuntime:
         "workspaceId": workspace_id,
         "sessionId": session["id"],
         "user": user["username"],
+        "groupId": group_id,
         "status": "queued",
         "prompt": prompt,
         "model": str(payload.get("model") or "gpt-5.6-sol"),
@@ -741,6 +758,13 @@ class ChatRuntime:
       self.queue.put(run["id"])
       self.condition.notify_all()
       return {"session": self.public_session(session["id"]), "run": run}
+
+  def run_group_id(self, run: dict) -> str:
+    stored_group_id = str(run.get("groupId") or "")
+    if stored_group_id:
+      return stored_group_id
+    run_user = self.users.get(str(run.get("user") or "")) or {}
+    return str(run_user.get("groupId") or "")
 
   def _create_session_in_metadata(self, metadata: dict, workspace: dict, user: dict, title: str) -> dict:
     timestamp = now_string()

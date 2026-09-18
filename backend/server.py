@@ -89,7 +89,13 @@ SEED_USERS = {
 ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS)
 USERS = ACCOUNT_STORE.users
 WORKSPACE_STORE.set_account_provider(lambda: (ACCOUNT_STORE.users, ACCOUNT_STORE.groups))
-CHAT_RUNTIME = ChatRuntime(WORKSPACE_STORE, USERS, capacity=SETTINGS.local_run_capacity, save_users=ACCOUNT_STORE.save)
+CHAT_RUNTIME = ChatRuntime(
+  WORKSPACE_STORE,
+  USERS,
+  capacity=SETTINGS.local_run_capacity,
+  save_users=ACCOUNT_STORE.save,
+  groups=ACCOUNT_STORE.groups,
+)
 
 SESSIONS: dict[str, dict] = {}
 AUDIT_LOGS = [
@@ -274,6 +280,7 @@ class Handler(BaseHTTPRequestHandler):
       "workspace_locked", "workspace_changed", "upload_offset_mismatch", "upload_chunk_conflict",
       "upload_commit_started", "runs_not_stopped", "protected_admin", "session_run_active",
       "concurrent_confirmation_required", "session_not_forkable",
+      "group_live_run_limit_reached",
     }:
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
@@ -412,9 +419,15 @@ class Handler(BaseHTTPRequestHandler):
     parsed_limit = None if raw_limit is None else int(raw_limit)
     if parsed_limit is not None and parsed_limit < 0:
       raise ValueError("diskLimitBytes must be non-negative or null")
+    raw_run_limit = payload.get("liveRunLimit") if "liveRunLimit" in payload else None
+    parsed_run_limit = None if raw_run_limit is None else int(raw_run_limit)
+    if parsed_run_limit is not None and parsed_run_limit < 1:
+      raise ValueError("liveRunLimit must be at least 1")
     group = ACCOUNT_STORE.create_group(str(payload.get("name") or ""))
     if "diskLimitBytes" in payload:
       group = ACCOUNT_STORE.update_group_disk_limit(group["id"], parsed_limit)
+    if parsed_run_limit is not None:
+      group = ACCOUNT_STORE.update_group_live_run_limit(group["id"], parsed_run_limit)
     add_audit(actor["username"], "group created", str(group["id"]))
     self.write_json({"group": group}, HTTPStatus.CREATED)
 
@@ -422,11 +435,24 @@ class Handler(BaseHTTPRequestHandler):
     actor = self.require_admin()
     group_id = unquote(raw_group_id)
     payload = self.read_json()
-    if "diskLimitBytes" not in payload:
-      raise ValueError("diskLimitBytes is required")
-    raw_limit = payload.get("diskLimitBytes")
-    group = ACCOUNT_STORE.update_group_disk_limit(group_id, None if raw_limit is None else int(raw_limit))
-    add_audit(actor["username"], "group disk limit updated", f"{group_id} limit={group['diskLimitBytes']}")
+    if not ({"diskLimitBytes", "liveRunLimit"} & payload.keys()):
+      raise ValueError("diskLimitBytes or liveRunLimit is required")
+    group = ACCOUNT_STORE.groups.get(group_id)
+    if not group:
+      raise ValueError("group not found")
+    raw_disk_limit = payload.get("diskLimitBytes") if "diskLimitBytes" in payload else None
+    disk_limit = None if raw_disk_limit is None else int(raw_disk_limit)
+    if "diskLimitBytes" in payload and disk_limit is not None and disk_limit < 0:
+      raise ValueError("diskLimitBytes must be non-negative or null")
+    live_run_limit = int(payload["liveRunLimit"]) if "liveRunLimit" in payload else None
+    if live_run_limit is not None and live_run_limit < 1:
+      raise ValueError("liveRunLimit must be at least 1")
+    if "diskLimitBytes" in payload:
+      group = ACCOUNT_STORE.update_group_disk_limit(group_id, disk_limit)
+      add_audit(actor["username"], "group disk limit updated", f"{group_id} limit={group['diskLimitBytes']}")
+    if "liveRunLimit" in payload:
+      group = ACCOUNT_STORE.update_group_live_run_limit(group_id, live_run_limit)
+      add_audit(actor["username"], "group live run limit updated", f"{group_id} limit={group['liveRunLimit']}")
     self.write_json({"group": group})
 
   def delete_account(self, raw_identifier: str) -> None:

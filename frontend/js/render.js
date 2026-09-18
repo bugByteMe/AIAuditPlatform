@@ -462,15 +462,17 @@ export function renderAdmin() {
     const limit = group.diskLimitBytes === null || group.diskLimitBytes === undefined ? null : Number(group.diskLimitBytes);
     const percent = limit === null ? 0 : limit === 0 ? (used > 0 ? 100 : 0) : Math.min(100, Math.round((used / limit) * 100));
     const usage = limit === null ? `${formatBytes(used)} / ${t("admin.unlimited")}` : `${formatBytes(used)} / ${formatBytes(limit)}`;
+    const liveRunLimit = Math.max(1, Number(group.liveRunLimit || 1));
     return `
       <details class="admin-group" open>
         <summary>
           <div>
             <h3>${escapeHtml(group.name)}</h3>
-            <div class="meta-line"><span>${Number(group.userCount || 0)} ${t("admin.usersCount")}</span><span>${Number(group.workspaceCount || 0)} ${t("admin.workspaces")}</span><span>${usage}</span></div>
+            <div class="meta-line"><span>${Number(group.userCount || 0)} ${t("admin.usersCount")}</span><span>${Number(group.workspaceCount || 0)} ${t("admin.workspaces")}</span><span>${usage}</span><span>${liveRunLimit} ${t("admin.concurrentLiveRuns")}</span></div>
           </div>
           <div class="admin-actions">
             <button class="btn" data-set-group-limit="${escapeHtml(group.id)}">${t("admin.setDiskLimit")}</button>
+            <button class="btn" data-set-group-live-run-limit="${escapeHtml(group.id)}">${t("admin.setLiveRunLimit")}</button>
             <button class="btn danger" data-delete-group="${escapeHtml(group.id)}" ${containsCurrentUser ? "disabled" : ""}>${t("admin.deleteGroup")}</button>
           </div>
         </summary>

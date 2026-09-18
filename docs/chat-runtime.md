@@ -22,7 +22,7 @@ Chat sessions and runs use these states:
 
 When a user starts a chat:
 
-1. Backend checks authentication, workspace permission, workspace lock, and budget.
+1. Backend checks authentication, workspace permission, workspace lock, budget, and the user's group live-run limit.
 2. Backend creates a chat session and run record.
 3. Scheduler reserves CPU and memory on the least-utilized compatible healthy worker (stable configuration order breaks ties).
 4. Worker launches a Docker container with the workspace mounted.
@@ -30,6 +30,8 @@ When a user starts a chat:
 6. Backend persists events and fans them out to the frontend.
 
 Users can select model and reasoning effort before starting a run. These settings are stored on the run record.
+
+The group live-run limit counts runs in `queued`, `starting`, `running`, and `stopping` states across every workspace owned or used by group members. Run creation and the limit check share the chat lifecycle lock, so simultaneous requests cannot exceed the configured limit. Lowering a limit does not terminate existing work; it prevents new runs until the live count falls below the limit.
 
 ## Real-Time Events
 

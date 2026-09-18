@@ -504,6 +504,24 @@ async function setGroupDiskLimit(groupId) {
   }
 }
 
+async function setGroupLiveRunLimit(groupId) {
+  const group = state.groups.find((item) => item.id === groupId);
+  const raw = window.prompt(t("admin.promptLiveRunLimit"), String(group?.liveRunLimit || 1));
+  if (raw === null) return;
+  const liveRunLimit = Number(raw.trim());
+  if (!Number.isInteger(liveRunLimit) || liveRunLimit < 1) return;
+  try {
+    await api(`/api/groups/${encodeURIComponent(groupId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ liveRunLimit }),
+    });
+    await loadAccountControlData();
+    showToast(t("toast.groupLiveRunLimitSaved"));
+  } catch (error) {
+    showToast(error.message);
+  }
+}
+
 async function resetAccountBudget(userId) {
   const account = state.accounts.find((item) => item.id === userId);
   const raw = window.prompt(t("admin.promptBudget"), String(account?.budgetTokens || 0));
@@ -796,6 +814,13 @@ function bindGlobalClicks() {
     if (setGroupLimit) {
       event.preventDefault();
       setGroupDiskLimit(setGroupLimit.dataset.setGroupLimit);
+      return;
+    }
+
+    const setGroupLiveRunLimitButton = event.target.closest("[data-set-group-live-run-limit]");
+    if (setGroupLiveRunLimitButton) {
+      event.preventDefault();
+      setGroupLiveRunLimit(setGroupLiveRunLimitButton.dataset.setGroupLiveRunLimit);
       return;
     }
 

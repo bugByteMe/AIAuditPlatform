@@ -95,6 +95,8 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("/reset-budget", app_source)
         self.assertIn("data-delete-account", render_source)
         self.assertIn("data-set-group-limit", render_source)
+        self.assertIn("data-set-group-live-run-limit", render_source)
+        self.assertIn("liveRunLimit", app_source)
 
     def test_compute_resource_status_and_slim_header_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

@@ -103,6 +103,18 @@ class AccountApiTest(unittest.TestCase):
       with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
         Handler.update_group(update_handler, group["id"])
       self.assertEqual(store.groups[group["id"]]["diskLimitBytes"], 2048)
+      run_limit_handler = self.handler({"liveRunLimit": 4}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit") as audit:
+        Handler.update_group(run_limit_handler, group["id"])
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 4)
+      audit.assert_called_once_with("admin", "group live run limit updated", f"{group['id']} limit=4")
+
+      invalid_handler = self.handler({"diskLimitBytes": 4096, "liveRunLimit": 0}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+        with self.assertRaisesRegex(ValueError, "at least 1"):
+          Handler.update_group(invalid_handler, group["id"])
+      self.assertEqual(store.groups[group["id"]]["diskLimitBytes"], 2048)
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 4)
 
       _, invitations = store.create_batch(group_id=group["id"], count=1, budget_tokens=100, max_sessions=1)
       user = store.activate(invitations[0]["inviteToken"], "alice", "hash")

@@ -62,10 +62,12 @@ class ChatRuntimeTest(unittest.TestCase):
       [UploadedFile("workpapers/income.txt", b"initial income")],
     )
 
-  def wait_for_status(self, runtime: ChatRuntime, workspace_id: str, session_id: str, status: str) -> dict:
+  def wait_for_status(
+    self, runtime: ChatRuntime, workspace_id: str, session_id: str, status: str, user: dict | None = None
+  ) -> dict:
     deadline = time.monotonic() + 5
     while time.monotonic() < deadline:
-      sessions = runtime.list_sessions(workspace_id, self.users["li.review"])
+      sessions = runtime.list_sessions(workspace_id, user or self.users["li.review"])
       session = next(item for item in sessions if item["id"] == session_id)
       if session["status"] == status:
         return session
@@ -134,6 +136,29 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertTrue(self.store.get_workspace(workspace["id"], self.users["li.review"])["locked"])
     self.wait_for_status(runtime, workspace["id"], second["session"]["id"], "completed")
     self.assertFalse(self.store.get_workspace(workspace["id"], self.users["li.review"])["locked"])
+
+  def test_group_live_run_limit_applies_across_workspaces(self) -> None:
+    first_user = {**deepcopy(OWNER), "groupId": "grp_a"}
+    second_user = {**deepcopy(OWNER), "username": "second.review", "groupId": "grp_a"}
+    users = {first_user["username"]: first_user, second_user["username"]: second_user}
+    groups = {"grp_a": {"id": "grp_a", "name": "Audit", "liveRunLimit": 1}}
+    first_workspace = self.store.create_workspace(
+      first_user, "First workspace", False, [UploadedFile("first.txt", b"first")]
+    )
+    second_workspace = self.store.create_workspace(
+      second_user, "Second workspace", False, [UploadedFile("second.txt", b"second")]
+    )
+    runtime = ChatRuntime(self.store, users, FakeRunner(delay=0.25), capacity=2, groups=groups)
+    first = runtime.start_run(first_workspace["id"], first_user, {"prompt": "First"})
+
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(second_workspace["id"], second_user, {"prompt": "Second"})
+    self.assertEqual(context.exception.code, "group_live_run_limit_reached")
+
+    self.wait_for_status(runtime, first_workspace["id"], first["session"]["id"], "completed")
+    second = runtime.start_run(second_workspace["id"], second_user, {"prompt": "Second"})
+    self.assertEqual(second["run"]["groupId"], "grp_a")
+    self.wait_for_status(runtime, second_workspace["id"], second["session"]["id"], "completed", second_user)
 
   def test_accessible_user_can_rename_chat_session(self) -> None:
     workspace = self.create_workspace()
