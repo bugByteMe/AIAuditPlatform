@@ -692,6 +692,11 @@ async function copySession(index) {
     );
     const workspaceIndex = workspaceIndexById(workspace.id);
     if (workspaceIndex < 0) return;
+    const activeSourceRunId = LIVE_CHAT_STATES.has(source.status) ? source.latestRunId : null;
+    const copiedEvents = (source.events || [])
+      .filter((event) => !activeSourceRunId || event[3] !== activeSourceRunId)
+      .map((event) => [...event]);
+    result.session.events = result.session.events?.length ? result.session.events : copiedEvents;
     const sessions = [...(workspace.sessions || [])];
     sessions.splice(index + 1, 0, result.session);
     state.workspaces[workspaceIndex] = { ...workspace, sessions };

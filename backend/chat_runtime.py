@@ -311,28 +311,31 @@ class DockerCodexRunner(CodexRunner):
   def fork_base_home(self, run_id: str) -> Path:
     return self.codex_root / "fork_bases" / safe_segment(run_id)
 
-  def clone_conversation_state(self, source: Path, destination: Path) -> None:
-    """Copy resumable Codex state without credentials or generated configuration."""
-    excluded = {"auth.json", "config.toml", "skills", "tmp", "logs"}
+  def clone_conversation_state(self, source: Path, destination: Path, conversation_id: str | None = None) -> bool:
+    """Copy only the requested Codex rollout, without credentials or shared state."""
+    if not source.is_dir() or not conversation_id:
+      return False
+    candidates = []
+    for directory_name in ("sessions", "archived_sessions"):
+      directory = source / directory_name
+      if directory.is_dir():
+        candidates.extend(path for path in directory.rglob("*.jsonl") if conversation_id in path.name)
+    if not candidates:
+      return False
+    rollout = max(candidates, key=lambda path: path.stat().st_mtime_ns)
     destination.parent.mkdir(parents=True, exist_ok=True)
     if destination.exists():
       shutil.rmtree(destination)
     destination.mkdir(parents=True)
-    if not source.is_dir():
-      return
-    for item in source.iterdir():
-      if item.name in excluded:
-        continue
-      target = destination / item.name
-      if item.is_dir():
-        shutil.copytree(item, target)
-      elif item.is_file():
-        shutil.copy2(item, target)
+    target = destination / rollout.relative_to(source)
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(rollout, target)
+    return True
 
   def capture_fork_base(self, run: dict) -> Path:
     source = self.session_home(str(run["user"]), str(run["sessionId"]))
     destination = self.fork_base_home(str(run["id"]))
-    self.clone_conversation_state(source, destination)
+    self.clone_conversation_state(source, destination, str(run.get("codexSessionId") or "") or None)
     return destination
 
   def remove_fork_base(self, run_id: str) -> None:
@@ -579,20 +582,17 @@ class ChatRuntime:
         if active_run
         else self.codex_preparer.session_home(source_user, session_id)
       )
-      if source_native_id and not source_home.is_dir():
-        raise StorageError("session_not_forkable", "chat session does not have an available Codex checkpoint")
       destination_home = self.codex_preparer.session_home(str(user["username"]), fork_id)
-      self.codex_preparer.clone_conversation_state(source_home, destination_home)
+      copied = self.codex_preparer.clone_conversation_state(source_home, destination_home, source_native_id or None)
+      if source_native_id and not copied:
+        raise StorageError("session_not_forkable", "chat session does not have an available Codex checkpoint")
 
       self.chat_store.save_session(fork)
-      for event in stable_events:
-        copied = dict(event)
-        copied.pop("id", None)
-        self.chat_store.append_event(fork_id, copied)
+      self.chat_store.replace_events(fork_id, stable_events)
       session_refs.insert(source_index + 1, {"id": fork_id})
       workspace["updated"] = timestamp
       self.store.save_metadata(metadata)
-      return self.public_session(fork_id)
+      return self.public_session(fork_id, include_events=False)
 
   def update_session(self, workspace_id: str, session_id: str, user: dict, title: str) -> dict:
     with self.lock:
@@ -975,8 +975,8 @@ class ChatRuntime:
       event["toolCallId"] = tool_call_id
     return self.chat_store.append_event(session_id, event)
 
-  def public_session(self, session_id: str) -> dict:
-    session = self.chat_store.public_session(session_id)
+  def public_session(self, session_id: str, include_events: bool = True) -> dict:
+    session = self.chat_store.public_session(session_id, include_events=include_events)
     stored = self.chat_store.get_session(session_id)
     run = self.chat_store.get_run(str(stored.get("latestRunId") or "")) if stored else None
     if not run:

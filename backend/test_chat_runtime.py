@@ -168,18 +168,27 @@ class ChatRuntimeTest(unittest.TestCase):
     runtime.append_event(source["id"], "assistant", "Earlier answer", "run_old")
     source_home = runtime.codex_preparer.session_home("li.review", source["id"])
     (source_home / "sessions").mkdir(parents=True)
-    (source_home / "sessions" / "rollout.jsonl").write_text("conversation", encoding="utf-8")
+    (source_home / "sessions" / "rollout-native-source.jsonl").write_text("conversation", encoding="utf-8")
+    (source_home / "sessions" / "rollout-ancestor.jsonl").write_text("unrelated conversation", encoding="utf-8")
     (source_home / "auth.json").write_text("secret", encoding="utf-8")
     (source_home / "config.toml").write_text("secret config", encoding="utf-8")
 
-    fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Branch")
+    with patch.object(runtime.chat_store, "append_event", wraps=runtime.chat_store.append_event) as append_event:
+      fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Branch")
+    append_event.assert_not_called()
 
     self.assertNotEqual(fork["id"], source["id"])
     self.assertEqual(fork["forkedFromSessionId"], source["id"])
-    self.assertEqual([event[1] for event in fork["events"]], ["Earlier question", "Earlier answer"])
+    self.assertEqual(fork["events"], [])
+    persisted_fork = next(item for item in runtime.list_sessions(workspace["id"], self.users["li.review"]) if item["id"] == fork["id"])
+    self.assertEqual([event[1] for event in persisted_fork["events"]], ["Earlier question", "Earlier answer"])
+    with patch.object(runtime.chat_store, "events", side_effect=AssertionError("append must not rescan history")):
+      appended = runtime.chat_store.append_event(fork["id"], {"type": "progress", "message": "Next event"})
+    self.assertEqual(appended["id"], 3)
     self.assertEqual(runtime.list_sessions(workspace["id"], self.users["li.review"])[1]["id"], fork["id"])
     fork_home = runtime.codex_preparer.session_home("li.review", fork["id"])
-    self.assertEqual((fork_home / "sessions" / "rollout.jsonl").read_text(encoding="utf-8"), "conversation")
+    self.assertEqual((fork_home / "sessions" / "rollout-native-source.jsonl").read_text(encoding="utf-8"), "conversation")
+    self.assertFalse((fork_home / "sessions" / "rollout-ancestor.jsonl").exists())
     self.assertFalse((fork_home / "auth.json").exists())
     self.assertFalse((fork_home / "config.toml").exists())
 
@@ -202,15 +211,16 @@ class ChatRuntimeTest(unittest.TestCase):
     runtime.append_event(source["id"], "assistant", "Completed answer", "run_old")
     source_home = runtime.codex_preparer.session_home("li.review", source["id"])
     (source_home / "sessions").mkdir(parents=True)
-    (source_home / "sessions" / "rollout.jsonl").write_text("completed turn", encoding="utf-8")
+    (source_home / "sessions" / "rollout-native-source.jsonl").write_text("completed turn", encoding="utf-8")
 
     active = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "In-progress question", "sessionId": source["id"]})
     fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Stable branch")
 
-    messages = [event[1] for event in fork["events"]]
+    persisted_fork = next(item for item in runtime.list_sessions(workspace["id"], self.users["li.review"]) if item["id"] == fork["id"])
+    messages = [event[1] for event in persisted_fork["events"]]
     self.assertEqual(messages, ["Completed question", "Completed answer"])
     fork_home = runtime.codex_preparer.session_home("li.review", fork["id"])
-    self.assertEqual((fork_home / "sessions" / "rollout.jsonl").read_text(encoding="utf-8"), "completed turn")
+    self.assertEqual((fork_home / "sessions" / "rollout-native-source.jsonl").read_text(encoding="utf-8"), "completed turn")
     self.wait_for_status(runtime, workspace["id"], active["session"]["id"], "completed")
 
   def test_fork_rejects_missing_codex_checkpoint(self) -> None:

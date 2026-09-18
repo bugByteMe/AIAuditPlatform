@@ -59,6 +59,13 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("event-running-dots", render_source)
         self.assertIn("event-fold", render_source)
 
+    def test_login_form_does_not_expose_demo_credentials(self) -> None:
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        translations = (FRONTEND_ROOT / "js" / "i18n.js").read_text(encoding="utf-8")
+        self.assertNotIn('value="chen.audit"', html)
+        self.assertNotIn('value="audit123"', html)
+        self.assertNotIn("auth.demo", translations)
+
     def test_chat_realtime_reconciliation_is_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         chat_events_source = (FRONTEND_ROOT / "js" / "chatEvents.js").read_text(encoding="utf-8")
@@ -123,6 +130,7 @@ class FrontendAssetTests(unittest.TestCase):
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         self.assertIn('/chat/sessions/${encodeURIComponent(source.id)}/fork', app_source)
         self.assertIn("state.chatLastEventIds[result.session.id]", app_source)
+        self.assertIn("activeSourceRunId", app_source)
         self.assertNotIn("events: source.events.map", app_source)
 
 

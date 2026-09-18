@@ -76,19 +76,48 @@ class ChatStore:
     return events
 
   def append_event(self, session_id: str, event: dict) -> dict:
-    events = self.events(session_id)
-    event = {**event, "id": len(events) + 1}
     path = self.events_path(session_id)
     path.parent.mkdir(parents=True, exist_ok=True)
+    event = {**event, "id": self.last_event_id(path) + 1}
     with path.open("a", encoding="utf-8") as handle:
       handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
     return event
 
-  def public_session(self, session_id: str) -> dict:
+  def last_event_id(self, path: Path) -> int:
+    if not path.exists() or path.stat().st_size == 0:
+      return 0
+    with path.open("rb") as handle:
+      position = handle.seek(0, 2)
+      tail = b""
+      while position > 0:
+        size = min(4096, position)
+        position -= size
+        handle.seek(position)
+        tail = handle.read(size) + tail
+        last_line = tail.rstrip().rsplit(b"\n", 1)[-1]
+        if position == 0 or b"\n" in tail:
+          try:
+            return int(json.loads(last_line).get("id") or 0)
+          except (json.JSONDecodeError, UnicodeDecodeError, AttributeError):
+            if position == 0:
+              raise
+    return 0
+
+  def replace_events(self, session_id: str, events: list[dict]) -> None:
+    path = self.events_path(session_id)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    tmp = path.with_suffix(".tmp")
+    with tmp.open("w", encoding="utf-8") as handle:
+      for event_id, event in enumerate(events, start=1):
+        payload = {**event, "id": event_id}
+        handle.write(json.dumps(payload, ensure_ascii=False, sort_keys=True) + "\n")
+    tmp.replace(path)
+
+  def public_session(self, session_id: str, include_events: bool = True) -> dict:
     session = self.get_session(session_id)
     if not session:
       return {"id": session_id, "title": "Unknown session", "status": "failed", "updated": now_string(), "tokens": "0", "events": []}
-    events = self.public_events(session_id)
+    events = self.public_events(session_id) if include_events else []
     return {
       "id": session["id"],
       "title": session["title"],

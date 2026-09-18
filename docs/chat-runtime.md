@@ -73,7 +73,9 @@ The scheduler assigns the new run like any other run. The resumed run appends to
 
 Forking creates a persisted chat session with a new application session ID, copied stable history, and independent future events and titles. The first run uses Codex native fork against the source conversation; later runs resume the fork's new native session. If the source is active, the fork uses the credential-free Codex-state checkpoint captured immediately before the active run and omits that run's prompt and partial output.
 
-Codex-state copies exclude authentication, generated configuration, skills, temporary files, and logs. Copied history does not duplicate charged usage; the fork starts its own token counter at zero.
+Codex-state copies include only the selected native conversation rollout rather than the source home's full ancestry. They exclude authentication, generated configuration, skills, temporary files, logs, and unrelated conversations. Copied history does not duplicate charged usage; the fork starts its own token counter at zero.
+
+Persisted application events are copied in one atomic linear pass. Appending a new live event reads only the last event record to allocate its ID, so large histories do not make each subsequent user, queue, or runner event rescan the full transcript. The fork response is lightweight: the browser hydrates the branch from the already loaded stable source events, while later workspace loads read the independently persisted fork history.
 
 ## Completion
 
