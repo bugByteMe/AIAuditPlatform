@@ -72,6 +72,33 @@ function stopChatStream() {
   activePollTimer = null;
 }
 
+function sortTreeFiles(items) {
+  const childrenByParent = new Map();
+  items.forEach((item) => {
+    const separator = item.path.lastIndexOf("/");
+    const parent = separator < 0 ? "" : item.path.slice(0, separator);
+    if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
+    childrenByParent.get(parent).push(item);
+  });
+  const compareSiblings = (left, right) => {
+    if (left.type !== right.type) return left.type === "folder" ? -1 : 1;
+    return left.name.localeCompare(right.name);
+  };
+  const ordered = [];
+  const seen = new Set();
+  const appendChildren = (parent) => {
+    (childrenByParent.get(parent) || []).sort(compareSiblings).forEach((item) => {
+      if (seen.has(item.path)) return;
+      seen.add(item.path);
+      ordered.push(item);
+      if (item.type === "folder") appendChildren(item.path);
+    });
+  };
+  appendChildren("");
+  items.filter((item) => !seen.has(item.path)).sort(compareSiblings).forEach((item) => ordered.push(item));
+  return ordered;
+}
+
 function replaceWorkspace(updatedWorkspace) {
   const index = workspaceIndexById(updatedWorkspace.id);
   if (index < 0) return;
@@ -87,7 +114,7 @@ function replaceWorkspace(updatedWorkspace) {
         ...(file.type === "folder" ? { childrenLoaded: Boolean(existing?.childrenLoaded || file.childrenLoaded) } : {}),
       });
     });
-    state.workspaces[index] = { ...updatedWorkspace, files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)) };
+    state.workspaces[index] = { ...updatedWorkspace, files: sortTreeFiles([...files.values()]) };
     return;
   }
   state.workspaces[index] = updatedWorkspace;
@@ -111,7 +138,7 @@ function resetFileTreeState(workspace) {
 function mergeWorkspaceTreeFiles(workspace, incomingFiles) {
   const files = new Map((workspace.files || []).map((file) => [file.path, file]));
   incomingFiles.forEach((file) => files.set(file.path, { ...files.get(file.path), ...file }));
-  workspace.files = [...files.values()].sort((left, right) => left.path.localeCompare(right.path));
+  workspace.files = sortTreeFiles([...files.values()]);
 }
 
 async function expandWorkspaceFolder(path, collapsedFolders, renderTree) {

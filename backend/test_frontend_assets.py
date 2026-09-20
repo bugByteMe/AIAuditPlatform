@@ -148,6 +148,10 @@ class FrontendAssetTests(unittest.TestCase):
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
         self.assertIn('new URLSearchParams({ path, depth: "1" })', app_source)
         self.assertIn("folder.childrenLoaded", app_source)
+        self.assertIn("function sortTreeFiles(items)", app_source)
+        self.assertIn('left.type === "folder" ? -1 : 1', app_source)
+        self.assertIn("files: sortTreeFiles([...files.values()])", app_source)
+        self.assertIn("workspace.files = sortTreeFiles([...files.values()])", app_source)
         self.assertIn("file.hasChildren", render_source)
         self.assertIn("state.loadingFileFolders", render_source)
 
