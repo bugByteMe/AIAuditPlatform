@@ -20,7 +20,7 @@ Login uses username and password. Passwords must be stored with a modern passwor
 
 System administrators may batch-create pending accounts for an existing or newly named group. A pending account has an immutable generated user ID and a unique invite token, but no username or password. Invite tokens remain valid until used or revoked and are visible only through system-admin account APIs.
 
-Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Successful registration preserves the pending account's user ID, group, budget, and session limit, consumes the token, stores the password hash, activates the account, and creates a login session.
+Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Before consuming the invitation, the backend idempotently creates or reuses a MicuAPI token named exactly with the pending account's immutable user ID and retrieves its generated key. Successful registration preserves the group, initial CNY balance, and session limit; provisioning failure leaves the invitation valid.
 
 Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a positive concurrent live-run limit, defaulting to one for new and migrated groups. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
@@ -51,16 +51,16 @@ Token usage should be recorded by:
 - Model.
 - Time range.
 
-The current runtime persists the input, cached-input, output, and total token counts reported by Codex's terminal `turn.completed` event. Total charged usage is input plus output tokens because cached-input tokens are already included in the input count. Run totals roll up into the chat session and the owning user's persisted `usedTokens`; API reads do not recalculate historical usage.
+The current runtime persists the input, cached-input, output, and total token counts reported by Codex's terminal `turn.completed` event. Total reported usage is input plus output tokens because cached-input tokens are already included in the input count. Run totals roll up into the chat session and the owning user's cumulative `usedTokens`. This counter is reporting-only and is never used to authorize a run.
 
 ## Enforcement
 
-The system uses hard budget limits:
+Managed MicuAPI mode uses the external token balance as its hard limit:
 
-- Before a run starts, the backend checks the user and group budget.
-- While a run is active, streamed usage updates decrement the remaining budget.
-- If either the user or group budget is exhausted, the backend requests graceful stop of the active run.
-- Exhausted users or groups cannot start or resume runs until an admin increases budget.
+- Before every run, the backend fetches the corresponding MicuAPI token's current balance. Zero balance rejects the run and provider failure fails closed.
+- MicuAPI deducts model cost and enforces exhaustion while the run is active.
+- Administrators add a CNY amount to the token's existing balance; this does not reset cumulative local token usage.
+- Users may select custom-provider mode and supply their own URL and key. Custom mode does not use or gate on the preserved MicuAPI balance.
 
 Budget checks belong in the backend control plane. Workers may report usage but should not be the source of truth for authorization.
 
@@ -70,11 +70,11 @@ System admins can:
 
 - Create users and persistent named groups individually or in invitation batches.
 - View and revoke unused invitation tokens.
-- Set and increase token budgets.
+- Set an initial MicuAPI CNY balance and add funds to an existing balance.
 - Disable or re-enable users and groups.
 - View usage summaries by user, group, workspace, model, and date range.
 - Inspect budget stop events and failed run records.
-- Reset a user's consumed-token counter while replacing the user's allowance.
+- Inspect cumulative reported tokens separately from the authoritative MicuAPI balance.
 - Set or clear a group's logical workspace disk limit.
 - Set a group's concurrent live-run limit.
 - Permanently delete users or groups and their owned workspaces and chat data.

@@ -9,13 +9,16 @@
 
 ## Budget Enforcement
 
-- A run is rejected when the user budget is exhausted.
+- A managed-provider run is rejected when the MicuAPI balance is zero or cannot be freshly verified.
+- A custom-provider run does not query or consume the preserved MicuAPI balance.
 - A run is rejected when the group budget is exhausted.
-- An active run is stopped when usage exhausts the user or group budget.
+- MicuAPI quota errors during an active managed run are classified as budget failures.
 - Usage is recorded for completed, stopped, and failed runs.
 - Admin budget increases allow new runs after exhaustion.
 - `turn.completed` input and output usage is persisted once even if the terminal event is duplicated; cached input is not double-counted.
-- Resetting a user's budget replaces the allowance and clears consumed tokens.
+- Adding a CNY amount increases the existing MicuAPI balance and preserves cumulative `usedTokens`.
+- Activation provisions or reuses exactly one MicuAPI token named by immutable user ID; failure preserves the invite.
+- Startup reconciliation backfills missing active-account bindings without duplicating exact-name tokens.
 
 ## Disk Quotas
 
@@ -106,3 +109,11 @@
 - A run stop timeout rejects cascading deletion without removing the account or group.
 - Only system admins can read compute-worker health and resource summaries.
 - The admin worker cards and chat header render available/total CPU and memory without restoring the removed large console heading.
+
+## Recharge
+
+- The recharge endpoint requires authentication and returns only the current user's managed MicuAPI URL and key.
+- The frontend offers exactly CNY 50, CNY 100, and CNY 200 choices and resolves them to the expected on-disk QR assets.
+- Missing QR assets produce a visible configuration message rather than a broken-image-only state.
+- The payment dialog displays the signed-in username and instructs the payer to include it in the payment note.
+- Logging out removes the managed API key from in-memory frontend state and the credential fields.

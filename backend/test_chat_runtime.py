@@ -362,11 +362,27 @@ class ChatRuntimeTest(unittest.TestCase):
 
   def test_budget_exhaustion_rejects_run(self) -> None:
     workspace = self.create_workspace()
-    self.users["li.review"]["usedTokens"] = self.users["li.review"]["budgetTokens"]
-    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    self.users["li.review"]["providerMode"] = "micu"
+    self.users["li.review"]["usedTokens"] = 99_999_999
+
+    def exhausted(_user):
+      raise StorageError("budget_exhausted", "MicuAPI balance is exhausted")
+
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(), budget_checker=exhausted)
     with self.assertRaises(StorageError) as context:
       runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
     self.assertEqual(context.exception.code, "budget_exhausted")
+
+  def test_custom_provider_does_not_use_micu_budget_checker(self) -> None:
+    workspace = self.create_workspace()
+    user = self.users["li.review"]
+    user["providerMode"] = "custom"
+    user["customCodex"] = {"baseUrl": "https://custom.example/v1", "apiKey": "key-placeholder"}
+    checked = []
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(), budget_checker=lambda candidate: checked.append(candidate))
+    result = runtime.start_run(workspace["id"], user, {"prompt": "Check revenue"})
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+    self.assertEqual(checked, [])
 
   def test_missing_codex_api_key_rejects_run(self) -> None:
     workspace = self.create_workspace()

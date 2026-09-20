@@ -19,6 +19,8 @@ The primary user workflow is:
 
 Administrators can create users and groups, reset per-user token budgets, set group disk limits, inspect usage and compute-node health, delete accounts or groups, and review audit logs.
 
+Authenticated users can view their managed MicuAPI credentials and fixed payment options in the Recharge panel. See [recharge.md](recharge.md) for payment-asset and reconciliation details.
+
 ## Architecture Overview
 
 The first version targets a single private cluster:
@@ -36,7 +38,7 @@ See [architecture.md](architecture.md) for the control-plane and worker design.
 
 ### Accounts and Budgets
 
-The system uses internal username/password accounts. Each user can belong to a group. Each user has a token budget, while each group can have a logical workspace disk limit. The system enforces these controls before starting chat execution or accepting workspace growth.
+The system uses internal username/password accounts. Each user can belong to a group. Managed accounts receive a dedicated MicuAPI key and use its CNY balance as the authoritative run budget; users may instead select their own API URL and key. Token counts remain visible as usage reporting. Each group can also have a logical workspace disk limit.
 
 Account sharing is discouraged through concurrent session limits and audit logs for IP/device changes. Strong device binding and SSO are not part of the initial design.
 

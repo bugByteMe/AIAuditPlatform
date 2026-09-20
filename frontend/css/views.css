@@ -437,6 +437,89 @@ td.code {
   justify-content: flex-end;
 }
 
+.recharge-layout {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.credential-list {
+  display: grid;
+  gap: 14px;
+}
+
+.credential-row {
+  display: flex;
+  gap: 8px;
+}
+
+.credential-row input {
+  min-width: 0;
+  flex: 1;
+  font-family: "SFMono-Regular", Consolas, monospace;
+}
+
+.credential-warning,
+.payment-reminder {
+  margin: 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.payment-reminder strong {
+  color: var(--text);
+}
+
+.recharge-products {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 12px;
+}
+
+.recharge-product {
+  display: grid;
+  gap: 6px;
+  padding: 22px 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #ffffff;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.recharge-product:hover {
+  border-color: var(--primary);
+  background: var(--surface-2);
+}
+
+.recharge-product strong {
+  font-size: 24px;
+}
+
+.recharge-product span {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.qr-payment-panel {
+  justify-items: center;
+  text-align: center;
+}
+
+.qr-payment-panel .panel-head,
+.qr-payment-panel .modal-actions {
+  width: 100%;
+}
+
+.payment-qr {
+  display: block;
+  width: min(320px, 70vw);
+  aspect-ratio: 1;
+  object-fit: contain;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+
 .workspace-lock-setting {
   padding: 10px 0;
   color: var(--text);

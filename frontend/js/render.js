@@ -175,14 +175,17 @@ function filesToTree(files, collapsedFolders, options = {}) {
 
 export function renderCurrentUser() {
   if (!state.user) return;
-  const budget = Math.max(0, Number(state.user.budgetTokens || 0));
   const used = Math.max(0, Number(state.user.usedTokens || 0));
-  const remaining = Math.max(0, budget - used);
-  const percent = budget ? Math.round((used / budget) * 100) : 0;
+  const budget = state.user.budget || {};
   document.querySelector("#current-username").textContent = state.user.username;
-  document.querySelector("#current-budget-label").textContent = `${remaining.toLocaleString()} / ${budget.toLocaleString()}`;
-  document.querySelector("#current-budget-label").title = `${used.toLocaleString()} ${t("session.budgetUsed")} (${percent}%)`;
-  document.querySelector("#current-budget-meter").style.width = `${Math.min(percent, 100)}%`;
+  const balance = budget.source === "custom"
+    ? t("session.customProvider")
+    : budget.remaining === null || budget.remaining === undefined
+      ? t("session.balanceUnavailable")
+      : `¥${budget.remaining}`;
+  document.querySelector("#current-budget-label").textContent = `${balance} · ${used.toLocaleString()} ${t("session.budgetUsed")}`;
+  document.querySelector("#current-budget-label").title = `${used.toLocaleString()} ${t("session.budgetUsed")}`;
+  document.querySelector("#current-budget-meter").parentElement.classList.add("hidden");
 }
 
 export function renderWorkspaces() {
@@ -434,6 +437,12 @@ export function renderAdmin() {
     const name = account.username || account.id;
     const token = account.inviteToken || "";
     const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
+    const budget = account.budget || {};
+    const balance = budget.source === "custom"
+      ? t("admin.customProvider")
+      : budget.remaining === null || budget.remaining === undefined
+        ? t("admin.balanceUnavailable")
+        : `¥${escapeHtml(budget.remaining)}`;
     const actions = [
       token ? `<button class="btn" data-copy-invite="${escapeHtml(token)}">${t("admin.copy")}</button>` : "",
       token ? `<button class="btn" data-revoke-invite="${escapeHtml(account.id)}">${t("admin.revoke")}</button>` : "",
@@ -447,7 +456,8 @@ export function renderAdmin() {
           <div class="meta-line">
             <span>${escapeHtml(account.role || "user")}</span>
             <span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span>
-            <span>${Number(account.usedTokens || 0).toLocaleString()} / ${Number(account.budgetTokens || 0).toLocaleString()} ${t("admin.tokens")}</span>
+            <span>${balance} ${t("admin.balance")}</span>
+            <span>${Number(account.usedTokens || 0).toLocaleString()} ${t("admin.tokensUsed")}</span>
             <span>${formatBytes(account.diskUsageBytes)} · ${Number(account.workspaceCount || 0)} ${t("admin.workspaces")}</span>
           </div>
           ${token ? `<code class="invite-token">${escapeHtml(token)}</code>` : ""}

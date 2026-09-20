@@ -437,6 +437,7 @@ class ChatRuntime:
     save_users=None,
     worker_registry: WorkerRegistry | None = None,
     groups: dict[str, dict] | None = None,
+    budget_checker=None,
   ):
     self.store = store
     self.users = users
@@ -444,6 +445,7 @@ class ChatRuntime:
     self.runner = runner or DockerCodexRunner()
     self.chat_store = chat_store or ChatStore(store.root / "chat")
     self.save_users = save_users
+    self.budget_checker = budget_checker
     self.capacity = max(1, capacity)
     self.requested_cpu = float(SETTINGS.run_cpus)
     self.requested_memory_bytes = parse_memory_bytes(SETTINGS.run_memory)
@@ -663,8 +665,13 @@ class ChatRuntime:
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
       raise StorageError("bad_request", "prompt is required")
-    if int(user.get("usedTokens") or 0) >= int(user.get("budgetTokens") or 0):
-      raise StorageError("budget_exhausted", "user token budget is exhausted")
+    if str(user.get("providerMode") or "legacy") == "micu":
+      if not self.budget_checker:
+        raise StorageError("budget_provider_unavailable", "MicuAPI budget provider is not configured")
+      self.budget_checker(user)
+    elif "providerMode" not in user and int(user.get("budgetTokens") or 0) > 0:
+      if int(user.get("usedTokens") or 0) >= int(user.get("budgetTokens") or 0):
+        raise StorageError("budget_exhausted", "user token budget is exhausted")
     self.user_codex_settings(user)
     if self.worker_registry and not self.worker_registry.compatible(self.requested_cpu, self.requested_memory_bytes):
       raise StorageError("no_compatible_worker", "no configured compute node can satisfy the run resources")
@@ -1097,11 +1104,21 @@ class ChatRuntime:
     return compact[:48] or "Audit task"
 
   def user_codex_settings(self, user: dict) -> dict:
-    settings = user.get("codex") or {}
-    base_url = str(settings.get("baseUrl") or SETTINGS.default_codex_base_url).strip()
+    mode = str(user.get("providerMode") or "legacy")
+    if mode == "micu":
+      settings = user.get("micu") or {}
+      base_url = SETTINGS.micu_inference_url
+    elif mode == "custom":
+      settings = user.get("customCodex") or {}
+      base_url = str(settings.get("baseUrl") or "").strip()
+    else:
+      settings = user.get("codex") or {}
+      base_url = str(settings.get("baseUrl") or SETTINGS.default_codex_base_url).strip()
     api_key = str(settings.get("apiKey") or "").strip()
     if not api_key:
       raise StorageError("codex_auth_required", "configure Codex API key before starting a run")
+    if not base_url.startswith(("http://", "https://")):
+      raise StorageError("codex_auth_required", "configure a valid Codex base URL before starting a run")
     return {"baseUrl": base_url, "apiKey": api_key}
 
   def stop_and_wait_for_users(self, usernames: set[str], actor: dict, timeout: float | None = None) -> set[str]:

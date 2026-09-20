@@ -24,7 +24,7 @@ import {
 } from "./js/render.js";
 import { currentWorkspace } from "./js/selectors.js";
 
-const VALID_VIEWS = new Set(["workspace", "chat", "admin"]);
+const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 let activeChatStream = null;
 let activePollTimer = null;
 let activeStreamGeneration = 0;
@@ -316,6 +316,7 @@ function switchView(view) {
   document.querySelectorAll(".view").forEach((section) => {
     section.classList.toggle("active", section.id === `${nextView}-view`);
   });
+  if (nextView === "recharge" && state.user && !state.recharge) loadRechargeData();
 }
 
 function routeToView(view, { replace = false } = {}) {
@@ -335,10 +336,17 @@ function showAuthenticated(user) {
   document.querySelector("#auth-screen").classList.add("hidden");
   document.querySelector("#app-shell").classList.remove("hidden");
   renderDynamic();
+  if (viewFromLocation() === "recharge" && !state.recharge) loadRechargeData();
 }
 
 function showLogin() {
   state.user = null;
+  state.recharge = null;
+  document.querySelector("#recharge-base-url").value = "";
+  const rechargeKey = document.querySelector("#recharge-api-key");
+  rechargeKey.value = "";
+  rechargeKey.type = "password";
+  document.querySelector("#recharge-key-visibility").textContent = t("recharge.show");
   document.querySelector("#auth-screen").classList.remove("hidden");
   document.querySelector("#app-shell").classList.add("hidden");
   setAuthMode("login");
@@ -446,7 +454,7 @@ function closeBatchAccountModal() {
   document.querySelector("#batch-account-modal").classList.add("hidden");
 }
 
-async function copyText(value) {
+async function copyText(value, successKey = "toast.inviteCopied") {
   if (navigator.clipboard?.writeText) {
     await navigator.clipboard.writeText(value);
   } else {
@@ -459,7 +467,54 @@ async function copyText(value) {
     document.execCommand("copy");
     textarea.remove();
   }
-  showToast(t("toast.inviteCopied"));
+  showToast(t(successKey));
+}
+
+async function loadRechargeData() {
+  const error = document.querySelector("#recharge-error");
+  error.textContent = t("recharge.loading");
+  try {
+    const result = await api("/api/recharge");
+    state.recharge = result;
+    document.querySelector("#recharge-base-url").value = result.baseUrl || "";
+    document.querySelector("#recharge-api-key").value = result.apiKey || "";
+    document.querySelector("#recharge-username").textContent = result.username || state.user?.username || "-";
+    error.textContent = "";
+  } catch (loadError) {
+    state.recharge = null;
+    error.textContent = loadError.message;
+  }
+}
+
+function closeRechargeQrModal() {
+  document.querySelector("#recharge-qr-modal").classList.add("hidden");
+  document.querySelector("#recharge-qr-image").removeAttribute("src");
+}
+
+function openRechargeQrModal(amount) {
+  const product = state.recharge?.products?.find((item) => Number(item.amountCny) === Number(amount));
+  if (!product) {
+    showToast(t("recharge.notReady"));
+    if (!state.recharge) loadRechargeData();
+    return;
+  }
+  const image = document.querySelector("#recharge-qr-image");
+  const missing = document.querySelector("#recharge-qr-missing");
+  const username = state.recharge.username || state.user?.username || "-";
+  document.querySelector("#recharge-qr-amount").textContent = `¥${Number(product.amountCny).toFixed(0)}`;
+  document.querySelector("#recharge-modal-username").textContent = username;
+  image.classList.remove("hidden");
+  missing.classList.add("hidden");
+  image.onload = () => {
+    image.classList.remove("hidden");
+    missing.classList.add("hidden");
+  };
+  image.onerror = () => {
+    image.classList.add("hidden");
+    missing.classList.remove("hidden");
+  };
+  image.src = product.qrCodeUrl;
+  document.querySelector("#recharge-qr-modal").classList.remove("hidden");
 }
 
 async function revokeInvite(userId) {
@@ -524,14 +579,14 @@ async function setGroupLiveRunLimit(groupId) {
 
 async function resetAccountBudget(userId) {
   const account = state.accounts.find((item) => item.id === userId);
-  const raw = window.prompt(t("admin.promptBudget"), String(account?.budgetTokens || 0));
+  const raw = window.prompt(t("admin.promptBudget"), "0.00");
   if (raw === null) return;
-  const budgetTokens = Number(raw.trim());
-  if (!Number.isInteger(budgetTokens) || budgetTokens < 0) return;
+  const amountCny = Number(raw.trim());
+  if (!Number.isFinite(amountCny) || amountCny < 0) return;
   try {
     await api(`/api/accounts/${encodeURIComponent(userId)}/reset-budget`, {
       method: "POST",
-      body: JSON.stringify({ budgetTokens }),
+      body: JSON.stringify({ amountCny: amountCny.toFixed(2) }),
     });
     await loadAccountControlData();
     showToast(t("toast.budgetReset"));
@@ -628,8 +683,15 @@ async function openCodexSettingsModal() {
   try {
     const result = await api("/api/codex-settings");
     const settings = result.settings || {};
+    const mode = settings.mode || "micu";
+    const modeInput = form.querySelector(`[name="mode"][value="${mode}"]`);
+    if (modeInput) modeInput.checked = true;
     document.querySelector("#codex-base-url-input").value = settings.baseUrl || "https://api.openai.com/v1";
-    status.textContent = settings.apiKeyConfigured ? t("codex.configured") : t("codex.missing");
+    const micuBudget = settings.micu?.budget || {};
+    const remaining = micuBudget.remaining === null || micuBudget.remaining === undefined ? t("codex.balanceUnavailable") : `¥${micuBudget.remaining}`;
+    document.querySelector("#codex-micu-summary").textContent = `${t("codex.micuBalance")}: ${remaining} · ${settings.micu?.group || ""}`;
+    document.querySelector("#codex-custom-fields").classList.toggle("hidden", mode !== "custom");
+    status.textContent = mode === "micu" ? t("codex.usingMicu") : (settings.apiKeyConfigured ? t("codex.configured") : t("codex.missing"));
   } catch (error) {
     status.textContent = error.message;
   }
@@ -871,6 +933,31 @@ function bindGlobalClicks() {
       if (nav.dataset.view === "admin" && state.user?.role !== "system_admin") return;
       routeToView(nav.dataset.view);
       if (nav.dataset.view === "admin") loadAccountControlData();
+      return;
+    }
+
+    const rechargeProduct = event.target.closest("[data-recharge-amount]");
+    if (rechargeProduct) {
+      openRechargeQrModal(rechargeProduct.dataset.rechargeAmount);
+      return;
+    }
+
+    const rechargeCopy = event.target.closest("[data-copy-recharge]");
+    if (rechargeCopy) {
+      const value = state.recharge?.[rechargeCopy.dataset.copyRecharge];
+      if (value) copyText(value, "toast.credentialCopied").catch((error) => showToast(error.message));
+      return;
+    }
+
+    if (event.target.closest("#recharge-key-visibility")) {
+      const input = document.querySelector("#recharge-api-key");
+      input.type = input.type === "password" ? "text" : "password";
+      event.target.closest("#recharge-key-visibility").textContent = t(input.type === "password" ? "recharge.show" : "recharge.hide");
+      return;
+    }
+
+    if (event.target.closest("[data-close-recharge-qr]")) {
+      closeRechargeQrModal();
       return;
     }
 
@@ -1450,7 +1537,7 @@ function bindForms() {
       groupId: creatingGroup ? "" : form.get("groupId"),
       newGroupName: creatingGroup ? form.get("newGroupName") : "",
       count: Number(form.get("count")),
-      budgetTokens: Number(form.get("budgetTokens")),
+      budgetCny: String(form.get("budgetCny") || "0.00"),
       maxSessions: Number(form.get("maxSessions")),
     };
     errorElement.textContent = "";
@@ -1533,7 +1620,9 @@ function bindForms() {
     const form = new FormData(event.currentTarget);
     const apiKey = String(form.get("apiKey") || "").trim();
     const clearCodexApiKey = form.get("clearCodexApiKey") === "on";
+    const mode = String(form.get("mode") || "micu");
     const payload = {
+      mode,
       baseUrl: form.get("baseUrl"),
       clearCodexApiKey,
     };
@@ -1545,7 +1634,10 @@ function bindForms() {
       });
       state.user = {
         ...state.user,
+        providerMode: result.settings.mode,
+        budget: result.settings.budget,
         codex: {
+          mode: result.settings.mode,
           baseUrl: result.settings.baseUrl,
           apiKeyConfigured: result.settings.apiKeyConfigured,
         },
@@ -1556,6 +1648,11 @@ function bindForms() {
     } catch (error) {
       document.querySelector("#codex-settings-status").textContent = error.message;
     }
+  });
+
+  document.querySelector("#codex-settings-form").addEventListener("change", (event) => {
+    if (!event.target.matches('[name="mode"]')) return;
+    document.querySelector("#codex-custom-fields").classList.toggle("hidden", event.target.value !== "custom");
   });
 }
 
@@ -1584,6 +1681,7 @@ function bindInputs() {
       closeWorkspaceModal();
       closeCodexSettingsModal();
       closeBatchAccountModal();
+      closeRechargeQrModal();
       closeFileContextMenu();
       return;
     }

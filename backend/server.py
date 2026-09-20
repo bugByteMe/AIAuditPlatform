@@ -7,6 +7,7 @@ import hmac
 import json
 import mimetypes
 import secrets
+import threading
 import time
 import traceback
 from http import HTTPStatus
@@ -18,6 +19,7 @@ from urllib.parse import quote, unquote, urlparse
 from account_store import AccountStore
 from chat_runtime import ChatRuntime
 from config import SETTINGS
+from micu_api import MicuApiClient, MicuApiError, parse_cny
 from upload_store import UploadManager
 from workspace_store import StorageError, WorkspaceStore, parse_query, parse_urlencoded_paths
 
@@ -88,13 +90,47 @@ SEED_USERS = {
 
 ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS)
 USERS = ACCOUNT_STORE.users
+MICU_CLIENT = MicuApiClient(
+  SETTINGS.micu_management_url,
+  SETTINGS.micu_inference_url,
+  SETTINGS.micu_management_token,
+  SETTINGS.micu_user_id,
+  SETTINGS.micu_token_group,
+  SETTINGS.micu_quota_per_cny,
+  SETTINGS.micu_request_timeout_seconds,
+)
 WORKSPACE_STORE.set_account_provider(lambda: (ACCOUNT_STORE.users, ACCOUNT_STORE.groups))
+
+
+def check_micu_budget(user: dict) -> None:
+  binding = user.get("micu") or {}
+  if not binding.get("tokenId"):
+    raise StorageError("budget_provider_unavailable", "MicuAPI account is not provisioned")
+  try:
+    balance = MICU_CLIENT.balance(binding)
+  except MicuApiError as exc:
+    raise StorageError("budget_provider_unavailable", str(exc)) from exc
+  binding.update(
+    {
+      "lastBalanceCny": balance["remainingCny"],
+      "lastSyncedAt": int(time.time()),
+      "status": balance["status"],
+      "lastError": "",
+    }
+  )
+  if balance["status"] == "exhausted":
+    raise StorageError("budget_exhausted", "MicuAPI balance is exhausted")
+  if balance["status"] != "ready":
+    raise StorageError("budget_provider_unavailable", "MicuAPI token is not enabled")
+
+
 CHAT_RUNTIME = ChatRuntime(
   WORKSPACE_STORE,
   USERS,
   capacity=SETTINGS.local_run_capacity,
   save_users=ACCOUNT_STORE.save,
   groups=ACCOUNT_STORE.groups,
+  budget_checker=check_micu_budget,
 )
 
 SESSIONS: dict[str, dict] = {}
@@ -108,20 +144,82 @@ class RequestStopped(Exception):
 
 
 def public_user(user: dict) -> dict:
-  public = {key: value for key, value in user.items() if key not in {"passwordHash", "codex", "inviteToken"}}
-  codex = user.get("codex") or {}
-  public["codex"] = {
-    "baseUrl": codex.get("baseUrl", ""),
-    "apiKeyConfigured": bool(codex.get("apiKey")),
+  public = {
+    key: value
+    for key, value in user.items()
+    if key not in {"passwordHash", "codex", "customCodex", "micu", "inviteToken", "initialBudgetCny"}
   }
+  mode = str(user.get("providerMode") or "legacy")
+  custom = user.get("customCodex") or user.get("codex") or {}
+  public["codex"] = {
+    "mode": mode,
+    "baseUrl": SETTINGS.micu_inference_url if mode == "micu" else custom.get("baseUrl", ""),
+    "apiKeyConfigured": bool((user.get("micu") or {}).get("apiKey")) if mode == "micu" else bool(custom.get("apiKey")),
+  }
+  public["budget"] = budget_summary(user)
   return public
 
 
 def admin_account(account: dict) -> dict:
-  public = {key: value for key, value in account.items() if key not in {"passwordHash", "codex"}}
+  public = {
+    key: value
+    for key, value in account.items()
+    if key not in {"passwordHash", "codex", "customCodex", "micu"}
+  }
+  public["budget"] = budget_summary(account)
   if public.get("status") == "active" and not public.get("enabled", True):
     public["status"] = "disabled"
   return public
+
+
+def budget_summary(user: dict) -> dict:
+  mode = str(user.get("providerMode") or "micu")
+  if mode == "custom":
+    return {"source": "custom", "currency": None, "remaining": None, "status": "not_applicable"}
+  binding = user.get("micu") or {}
+  return {
+    "source": "micu",
+    "currency": "CNY",
+    "remaining": binding.get("lastBalanceCny"),
+    "status": str(binding.get("status") or ("provisioning" if user.get("status") == "pending" else "unavailable")),
+  }
+
+
+def refresh_micu_balance(user: dict) -> None:
+  if str(user.get("providerMode") or "micu") != "micu" or not (user.get("micu") or {}).get("tokenId"):
+    return
+  binding = user["micu"]
+  try:
+    balance = MICU_CLIENT.balance(binding)
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+  except MicuApiError as exc:
+    binding.update({"status": "unavailable", "lastError": str(exc)})
+
+
+def provision_micu(user_id: str, initial_balance_cny) -> dict:
+  if not MICU_CLIENT.configured:
+    raise ValueError("MicuAPI management credentials are not configured")
+  try:
+    return MICU_CLIENT.ensure_binding(user_id, initial_balance_cny)
+  except MicuApiError as exc:
+    raise ValueError(str(exc)) from exc
+
+
+def reconcile_micu_accounts() -> None:
+  if not MICU_CLIENT.configured:
+    return
+  changed = False
+  for user in list(USERS.values()):
+    if (user.get("micu") or {}).get("tokenId"):
+      continue
+    try:
+      user["micu"] = MICU_CLIENT.ensure_binding(str(user["id"]), SETTINGS.micu_migration_balance_cny)
+      changed = True
+    except MicuApiError as exc:
+      user["micu"] = {"tokenName": str(user.get("id") or ""), "status": "error", "lastError": str(exc)}
+      changed = True
+  if changed:
+    ACCOUNT_STORE.save()
 
 
 def user_by_username(username: str) -> dict | None:
@@ -251,6 +349,8 @@ class Handler(BaseHTTPRequestHandler):
         self.codex_settings()
       elif method == "PATCH" and path == "/api/codex-settings":
         self.update_codex_settings()
+      elif method == "GET" and path == "/api/recharge":
+        self.recharge_info()
       elif method == "GET" and path == "/api/workspaces":
         self.list_workspaces()
       elif method == "POST" and path == "/api/workspaces":
@@ -285,6 +385,8 @@ class Handler(BaseHTTPRequestHandler):
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:
       return HTTPStatus.PAYMENT_REQUIRED
+    if exc.code == "budget_provider_unavailable":
+      return HTTPStatus.SERVICE_UNAVAILABLE
     if exc.code in {"codex_auth_required", "no_compatible_worker", "no_upload_worker"}:
       return HTTPStatus.PRECONDITION_REQUIRED
     if exc.code == "upload_worker_unavailable":
@@ -313,17 +415,27 @@ class Handler(BaseHTTPRequestHandler):
       raise ValueError("invite token, username, and password are required")
     if len(password) < SETTINGS.registration_min_password_length:
       raise ValueError(f"password must be at least {SETTINGS.registration_min_password_length} characters")
+    pending = ACCOUNT_STORE.pending_by_token(invite_token)
+    if not pending or pending.get("status") != "pending":
+      raise ValueError("invalid invite token")
+    if ACCOUNT_STORE.username_exists(username):
+      raise ValueError("username already exists")
+    binding = provision_micu(str(pending["id"]), pending.get("initialBudgetCny") or "0.00")
     try:
       user = ACCOUNT_STORE.activate(
         invite_token,
         username,
         hash_password(password),
-        {
-          "baseUrl": SETTINGS.default_codex_base_url,
-          "apiKey": SETTINGS.default_codex_api_key,
-        },
+        {},
+        binding,
+        "micu",
       )
-    except ValueError as exc:
+    except Exception as exc:
+      if binding.get("createdByReconcile"):
+        try:
+          MICU_CLIENT.delete_token(binding)
+        except MicuApiError:
+          pass
       add_audit("anonymous", "registration failed", str(exc))
       raise
     add_audit(username, "account activated", str(user.get("id") or ""))
@@ -356,6 +468,8 @@ class Handler(BaseHTTPRequestHandler):
 
   def accounts(self) -> None:
     self.require_admin()
+    for user in USERS.values():
+      refresh_micu_balance(user)
     user_usage, group_usage = WORKSPACE_STORE.usage_summaries()
     active = [
       {**admin_account(user), **user_usage.get(str(user.get("id") or ""), {"diskUsageBytes": 0, "workspaceCount": 0})}
@@ -385,7 +499,7 @@ class Handler(BaseHTTPRequestHandler):
       group_id=str(payload.get("groupId") or ""),
       new_group_name=str(payload.get("newGroupName") or ""),
       count=int(payload.get("count") or 0),
-      budget_tokens=int(payload.get("budgetTokens") or 0),
+      budget_cny=payload.get("budgetCny", payload.get("budgetTokens", "0")),
       max_sessions=int(payload["maxSessions"]) if "maxSessions" in payload else 1,
     )
     if payload.get("newGroupName"):
@@ -406,10 +520,22 @@ class Handler(BaseHTTPRequestHandler):
     actor = self.require_admin()
     identifier = unquote(raw_identifier)
     payload = self.read_json()
-    if "budgetTokens" not in payload:
-      raise ValueError("budgetTokens is required")
-    account = ACCOUNT_STORE.reset_user_budget(identifier, int(payload["budgetTokens"]))
-    add_audit(actor["username"], "account token budget reset", f"{account['id']} budget={account['budgetTokens']}")
+    if "amountCny" not in payload and "budgetCny" not in payload:
+      raise ValueError("amountCny is required")
+    account = ACCOUNT_STORE.user_by_identifier(identifier)
+    if not account:
+      raise ValueError("user not found")
+    binding = account.get("micu") or {}
+    if not binding.get("tokenId"):
+      raise ValueError("user does not have a provisioned MicuAPI token")
+    amount = parse_cny(payload.get("amountCny", payload.get("budgetCny")))
+    try:
+      balance = MICU_CLIENT.add_balance(binding, amount)
+    except MicuApiError as exc:
+      raise StorageError("budget_provider_unavailable", str(exc)) from exc
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+    ACCOUNT_STORE.save()
+    add_audit(actor["username"], "account MicuAPI balance added", f"{account['id']} amountCny={balance['addedCny']} balanceCny={balance['remainingCny']}")
     self.write_json({"account": admin_account(account)})
 
   def create_group(self) -> None:
@@ -468,6 +594,13 @@ class Handler(BaseHTTPRequestHandler):
     active_users = [user] if user else []
     self.validate_admin_deletion(actor, user_ids)
     deleted_resources = self.stop_and_delete_resources(actor, active_users)
+    if user and (user.get("micu") or {}).get("tokenId"):
+      try:
+        MICU_CLIENT.delete_token(user["micu"])
+      except MicuApiError as exc:
+        user["enabled"] = False
+        ACCOUNT_STORE.save()
+        raise StorageError("budget_provider_unavailable", f"MicuAPI key cleanup failed: {exc}") from exc
     removed_users, removed_pending = ACCOUNT_STORE.remove_accounts(user_ids)
     self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
     add_audit(actor["username"], "account deleted", str(account["id"]))
@@ -485,6 +618,16 @@ class Handler(BaseHTTPRequestHandler):
     user_ids = {str(account["id"]) for account in [*active_users, *pending]}
     self.validate_admin_deletion(actor, user_ids)
     deleted_resources = self.stop_and_delete_resources(actor, active_users)
+    for user in active_users:
+      if not (user.get("micu") or {}).get("tokenId"):
+        continue
+      try:
+        MICU_CLIENT.delete_token(user["micu"])
+      except MicuApiError as exc:
+        for member in active_users:
+          member["enabled"] = False
+        ACCOUNT_STORE.save()
+        raise StorageError("budget_provider_unavailable", f"MicuAPI key cleanup failed: {exc}") from exc
     removed_group, removed_users, removed_pending = ACCOUNT_STORE.remove_group_and_accounts(group_id, user_ids)
     self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
     add_audit(actor["username"], "group deleted", f"{group_id} accounts={len(removed_users) + len(removed_pending)}")
@@ -529,22 +672,34 @@ class Handler(BaseHTTPRequestHandler):
     group = ACCOUNT_STORE.group_by_name(group_name) if group_name else None
     if group_name and not group:
       group = ACCOUNT_STORE.create_group(group_name)
+    user_id = f"usr_{secrets.token_urlsafe(12)}"
+    binding = provision_micu(user_id, payload.get("budgetCny", "0.00"))
     USERS[username] = {
-      "id": f"usr_{secrets.token_urlsafe(12)}",
+      "id": user_id,
       "username": username,
       "displayName": str(payload.get("displayName") or username),
       "role": str(payload.get("role") or "user"),
       "groupId": str(group.get("id") if group else ""),
       "group": group_name,
-      "budgetTokens": int(payload.get("budgetTokens") or 0),
       "usedTokens": 0,
       "enabled": bool(payload.get("enabled", True)),
       "maxSessions": int(payload.get("maxSessions") or 1),
       "status": "active",
-      "codex": self.codex_payload_from_request(payload, {}),
+      "providerMode": "micu",
+      "micu": binding,
+      "customCodex": {},
       "passwordHash": hash_password(password),
     }
-    ACCOUNT_STORE.save()
+    try:
+      ACCOUNT_STORE.save()
+    except Exception:
+      USERS.pop(username, None)
+      if binding.get("createdByReconcile"):
+        try:
+          MICU_CLIENT.delete_token(binding)
+        except MicuApiError:
+          pass
+      raise
     add_audit(actor["username"], "account created", username)
     self.write_json({"account": public_user(USERS[username])}, HTTPStatus.CREATED)
 
@@ -556,13 +711,21 @@ class Handler(BaseHTTPRequestHandler):
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
       return
     payload = self.read_json()
-    for key in ["displayName", "role", "group", "enabled", "budgetTokens", "maxSessions"]:
+    was_enabled = bool(user.get("enabled", True))
+    for key in ["displayName", "role", "group", "enabled", "maxSessions"]:
       if key in payload:
         user[key] = payload[key]
     if "codexBaseUrl" in payload or "codexApiKey" in payload or "clearCodexApiKey" in payload:
-      user["codex"] = self.codex_payload_from_request(payload, user.get("codex") or {})
+      user["customCodex"] = self.codex_payload_from_request(payload, user.get("customCodex") or {})
+      user["providerMode"] = "custom"
     if "password" in payload and payload["password"]:
       user["passwordHash"] = hash_password(str(payload["password"]))
+    if "enabled" in payload and bool(user.get("enabled")) != was_enabled and (user.get("micu") or {}).get("tokenId"):
+      try:
+        MICU_CLIENT.set_enabled(user["micu"], bool(user.get("enabled")))
+      except MicuApiError as exc:
+        user["enabled"] = was_enabled
+        raise StorageError("budget_provider_unavailable", str(exc)) from exc
     ACCOUNT_STORE.save()
     add_audit(actor["username"], "account updated", username)
     self.write_json({"account": public_user(user)})
@@ -577,21 +740,81 @@ class Handler(BaseHTTPRequestHandler):
 
   def codex_settings(self) -> None:
     user = self.require_user()
-    codex = user.get("codex") or {}
-    self.write_json({"settings": {"baseUrl": codex.get("baseUrl", ""), "apiKeyConfigured": bool(codex.get("apiKey"))}})
+    refresh_micu_balance(user)
+    mode = str(user.get("providerMode") or "micu")
+    custom = user.get("customCodex") or {}
+    self.write_json(
+      {
+        "settings": {
+          "mode": mode,
+          "baseUrl": custom.get("baseUrl", ""),
+          "apiKeyConfigured": bool(custom.get("apiKey")),
+          "micu": {
+            "baseUrl": SETTINGS.micu_inference_url,
+            "group": SETTINGS.micu_token_group,
+            "apiKeyConfigured": bool((user.get("micu") or {}).get("apiKey")),
+            "budget": budget_summary({**user, "providerMode": "micu"}),
+          },
+        }
+      }
+    )
+
+  def recharge_info(self) -> None:
+    user = self.require_user()
+    binding = user.get("micu") or {}
+    api_key = str(binding.get("apiKey") or "").strip()
+    if not api_key:
+      raise StorageError("codex_auth_required", "MicuAPI account is not provisioned")
+    add_audit(user["username"], "MicuAPI credentials viewed", str(user.get("id") or ""))
+    self.write_json(
+      {
+        "username": user["username"],
+        "baseUrl": SETTINGS.micu_inference_url,
+        "apiKey": api_key,
+        "products": [
+          {"amountCny": "50.00", "qrCodeUrl": "/assets/payment-qr/50.png"},
+          {"amountCny": "100.00", "qrCodeUrl": "/assets/payment-qr/100.png"},
+          {"amountCny": "200.00", "qrCodeUrl": "/assets/payment-qr/200.png"},
+        ],
+      }
+    )
 
   def update_codex_settings(self) -> None:
     user = self.require_user()
     payload = self.read_json()
-    user["codex"] = self.codex_payload_from_request(payload, user.get("codex") or {})
+    mode = str(payload.get("mode") or "custom")
+    if mode not in {"micu", "custom"}:
+      raise ValueError("mode must be micu or custom")
+    if mode == "micu":
+      if not (user.get("micu") or {}).get("apiKey"):
+        raise ValueError("MicuAPI account is not provisioned")
+    else:
+      current_custom = user.get("customCodex") or {}
+      custom_base_url = str(payload.get("baseUrl") or current_custom.get("baseUrl") or "").strip()
+      if not custom_base_url:
+        raise ValueError("custom API base URL is required")
+      user["customCodex"] = self.codex_payload_from_request({**payload, "baseUrl": custom_base_url}, current_custom)
+      if not user["customCodex"].get("apiKey"):
+        raise ValueError("custom API key is required")
+    user["providerMode"] = mode
     ACCOUNT_STORE.save()
-    add_audit(user["username"], "codex settings updated", "api key configured" if user["codex"].get("apiKey") else "api key cleared")
-    self.write_json({"settings": {"baseUrl": user["codex"].get("baseUrl", ""), "apiKeyConfigured": bool(user["codex"].get("apiKey"))}})
+    add_audit(user["username"], "codex settings updated", f"provider={mode}")
+    custom = user.get("customCodex") or {}
+    self.write_json(
+      {
+        "settings": {
+          "mode": mode,
+          "baseUrl": custom.get("baseUrl", ""),
+          "apiKeyConfigured": bool(custom.get("apiKey")),
+          "budget": budget_summary(user),
+        }
+      }
+    )
 
   def codex_payload_from_request(self, payload: dict, current: dict) -> dict:
     base_url = str(payload.get("codexBaseUrl") or payload.get("baseUrl") or current.get("baseUrl") or SETTINGS.default_codex_base_url).strip()
     api_key = str(current.get("apiKey") or "")
-    if payload.get("clearCodexApiKey"):
+    if payload.get("clearCodexApiKey") or payload.get("clearCustomApiKey"):
       api_key = ""
     if "codexApiKey" in payload or "apiKey" in payload:
       api_key = str(payload.get("codexApiKey") or payload.get("apiKey") or "").strip()
@@ -821,6 +1044,7 @@ class Handler(BaseHTTPRequestHandler):
     if not user:
       self.write_json({"user": None}, HTTPStatus.UNAUTHORIZED)
       return
+    refresh_micu_balance(user)
     self.write_json({"user": public_user(user)})
 
   def require_admin(self) -> dict:
@@ -946,6 +1170,7 @@ def main() -> None:
   parser.add_argument("--port", type=int, default=SETTINGS.port)
   args = parser.parse_args()
   httpd = ThreadingHTTPServer((args.host, args.port), Handler)
+  threading.Thread(target=reconcile_micu_accounts, name="micu-account-reconciler", daemon=True).start()
   print(f"AI Audit backend serving http://{args.host}:{args.port}", flush=True)
   httpd.serve_forever()
 

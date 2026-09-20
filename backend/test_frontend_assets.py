@@ -98,6 +98,18 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("data-set-group-live-run-limit", render_source)
         self.assertIn("liveRunLimit", app_source)
 
+    def test_recharge_credentials_and_fixed_products_are_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('data-view="recharge"', html)
+        self.assertIn('id="recharge-view"', html)
+        self.assertIn('id="recharge-qr-modal"', html)
+        self.assertIn('data-recharge-amount="50"', html)
+        self.assertIn('data-recharge-amount="100"', html)
+        self.assertIn('data-recharge-amount="200"', html)
+        self.assertIn('api("/api/recharge")', app_source)
+        self.assertIn('data-copy-recharge="apiKey"', html)
+
     def test_compute_resource_status_and_slim_header_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
@@ -122,7 +134,8 @@ class FrontendAssetTests(unittest.TestCase):
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
         chat_css = (FRONTEND_ROOT / "css" / "chat.css").read_text(encoding="utf-8")
-        self.assertIn('remaining.toLocaleString()', render_source)
+        self.assertIn('state.user.budget', render_source)
+        self.assertIn('used.toLocaleString()', render_source)
         self.assertIn('data-edit-name', render_source)
         self.assertIn('/chat/sessions/${encodeURIComponent(editor.id)}', app_source)
         self.assertIn('grid-template-rows: auto minmax(0, 1fr)', chat_css)

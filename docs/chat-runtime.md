@@ -22,7 +22,7 @@ Chat sessions and runs use these states:
 
 When a user starts a chat:
 
-1. Backend checks authentication, workspace permission, workspace lock, budget, and the user's group live-run limit.
+1. Backend checks authentication, workspace permission, workspace lock, the user's group live-run limit, and provider-specific authorization. Managed MicuAPI runs require a fresh positive external balance; custom-provider runs use the user's own credentials without Micu balance gating.
 2. Backend creates a chat session and run record.
 3. Scheduler reserves CPU and memory on the least-utilized compatible healthy worker (stable configuration order breaks ties).
 4. Worker launches a Docker container with the workspace mounted.
@@ -100,7 +100,7 @@ Failures should preserve as much recoverable state as possible:
 - If the worker reports an error, persist the error event.
 - If the container exits unexpectedly, mark the run failed and checkpoint the workspace if possible.
 - If contact with a worker is lost, stop renewing its run lease, wait for the bounded lease interval, then mark the run failed after attempting a final workspace checkpoint. The run remains resumable when its persisted Codex transcript/checkpoint is usable; it is not automatically retried.
-- If budget is exhausted, stop the run and record the stop reason as budget-related.
+- MicuAPI enforces managed-key exhaustion on model requests. Known quota failures are recorded as budget-related; local `usedTokens` remains reporting-only.
 
 ## V1 Implementation Surface
 

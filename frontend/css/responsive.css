@@ -22,7 +22,7 @@
   }
 
   .nav-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
   .nav-item {
@@ -46,6 +46,10 @@
   }
 
   .dashboard-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .recharge-layout {
     grid-template-columns: 1fr;
   }
 
@@ -129,5 +133,11 @@
   .composer-actions select,
   .segmented {
     width: 100%;
+  }
+
+  .credential-row,
+  .recharge-products {
+    display: grid;
+    grid-template-columns: 1fr;
   }
 }

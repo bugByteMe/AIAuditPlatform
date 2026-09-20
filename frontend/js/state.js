@@ -6,6 +6,7 @@ export const state = {
   workers: [],
   createdInvites: [],
   auditLogs: [],
+  recharge: null,
   workspaces: [],
   workspacesLoaded: false,
   selectedWorkspace: 0,

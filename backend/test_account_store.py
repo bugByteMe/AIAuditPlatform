@@ -74,7 +74,7 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 4)
+      self.assertEqual(store.state()["schemaVersion"], 5)
       self.assertIsNone(store.groups["grp_1"]["diskLimitBytes"])
       self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
@@ -93,7 +93,7 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 4)
+      self.assertEqual(store.state()["schemaVersion"], 5)
       self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
   def test_batch_invites_have_unique_ids_tokens_and_no_credentials(self) -> None:
@@ -107,7 +107,7 @@ class AccountStoreTest(unittest.TestCase):
       self.assertTrue(all(account["username"] is None for account in accounts))
       self.assertTrue(all("passwordHash" not in account for account in accounts))
       self.assertTrue(all(account["groupId"] == group["id"] for account in accounts))
-      self.assertTrue(all(account["budgetTokens"] == 5000 and account["maxSessions"] == 2 for account in accounts))
+      self.assertTrue(all(account["initialBudgetCny"] == "5000.00" and account["maxSessions"] == 2 for account in accounts))
 
   def test_batch_creation_rolls_back_when_save_fails(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
@@ -127,7 +127,7 @@ class AccountStoreTest(unittest.TestCase):
 
       self.assertEqual(user["id"], invite["id"])
       self.assertEqual(user["groupId"], group["id"])
-      self.assertEqual(user["budgetTokens"], 900)
+      self.assertEqual(user["initialBudgetCny"], "900.00")
       self.assertEqual(user["maxSessions"], 3)
       self.assertNotIn(invite["id"], store.pending_accounts)
       self.assertIsNone(store.pending_by_token(invite["inviteToken"]))
@@ -173,7 +173,7 @@ class AccountStoreTest(unittest.TestCase):
       self.assertEqual(sorted(results), ["activated", "rejected"])
       self.assertEqual(len(store.users), 1)
 
-  def test_group_limit_and_user_budget_reset_persist(self) -> None:
+  def test_group_limits_and_reporting_usage_persist(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       path = Path(tempdir) / "accounts.json"
       store = AccountStore(path, {})
@@ -183,13 +183,10 @@ class AccountStoreTest(unittest.TestCase):
       store.save()
       store.update_group_disk_limit(group["id"], 1024)
       store.update_group_live_run_limit(group["id"], 3)
-      reset = store.reset_user_budget(user["id"], 500)
-      self.assertEqual(reset["budgetTokens"], 500)
-      self.assertEqual(reset["usedTokens"], 0)
       reloaded = AccountStore(path, {})
       self.assertEqual(reloaded.groups[group["id"]]["diskLimitBytes"], 1024)
       self.assertEqual(reloaded.groups[group["id"]]["liveRunLimit"], 3)
-      self.assertEqual(reloaded.users["alice"]["usedTokens"], 0)
+      self.assertEqual(reloaded.users["alice"]["usedTokens"], 75)
 
   def test_group_live_run_limit_must_be_positive(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:

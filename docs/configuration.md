@@ -68,5 +68,7 @@ The agent API is intentionally narrow: health; run start, status/events, stop, l
 
 - `registration_min_password_length`, `batch_invite_max_count`, and `account_max_sessions_limit` configure invitation and registration validation.
 - `default_codex_base_url` is safe to store in the JSON file. Keep `default_codex_api_key` out of source-controlled configuration and provide it through `AI_AUDIT_DEFAULT_CODEX_API_KEY`.
+- `micu_management_url`, `micu_inference_url`, `micu_user_id`, `micu_token_group`, `micu_quota_per_cny`, `micu_request_timeout_seconds`, and `micu_migration_balance_cny` configure managed per-user MicuAPI tokens. This deployment uses Micu user ID `78836`, token group `vip_2`, and a `10.00` CNY migration balance.
+- Supply the management credential only through `AI_AUDIT_MICU_MANAGEMENT_TOKEN`. Never place it in the JSON file, logs, documentation, or tests. Token-group availability is region-sensitive, so validate `vip_2` from the deployed control-plane host.
 
 Environment variable names use the `AI_AUDIT_` prefix and uppercase setting name, except the existing `SKILL_PATH` override for `skill_path`. List values such as `AI_AUDIT_BLOCKED_UPLOAD_SUFFIXES` use comma-separated entries.

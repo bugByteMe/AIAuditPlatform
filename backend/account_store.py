@@ -11,7 +11,7 @@ from pathlib import Path
 from config import SETTINGS
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
@@ -38,13 +38,14 @@ class AccountStore:
     existed = self.path.exists()
     raw = json.loads(self.path.read_text(encoding="utf-8")) if existed else deepcopy(self.seed_users)
     migrated = not (isinstance(raw, dict) and raw.get("schemaVersion") == SCHEMA_VERSION)
-    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3}:
+    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3, 4}:
       state = self.migrate_versioned(raw)
     else:
       state = self.migrate_legacy(raw) if migrated else raw
     self.users.update(deepcopy(state.get("users") or {}))
     self.pending_accounts.update(deepcopy(state.get("pendingAccounts") or {}))
     self.groups.update(deepcopy(state.get("groups") or {}))
+    self._normalize_provider_state()
     if migrated or not existed:
       self.save()
 
@@ -95,6 +96,25 @@ class AccountStore:
       group.setdefault("diskLimitBytes", None)
       group.setdefault("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
     return migrated
+
+  def _normalize_provider_state(self) -> None:
+    for user in self.users.values():
+      legacy = user.get("codex") or {}
+      legacy_base = str(legacy.get("baseUrl") or "").rstrip("/")
+      micu_base = str(SETTINGS.micu_inference_url or SETTINGS.default_codex_base_url).rstrip("/")
+      mode = str(user.get("providerMode") or ("micu" if not legacy_base or legacy_base == micu_base else "custom"))
+      user["providerMode"] = mode if mode in {"micu", "custom"} else "micu"
+      user.setdefault("micu", {})
+      if "customCodex" not in user:
+        user["customCodex"] = {
+          "baseUrl": legacy_base if legacy_base and legacy_base != micu_base else "",
+          "apiKey": str(legacy.get("apiKey") or "") if legacy_base and legacy_base != micu_base else "",
+        }
+      user.pop("budgetTokens", None)
+    for account in self.pending_accounts.values():
+      if "initialBudgetCny" not in account:
+        account["initialBudgetCny"] = "0.00"
+      account.pop("budgetTokens", None)
 
   def state(self) -> dict:
     return {
@@ -163,7 +183,8 @@ class AccountStore:
     group_id: str = "",
     new_group_name: str = "",
     count: int,
-    budget_tokens: int,
+    budget_cny: str | int | float | None = None,
+    budget_tokens: int | None = None,
     max_sessions: int,
   ) -> tuple[dict, list[dict]]:
     group_id = group_id.strip()
@@ -172,8 +193,8 @@ class AccountStore:
       raise ValueError("provide exactly one of groupId or newGroupName")
     if not 1 <= count <= SETTINGS.batch_invite_max_count:
       raise ValueError(f"count must be between 1 and {SETTINGS.batch_invite_max_count}")
-    if budget_tokens < 0:
-      raise ValueError("budgetTokens must be non-negative")
+    from micu_api import parse_cny
+    initial_budget = parse_cny(budget_cny if budget_cny is not None else (budget_tokens or 0))
     if not 1 <= max_sessions <= SETTINGS.account_max_sessions_limit:
       raise ValueError(f"maxSessions must be between 1 and {SETTINGS.account_max_sessions_limit}")
 
@@ -216,7 +237,7 @@ class AccountStore:
           "role": "user",
           "groupId": group_id,
           "group": group["name"],
-          "budgetTokens": budget_tokens,
+          "initialBudgetCny": format(initial_budget, ".2f"),
           "usedTokens": 0,
           "enabled": True,
           "maxSessions": max_sessions,
@@ -250,11 +271,27 @@ class AccountStore:
         return account
     return None
 
-  def activate(self, token: str, username: str, password_hash: str, codex: dict | None = None) -> dict:
+  def activate(
+    self,
+    token: str,
+    username: str,
+    password_hash: str,
+    codex: dict | None = None,
+    micu: dict | None = None,
+    provider_mode: str = "micu",
+  ) -> dict:
     with self.lock:
-      return self._activate_unlocked(token, username, password_hash, codex)
+      return self._activate_unlocked(token, username, password_hash, codex, micu, provider_mode)
 
-  def _activate_unlocked(self, token: str, username: str, password_hash: str, codex: dict | None = None) -> dict:
+  def _activate_unlocked(
+    self,
+    token: str,
+    username: str,
+    password_hash: str,
+    codex: dict | None = None,
+    micu: dict | None = None,
+    provider_mode: str = "micu",
+  ) -> dict:
     account = self.pending_by_token(token)
     if not account or account.get("status") != "pending":
       raise ValueError("invalid invite token")
@@ -270,7 +307,9 @@ class AccountStore:
         "passwordHash": password_hash,
         "status": "active",
         "activatedAt": _timestamp(),
-        "codex": deepcopy(codex or {}),
+        "providerMode": provider_mode,
+        "micu": deepcopy(micu or {}),
+        "customCodex": deepcopy(codex or {}),
       }
     )
     previous_pending = deepcopy(account)
@@ -331,25 +370,6 @@ class AccountStore:
         group["liveRunLimit"] = previous
         raise
       return deepcopy(group)
-
-  def reset_user_budget(self, identifier: str, budget_tokens: int) -> dict:
-    if budget_tokens < 0:
-      raise ValueError("budgetTokens must be non-negative")
-    with self.lock:
-      user = self.user_by_identifier(identifier)
-      if not user:
-        raise ValueError("user not found")
-      previous_budget = user.get("budgetTokens", 0)
-      previous_used = user.get("usedTokens", 0)
-      user["budgetTokens"] = budget_tokens
-      user["usedTokens"] = 0
-      try:
-        self.save()
-      except Exception:
-        user["budgetTokens"] = previous_budget
-        user["usedTokens"] = previous_used
-        raise
-      return deepcopy(user)
 
   def user_by_identifier(self, identifier: str) -> dict | None:
     user = self.users.get(identifier)

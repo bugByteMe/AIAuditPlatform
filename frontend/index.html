@@ -75,6 +75,10 @@
             <span class="icon" aria-hidden="true">▣</span>
             <span data-i18n="nav.chat">实时会话</span>
           </button>
+          <button class="nav-item" data-view="recharge">
+            <span class="icon" aria-hidden="true">¥</span>
+            <span data-i18n="nav.recharge">充值</span>
+          </button>
           <button class="nav-item" data-view="admin" id="admin-nav-button">
             <span class="icon" aria-hidden="true">⚙</span>
             <span data-i18n="nav.admin">管理</span>
@@ -263,6 +267,53 @@
           </div>
         </section>
 
+        <section class="view" id="recharge-view">
+          <div class="recharge-layout">
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="recharge.credentialsTitle">默认 MicuAPI</h2>
+                  <p data-i18n="recharge.credentialsHelp">供当前账号使用的默认 API 地址和密钥。</p>
+                </div>
+              </div>
+              <div class="credential-list">
+                <label class="field">
+                  <span data-i18n="recharge.baseUrl">API 地址</span>
+                  <div class="credential-row">
+                    <input id="recharge-base-url" readonly />
+                    <button type="button" class="btn" data-copy-recharge="baseUrl" data-i18n="recharge.copy">复制</button>
+                  </div>
+                </label>
+                <label class="field">
+                  <span data-i18n="recharge.apiKey">API Key</span>
+                  <div class="credential-row">
+                    <input id="recharge-api-key" type="password" readonly autocomplete="off" />
+                    <button type="button" class="btn" id="recharge-key-visibility" data-i18n="recharge.show">显示</button>
+                    <button type="button" class="btn" data-copy-recharge="apiKey" data-i18n="recharge.copy">复制</button>
+                  </div>
+                </label>
+              </div>
+              <p class="credential-warning" data-i18n="recharge.keyWarning">请妥善保管密钥，不要发送给其他人。</p>
+              <p class="form-error" id="recharge-error"></p>
+            </section>
+
+            <section class="panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="recharge.productsTitle">选择充值金额</h2>
+                  <p data-i18n="recharge.productsHelp">点击金额后显示付款二维码。</p>
+                </div>
+              </div>
+              <div class="recharge-products">
+                <button type="button" class="recharge-product" data-recharge-amount="50"><strong>¥50</strong><span data-i18n="recharge.select">选择</span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="100"><strong>¥100</strong><span data-i18n="recharge.select">选择</span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="200"><strong>¥200</strong><span data-i18n="recharge.select">选择</span></button>
+              </div>
+              <p class="payment-reminder"><span data-i18n="recharge.noteReminder">付款时请务必在备注中填写用户名：</span> <strong id="recharge-username">-</strong></p>
+            </section>
+          </div>
+        </section>
+
         <section class="view" id="admin-view">
           <div class="dashboard-grid">
             <section class="panel wide">
@@ -380,8 +431,8 @@
             <input name="count" type="number" min="1" max="100" value="1" required />
           </label>
           <label class="field">
-            <span data-i18n="admin.userBudget">每人 Token 预算</span>
-            <input name="budgetTokens" type="number" min="0" value="0" required />
+            <span data-i18n="admin.userBudget">每人 MicuAPI 初始余额（元）</span>
+            <input name="budgetCny" type="number" min="0" step="0.01" value="0.00" required />
           </label>
           <label class="field">
             <span data-i18n="admin.maxSessions">并发会话数</span>
@@ -411,30 +462,54 @@
           </div>
           <button type="button" class="rail-toggle" data-close-codex-settings aria-label="Close">×</button>
         </div>
-        <label class="field">
-          <span data-i18n="codex.baseUrl">Base URL</span>
-          <input name="baseUrl" id="codex-base-url-input" placeholder="https://api.openai.com/v1" required />
-        </label>
-        <label class="field">
-          <span data-i18n="codex.apiKey">API Key</span>
-          <input name="apiKey" id="codex-api-key-input" type="password" autocomplete="off" data-i18n-placeholder="codex.apiKeyPlaceholder" placeholder="Leave blank to keep current key" />
-        </label>
-        <label class="checkbox-row">
-          <input type="checkbox" name="clearCodexApiKey" id="codex-clear-key-input" />
-          <span data-i18n="codex.clearKey">Clear saved API key</span>
-        </label>
+        <div class="segmented" role="radiogroup" aria-label="API provider">
+          <label class="segment"><input type="radio" name="mode" value="micu" checked /> <span data-i18n="codex.defaultMicu">Default MicuAPI</span></label>
+          <label class="segment"><input type="radio" name="mode" value="custom" /> <span data-i18n="codex.customApi">Custom API</span></label>
+        </div>
+        <p id="codex-micu-summary"></p>
+        <div id="codex-custom-fields">
+          <label class="field">
+            <span data-i18n="codex.baseUrl">Base URL</span>
+            <input name="baseUrl" id="codex-base-url-input" placeholder="https://api.openai.com/v1" />
+          </label>
+          <label class="field">
+            <span data-i18n="codex.apiKey">API Key</span>
+            <input name="apiKey" id="codex-api-key-input" type="password" autocomplete="off" data-i18n-placeholder="codex.apiKeyPlaceholder" placeholder="Leave blank to keep current key" />
+          </label>
+          <label class="checkbox-row">
+            <input type="checkbox" name="clearCodexApiKey" id="codex-clear-key-input" />
+            <span data-i18n="codex.clearKey">Clear saved API key</span>
+          </label>
+        </div>
         <div class="modal-actions">
           <button type="button" class="btn" data-close-codex-settings data-i18n="actions.cancel">取消</button>
           <button type="submit" class="btn primary" data-i18n="codex.save">保存</button>
         </div>
       </form>
     </div>
+    <div class="modal-backdrop hidden" id="recharge-qr-modal" role="dialog" aria-modal="true" aria-labelledby="recharge-qr-title">
+      <section class="modal-panel qr-payment-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="recharge-qr-title"><span data-i18n="recharge.payTitle">扫码支付</span> <span id="recharge-qr-amount"></span></h2>
+            <p data-i18n="recharge.scanHelp">请使用对应的支付应用扫描二维码。</p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-recharge-qr aria-label="Close">×</button>
+        </div>
+        <img class="payment-qr" id="recharge-qr-image" alt="Payment QR code" />
+        <p class="form-error hidden" id="recharge-qr-missing" data-i18n="recharge.qrMissing">付款二维码尚未配置，请联系管理员。</p>
+        <p class="payment-reminder"><span data-i18n="recharge.noteReminder">付款时请务必在备注中填写用户名：</span> <strong id="recharge-modal-username">-</strong></p>
+        <div class="modal-actions">
+          <button type="button" class="btn primary" data-close-recharge-qr data-i18n="recharge.close">关闭</button>
+        </div>
+      </section>
+    </div>
     <div class="file-context-menu hidden" id="file-context-menu">
       <button type="button" data-file-menu-action="download" data-i18n="files.download">下载</button>
       <button type="button" class="danger" data-file-menu-action="delete" data-i18n="files.delete">删除</button>
     </div>
     <div class="toast" id="toast" role="status" aria-live="polite"></div>
-    <script type="module" src="app.js?v=20260917-admin-controls"></script>
+    <script type="module" src="app.js?v=20260920-recharge"></script>
     <script>
       window.setTimeout(function () {
         if (!window.aiAuditAppReady) {

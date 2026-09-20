@@ -45,9 +45,17 @@ class AccountApiTest(unittest.TestCase):
       self.assertEqual(store.pending_accounts, {})
 
   def test_public_user_never_exposes_invite_token(self) -> None:
-    pending = {"id": "usr_1", "status": "pending", "inviteToken": "secret-token"}
+    pending = {
+      "id": "usr_1",
+      "status": "pending",
+      "inviteToken": "invite-placeholder",
+      "micu": {"apiKey": "managed-placeholder"},
+      "customCodex": {"apiKey": "custom-placeholder"},
+    }
     self.assertNotIn("inviteToken", public_user(pending))
-    self.assertEqual(admin_account(pending)["inviteToken"], "secret-token")
+    self.assertNotIn("micu", public_user(pending))
+    self.assertNotIn("customCodex", public_user(pending))
+    self.assertEqual(admin_account(pending)["inviteToken"], "invite-placeholder")
 
   def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
     actor = {"username": "admin", "role": "system_admin"}
@@ -60,6 +68,26 @@ class AccountApiTest(unittest.TestCase):
     handler.require_admin.assert_called_once_with()
     self.assertEqual(handler.responses[0][0], {"workers": [{"id": "worker-1", "healthy": True}]})
 
+  def test_recharge_info_returns_only_current_users_managed_credentials(self) -> None:
+    user = {
+      "id": "usr_alice",
+      "username": "alice",
+      "micu": {"apiKey": "managed-placeholder"},
+    }
+    handler = self.handler({})
+    handler.require_user = MagicMock(return_value=user)
+    with patch("server.add_audit") as audit:
+      Handler.recharge_info(handler)
+
+    body, status, _ = handler.responses[0]
+    self.assertEqual(status, 200)
+    self.assertEqual(body["username"], "alice")
+    self.assertEqual(body["apiKey"], "managed-placeholder")
+    self.assertEqual([item["amountCny"] for item in body["products"]], ["50.00", "100.00", "200.00"])
+    self.assertTrue(all(item["qrCodeUrl"].startswith("/assets/payment-qr/") for item in body["products"]))
+    handler.require_user.assert_called_once_with()
+    audit.assert_called_once_with("alice", "MicuAPI credentials viewed", "usr_alice")
+
   def test_registration_activates_and_starts_session(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})
@@ -71,6 +99,7 @@ class AccountApiTest(unittest.TestCase):
       with (
         patch("server.ACCOUNT_STORE", store),
         patch("server.USERS", store.users),
+        patch("server.provision_micu", return_value={"tokenId": 7, "tokenName": accounts[0]["id"], "apiKey": "test-key", "status": "ready", "lastBalanceCny": "42.00"}),
         patch("server.add_audit", side_effect=lambda actor, event, detail="": audit.append((actor, event, detail))),
       ):
         Handler.register(handler)
@@ -119,11 +148,14 @@ class AccountApiTest(unittest.TestCase):
       _, invitations = store.create_batch(group_id=group["id"], count=1, budget_tokens=100, max_sessions=1)
       user = store.activate(invitations[0]["inviteToken"], "alice", "hash")
       store.users["alice"]["usedTokens"] = 90
-      reset_handler = self.handler({"budgetTokens": 500}, actor)
-      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+      user["micu"] = {"tokenId": 7, "apiKey": "test-key", "status": "ready", "lastBalanceCny": "1.00"}
+      provider = MagicMock()
+      provider.add_balance.return_value = {"addedCny": "5.00", "remainingCny": "6.00", "status": "ready"}
+      reset_handler = self.handler({"amountCny": "5.00"}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.MICU_CLIENT", provider), patch("server.add_audit"):
         Handler.reset_account_budget(reset_handler, user["id"])
-      self.assertEqual(store.users["alice"]["budgetTokens"], 500)
-      self.assertEqual(store.users["alice"]["usedTokens"], 0)
+      self.assertEqual(store.users["alice"]["micu"]["lastBalanceCny"], "6.00")
+      self.assertEqual(store.users["alice"]["usedTokens"], 90)
 
   def test_self_deletion_is_protected(self) -> None:
     actor = {"id": "usr_admin", "username": "admin", "role": "system_admin"}
