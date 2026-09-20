@@ -74,7 +74,7 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 5)
+      self.assertEqual(store.state()["schemaVersion"], 6)
       self.assertIsNone(store.groups["grp_1"]["diskLimitBytes"])
       self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
@@ -93,7 +93,7 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 5)
+      self.assertEqual(store.state()["schemaVersion"], 6)
       self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
   def test_batch_invites_have_unique_ids_tokens_and_no_credentials(self) -> None:
@@ -195,6 +195,40 @@ class AccountStoreTest(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "at least 1"):
         store.update_group_live_run_limit(group["id"], 0)
       self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 1)
+
+  def test_recharge_payment_is_unique_persistent_and_visible_to_its_user(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      path = Path(tempdir) / "accounts.json"
+      store = AccountStore(path, {"alice": {"id": "usr_alice", "username": "alice", "micu": {"tokenId": 7}}})
+      reserved, _ = store.reserve_recharge_payment(
+        "payment-hash",
+        {
+          "userId": "usr_alice",
+          "paidAt": "2026-09-20 14:39:07",
+          "amountCny": "50.00",
+          "creditCny": "40.00",
+          "importedAt": "2026-09-20 15:00:00",
+          "paymentRef": "***6241",
+        },
+      )
+      self.assertTrue(reserved)
+      self.assertFalse(store.reserve_recharge_payment("payment-hash", {})[0])
+      store.finish_recharge_payment("payment-hash", status="applied", binding_updates={"lastBalanceCny": "40.00"})
+      reloaded = AccountStore(path, {})
+      self.assertEqual(reloaded.recharge_history("usr_alice")[0]["amountCny"], "50.00")
+      self.assertEqual(reloaded.users["alice"]["micu"]["lastBalanceCny"], "40.00")
+
+  def test_user_deletion_keeps_payment_hash_as_anonymous_tombstone(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {"alice": {"id": "usr_alice", "username": "alice"}})
+      store.reserve_recharge_payment(
+        "payment-hash",
+        {"userId": "usr_alice", "paidAt": "2026-09-20 14:39:07", "amountCny": "50.00", "importedAt": "2026-09-20 15:00:00"},
+      )
+      store.remove_accounts({"usr_alice"})
+      tombstone = store.recharge_payment("payment-hash")
+      self.assertEqual(tombstone["status"], "used")
+      self.assertNotIn("userId", tombstone)
 
 
 if __name__ == "__main__":

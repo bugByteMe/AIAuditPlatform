@@ -100,6 +100,76 @@ class AccountApiTest(unittest.TestCase):
     handler.require_user.assert_called_once_with()
     audit.assert_called_once_with("alice", "MicuAPI credentials viewed", "usr_alice")
 
+  def test_recharge_import_previews_then_applies_eighty_percent_once(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(
+        Path(tempdir) / "accounts.json",
+        {"Alice": {"id": "usr_alice", "username": "Alice", "role": "user", "micu": {"tokenId": 7, "apiKey": "key"}}},
+      )
+      actor = {"id": "usr_admin", "username": "admin", "role": "system_admin"}
+      parsed = {
+        "digest": "workbook-digest",
+        "sheetCount": 2,
+        "targetSheetCount": 1,
+        "ignoredSheetCount": 1,
+        "records": [
+          {
+            "sheet": "Target",
+            "row": 10,
+            "status": "candidate",
+            "reason": "",
+            "username": "alice",
+            "paidAt": "2026-09-20 14:39:07",
+            "amountCny": "50.00",
+            "creditCny": "40.00",
+            "paymentNumber": "payment-number-1",
+            "paymentRef": "***0001",
+          }
+        ],
+      }
+      provider = MagicMock()
+      provider.add_balance.return_value = {"remainingCny": "41.00", "remainingPercent": 80.0, "status": "ready"}
+
+      preview = self.handler({}, actor)
+      preview.read_recharge_upload = lambda: (b"xlsx", {})
+      with patch("server.ACCOUNT_STORE", store), patch("server.USERS", store.users), patch("server.parse_recharge_workbook", return_value=parsed):
+        Handler.preview_recharge_import(preview)
+      self.assertEqual(preview.responses[0][0]["summary"]["eligible"], 1)
+      provider.add_balance.assert_not_called()
+
+      apply = self.handler({}, actor)
+      apply.read_recharge_upload = lambda: (b"xlsx", {"previewDigest": "workbook-digest"})
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.MICU_CLIENT", provider),
+        patch("server.parse_recharge_workbook", return_value=parsed),
+        patch("server.add_audit"),
+      ):
+        Handler.apply_recharge_import(apply)
+      self.assertEqual(apply.responses[0][0]["summary"]["applied"], 1)
+      provider.add_balance.assert_called_once_with(store.users["Alice"]["micu"], "40.00")
+      self.assertEqual(store.recharge_history("usr_alice")[0]["amountCny"], "50.00")
+
+      repeated = self.handler({}, actor)
+      repeated.read_recharge_upload = lambda: (b"xlsx", {"previewDigest": "workbook-digest"})
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.MICU_CLIENT", provider),
+        patch("server.parse_recharge_workbook", return_value=parsed),
+        patch("server.add_audit"),
+      ):
+        Handler.apply_recharge_import(repeated)
+      self.assertEqual(repeated.responses[0][0]["summary"]["duplicate"], 1)
+      self.assertEqual(provider.add_balance.call_count, 1)
+
+  def test_recharge_import_requires_system_admin(self) -> None:
+    handler = self.handler({})
+    handler.require_admin = lambda: (_ for _ in ()).throw(RequestStopped())
+    with self.assertRaises(RequestStopped):
+      Handler.preview_recharge_import(handler)
+
   def test_registration_activates_and_starts_session(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})

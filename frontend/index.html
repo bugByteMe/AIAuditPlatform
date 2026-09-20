@@ -311,6 +311,15 @@
               </div>
               <p class="payment-reminder"><span data-i18n="recharge.noteReminder">付款时请务必在备注中填写用户名：</span> <strong id="recharge-username">-</strong></p>
             </section>
+            <section class="panel recharge-history-panel">
+              <div class="panel-head">
+                <div>
+                  <h2 data-i18n="recharge.historyTitle">充值记录</h2>
+                  <p data-i18n="recharge.historyHelp">显示已通过收款表确认的充值。</p>
+                </div>
+              </div>
+              <div class="recharge-history" id="recharge-history"></div>
+            </section>
           </div>
         </section>
 
@@ -323,8 +332,10 @@
                   <p data-i18n="admin.usersHelp">批量创建账号、分组并设置预算。</p>
                 </div>
                 <div class="toolbar-actions">
+                  <button class="btn" id="recharge-import-button" data-i18n="admin.importRecharge">批量充值</button>
                   <button class="btn" id="create-group-button" data-i18n="admin.createGroup">新建小组</button>
                   <button class="btn primary" id="batch-create-button" data-i18n="admin.batchCreate">批量创建</button>
+                  <input type="file" id="recharge-import-input" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
                 </div>
               </div>
               <div class="admin-grid" id="admin-grid"></div>
@@ -486,6 +497,28 @@
           <button type="submit" class="btn primary" data-i18n="codex.save">保存</button>
         </div>
       </form>
+    </div>
+    <div class="modal-backdrop hidden" id="recharge-import-modal" role="dialog" aria-modal="true" aria-labelledby="recharge-import-title">
+      <section class="modal-panel recharge-import-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="recharge-import-title" data-i18n="admin.importRechargeTitle">批量充值预览</h2>
+            <p id="recharge-import-summary"></p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-recharge-import aria-label="Close">×</button>
+        </div>
+        <div class="recharge-import-table-wrap">
+          <table class="recharge-import-table">
+            <thead><tr><th data-i18n="admin.importLocation">位置</th><th data-i18n="admin.importUser">用户名</th><th data-i18n="admin.importTime">支付时间</th><th data-i18n="admin.importAmount">付款/入账</th><th data-i18n="admin.importStatus">状态</th></tr></thead>
+            <tbody id="recharge-import-rows"></tbody>
+          </table>
+        </div>
+        <p class="form-error" id="recharge-import-error"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-recharge-import data-i18n="actions.cancel">取消</button>
+          <button type="button" class="btn primary" id="recharge-import-confirm" data-i18n="admin.importConfirm">确认入账</button>
+        </div>
+      </section>
     </div>
     <div class="modal-backdrop hidden" id="recharge-qr-modal" role="dialog" aria-modal="true" aria-labelledby="recharge-qr-title">
       <section class="modal-panel qr-payment-panel">

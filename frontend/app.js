@@ -18,6 +18,7 @@ import {
   renderFileExplorer,
   renderOperationProgress,
   renderPanelState,
+  renderRechargeHistory,
   renderWorkspaceManagement,
   renderWorkers,
   renderWorkspaces,
@@ -39,6 +40,7 @@ export function renderDynamic() {
   renderArtifacts();
   renderFileExplorer();
   renderOperationProgress();
+  renderRechargeHistory();
   renderPanelState();
   renderAdmin();
   renderWorkers();
@@ -80,14 +82,10 @@ function sortTreeFiles(items) {
     if (!childrenByParent.has(parent)) childrenByParent.set(parent, []);
     childrenByParent.get(parent).push(item);
   });
-  const compareSiblings = (left, right) => {
-    if (left.type !== right.type) return left.type === "folder" ? -1 : 1;
-    return left.name.localeCompare(right.name);
-  };
   const ordered = [];
   const seen = new Set();
   const appendChildren = (parent) => {
-    (childrenByParent.get(parent) || []).sort(compareSiblings).forEach((item) => {
+    (childrenByParent.get(parent) || []).forEach((item) => {
       if (seen.has(item.path)) return;
       seen.add(item.path);
       ordered.push(item);
@@ -95,7 +93,7 @@ function sortTreeFiles(items) {
     });
   };
   appendChildren("");
-  items.filter((item) => !seen.has(item.path)).sort(compareSiblings).forEach((item) => ordered.push(item));
+  items.filter((item) => !seen.has(item.path)).forEach((item) => ordered.push(item));
   return ordered;
 }
 
@@ -437,11 +435,13 @@ function showAuthenticated(user) {
 function showLogin() {
   state.user = null;
   state.recharge = null;
+  state.rechargeImport = null;
   document.querySelector("#recharge-base-url").value = "";
   const rechargeKey = document.querySelector("#recharge-api-key");
   rechargeKey.value = "";
   rechargeKey.type = "password";
   document.querySelector("#recharge-key-visibility").textContent = t("recharge.show");
+  document.querySelector("#recharge-import-modal").classList.add("hidden");
   document.querySelector("#auth-screen").classList.remove("hidden");
   document.querySelector("#app-shell").classList.add("hidden");
   setAuthMode("login");
@@ -575,9 +575,98 @@ async function loadRechargeData() {
     document.querySelector("#recharge-api-key").value = result.apiKey || "";
     document.querySelector("#recharge-username").textContent = result.username || state.user?.username || "-";
     error.textContent = "";
+    renderRechargeHistory();
   } catch (loadError) {
     state.recharge = null;
     error.textContent = loadError.message;
+    renderRechargeHistory();
+  }
+}
+
+function rechargeImportStatus(status) {
+  const key = `admin.importStatus.${status}`;
+  const translated = t(key);
+  return translated === key ? status : translated;
+}
+
+function renderRechargeImport() {
+  const current = state.rechargeImport;
+  const modal = document.querySelector("#recharge-import-modal");
+  if (!current?.result) {
+    modal.classList.add("hidden");
+    return;
+  }
+  const result = current.result;
+  const summary = result.summary || {};
+  const parts = [
+    `${t("admin.importTargetSheets")} ${Number(result.targetSheetCount || 0)}`,
+    `${t("admin.importEligible")} ${Number(summary.eligible || 0)}`,
+    `${t("admin.importApplied")} ${Number(summary.applied || 0)}`,
+    `${t("admin.importDuplicate")} ${Number(summary.duplicate || 0)}`,
+    `${t("admin.importSkipped")} ${Number(summary.invalid || 0) + Number(summary.unmatched || 0)}`,
+    `${t("admin.importReview")} ${Number(summary.review_required || 0)}`,
+  ];
+  document.querySelector("#recharge-import-summary").textContent = parts.join(" · ");
+  document.querySelector("#recharge-import-rows").innerHTML = (result.records || [])
+    .map(
+      (record) => `
+        <tr>
+          <td>${escapeMarkup(record.sheet)}:${Number(record.row || 0)}<br><small>${escapeMarkup(record.paymentRef || "")}</small></td>
+          <td>${escapeMarkup(record.username || "-")}</td>
+          <td>${escapeMarkup(record.paidAt || "-")}</td>
+          <td>¥${escapeMarkup(record.amountCny || "0.00")} / ¥${escapeMarkup(record.creditCny || "0.00")}</td>
+          <td><span class="recharge-import-status">${escapeMarkup(rechargeImportStatus(record.status))}</span>${record.reason ? `<br><small>${escapeMarkup(record.reason)}</small>` : ""}</td>
+        </tr>
+      `,
+    )
+    .join("");
+  const confirm = document.querySelector("#recharge-import-confirm");
+  confirm.disabled = current.applying || !current.file || Number(summary.eligible || 0) === 0;
+  confirm.textContent = current.applying ? t("admin.importApplying") : t("admin.importConfirm");
+  modal.classList.remove("hidden");
+}
+
+function closeRechargeImport() {
+  state.rechargeImport = null;
+  document.querySelector("#recharge-import-input").value = "";
+  document.querySelector("#recharge-import-modal").classList.add("hidden");
+}
+
+async function previewRechargeImport(file) {
+  const form = new FormData();
+  form.append("file", file, file.name);
+  try {
+    const result = await api("/api/admin/recharge-imports/preview", { method: "POST", body: form });
+    state.rechargeImport = { file, result, applying: false };
+    document.querySelector("#recharge-import-error").textContent = "";
+    renderRechargeImport();
+  } catch (error) {
+    state.rechargeImport = null;
+    document.querySelector("#recharge-import-input").value = "";
+    showToast(error.message);
+  }
+}
+
+async function applyRechargeImport() {
+  const current = state.rechargeImport;
+  if (!current?.file || !current.result?.digest || current.applying) return;
+  current.applying = true;
+  document.querySelector("#recharge-import-error").textContent = "";
+  renderRechargeImport();
+  const form = new FormData();
+  form.append("file", current.file, current.file.name);
+  form.append("previewDigest", current.result.digest);
+  try {
+    current.result = await api("/api/admin/recharge-imports", { method: "POST", body: form });
+    current.file = null;
+    await loadAccountControlData();
+    if (state.recharge) await loadRechargeData();
+    showToast(t("toast.rechargeImported"));
+  } catch (error) {
+    document.querySelector("#recharge-import-error").textContent = error.message;
+  } finally {
+    current.applying = false;
+    renderRechargeImport();
   }
 }
 
@@ -958,6 +1047,21 @@ function bindGlobalClicks() {
       return;
     }
 
+    if (event.target.closest("#recharge-import-button")) {
+      document.querySelector("#recharge-import-input").click();
+      return;
+    }
+
+    if (event.target.closest("#recharge-import-confirm")) {
+      applyRechargeImport();
+      return;
+    }
+
+    if (event.target.closest("[data-close-recharge-import]")) {
+      closeRechargeImport();
+      return;
+    }
+
     if (event.target.closest("#create-group-button")) {
       createAdminGroup();
       return;
@@ -1057,6 +1161,7 @@ function bindGlobalClicks() {
       state.lang = langButton.dataset.lang;
       applyLocale();
       renderDynamic();
+      if (state.rechargeImport) renderRechargeImport();
       return;
     }
 
@@ -1762,6 +1867,10 @@ function bindForms() {
 }
 
 function bindInputs() {
+  document.querySelector("#recharge-import-input").addEventListener("change", (event) => {
+    const file = event.target.files?.[0];
+    if (file) previewRechargeImport(file);
+  });
   document.addEventListener("input", (event) => {
     if (event.target.matches("[data-name-editor]") && state.nameEditor) state.nameEditor.draft = event.target.value;
   });
@@ -1786,6 +1895,7 @@ function bindInputs() {
       closeWorkspaceModal();
       closeCodexSettingsModal();
       closeBatchAccountModal();
+      closeRechargeImport();
       closeRechargeQrModal();
       closeFileContextMenu();
       return;

@@ -2,6 +2,14 @@
 
 The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to use another file. Every setting can be overridden with its corresponding environment variable; environment variables take precedence over the JSON file.
 
+Install the Linux control-plane Python dependencies before starting the backend:
+
+```bash
+python3 -m pip install -r backend/requirements.txt
+```
+
+`openpyxl` is required on the control plane for administrator XLSX recharge imports. Microsoft Excel and LibreOffice are not required for this workflow.
+
 ## Service and Storage
 
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.

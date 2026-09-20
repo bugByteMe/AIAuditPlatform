@@ -109,6 +109,11 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('data-recharge-amount="200"', html)
         self.assertIn('api("/api/recharge")', app_source)
         self.assertIn('data-copy-recharge="apiKey"', html)
+        self.assertIn('id="recharge-history"', html)
+        self.assertIn('id="recharge-import-button"', html)
+        self.assertIn('id="recharge-import-modal"', html)
+        self.assertIn('api("/api/admin/recharge-imports/preview"', app_source)
+        self.assertIn('api("/api/admin/recharge-imports"', app_source)
 
     def test_compute_resource_status_and_slim_header_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
@@ -149,7 +154,7 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('new URLSearchParams({ path, depth: "1" })', app_source)
         self.assertIn("folder.childrenLoaded", app_source)
         self.assertIn("function sortTreeFiles(items)", app_source)
-        self.assertIn('left.type === "folder" ? -1 : 1', app_source)
+        self.assertNotIn("left.name.localeCompare(right.name)", app_source)
         self.assertIn("files: sortTreeFiles([...files.values()])", app_source)
         self.assertIn("workspace.files = sortTreeFiles([...files.values()])", app_source)
         self.assertIn("file.hasChildren", render_source)

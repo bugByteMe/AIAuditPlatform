@@ -11,7 +11,7 @@ from pathlib import Path
 from config import SETTINGS
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 6
 DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
@@ -31,6 +31,7 @@ class AccountStore:
     self.users: dict[str, dict] = {}
     self.pending_accounts: dict[str, dict] = {}
     self.groups: dict[str, dict] = {}
+    self.recharge_payments: dict[str, dict] = {}
     self.load_or_seed()
 
   def load_or_seed(self) -> None:
@@ -38,15 +39,16 @@ class AccountStore:
     existed = self.path.exists()
     raw = json.loads(self.path.read_text(encoding="utf-8")) if existed else deepcopy(self.seed_users)
     migrated = not (isinstance(raw, dict) and raw.get("schemaVersion") == SCHEMA_VERSION)
-    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3, 4}:
+    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3, 4, 5}:
       state = self.migrate_versioned(raw)
     else:
       state = self.migrate_legacy(raw) if migrated else raw
     self.users.update(deepcopy(state.get("users") or {}))
     self.pending_accounts.update(deepcopy(state.get("pendingAccounts") or {}))
     self.groups.update(deepcopy(state.get("groups") or {}))
-    self._normalize_provider_state()
-    if migrated or not existed:
+    self.recharge_payments.update(deepcopy(state.get("rechargePayments") or {}))
+    recovered = self._normalize_provider_state()
+    if migrated or not existed or recovered:
       self.save()
 
   def migrate_legacy(self, users: dict[str, dict]) -> dict:
@@ -87,6 +89,7 @@ class AccountStore:
       "users": migrated_users,
       "pendingAccounts": {},
       "groups": groups,
+      "rechargePayments": {},
     }
 
   def migrate_versioned(self, state: dict) -> dict:
@@ -95,9 +98,11 @@ class AccountStore:
     for group in (migrated.get("groups") or {}).values():
       group.setdefault("diskLimitBytes", None)
       group.setdefault("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
+    migrated.setdefault("rechargePayments", {})
     return migrated
 
-  def _normalize_provider_state(self) -> None:
+  def _normalize_provider_state(self) -> bool:
+    changed = False
     for user in self.users.values():
       legacy = user.get("codex") or {}
       legacy_base = str(legacy.get("baseUrl") or "").rstrip("/")
@@ -115,6 +120,11 @@ class AccountStore:
       if "initialBudgetCny" not in account:
         account["initialBudgetCny"] = "0.00"
       account.pop("budgetTokens", None)
+    for payment in self.recharge_payments.values():
+      if payment.get("status") == "processing":
+        payment.update({"status": "review_required", "reason": "server restarted before provider result was persisted"})
+        changed = True
+    return changed
 
   def state(self) -> dict:
     return {
@@ -122,6 +132,7 @@ class AccountStore:
       "users": self.users,
       "pendingAccounts": self.pending_accounts,
       "groups": self.groups,
+      "rechargePayments": self.recharge_payments,
     }
 
   def save(self, users: dict[str, dict] | None = None) -> None:
@@ -377,24 +388,90 @@ class AccountStore:
       return user
     return next((item for item in self.users.values() if item.get("id") == identifier), None)
 
+  def recharge_payment(self, key: str) -> dict | None:
+    with self.lock:
+      payment = self.recharge_payments.get(key)
+      return deepcopy(payment) if payment else None
+
+  def reserve_recharge_payment(self, key: str, payment: dict) -> tuple[bool, dict]:
+    with self.lock:
+      existing = self.recharge_payments.get(key)
+      if existing:
+        return False, deepcopy(existing)
+      reserved = {**deepcopy(payment), "id": f"rch_{key[:16]}", "status": "processing", "reason": ""}
+      self.recharge_payments[key] = reserved
+      try:
+        self.save()
+      except Exception:
+        self.recharge_payments.pop(key, None)
+        raise
+      return True, deepcopy(reserved)
+
+  def finish_recharge_payment(self, key: str, *, status: str, reason: str = "", binding_updates: dict | None = None) -> dict:
+    with self.lock:
+      payment = self.recharge_payments.get(key)
+      if not payment:
+        raise ValueError("recharge payment reservation was not found")
+      previous_payment = deepcopy(payment)
+      user = self.user_by_identifier(str(payment.get("userId") or ""))
+      previous_binding = deepcopy((user or {}).get("micu") or {})
+      payment.update({"status": status, "reason": reason, "completedAt": _timestamp()})
+      if binding_updates:
+        if not user:
+          raise ValueError("recharge account was not found")
+        user.setdefault("micu", {}).update(deepcopy(binding_updates))
+      try:
+        self.save()
+      except Exception:
+        self.recharge_payments[key] = previous_payment
+        if user is not None:
+          user["micu"] = previous_binding
+        raise
+      return deepcopy(payment)
+
+  def recharge_history(self, user_id: str) -> list[dict]:
+    with self.lock:
+      rows = [
+        {
+          "id": payment["id"],
+          "paidAt": payment["paidAt"],
+          "amountCny": payment["amountCny"],
+          "importedAt": payment["importedAt"],
+        }
+        for payment in self.recharge_payments.values()
+        if payment.get("status") == "applied" and str(payment.get("userId") or "") == user_id
+      ]
+      return sorted(rows, key=lambda item: (item["paidAt"], item["importedAt"], item["id"]), reverse=True)
+
+  def _tombstone_recharge_payments(self, user_ids: set[str]) -> None:
+    for payment in self.recharge_payments.values():
+      if str(payment.get("userId") or "") not in user_ids:
+        continue
+      payment.clear()
+      payment.update({"id": f"rch_deleted_{secrets.token_hex(6)}", "status": "used", "deletedAt": _timestamp()})
+
   def remove_accounts(self, user_ids: set[str]) -> tuple[list[dict], list[dict]]:
     with self.lock:
       removed_users = [deepcopy(user) for user in self.users.values() if str(user.get("id")) in user_ids]
       removed_pending = [deepcopy(account) for account in self.pending_accounts.values() if str(account.get("id")) in user_ids]
       previous_users = deepcopy(self.users)
       previous_pending = deepcopy(self.pending_accounts)
+      previous_payments = deepcopy(self.recharge_payments)
       try:
         for username, user in list(self.users.items()):
           if str(user.get("id")) in user_ids:
             self.users.pop(username, None)
         for user_id in user_ids:
           self.pending_accounts.pop(user_id, None)
+        self._tombstone_recharge_payments(user_ids)
         self.save()
       except Exception:
         self.users.clear()
         self.users.update(previous_users)
         self.pending_accounts.clear()
         self.pending_accounts.update(previous_pending)
+        self.recharge_payments.clear()
+        self.recharge_payments.update(previous_payments)
         raise
       return removed_users, removed_pending
 
@@ -406,6 +483,7 @@ class AccountStore:
       previous_groups = deepcopy(self.groups)
       previous_users = deepcopy(self.users)
       previous_pending = deepcopy(self.pending_accounts)
+      previous_payments = deepcopy(self.recharge_payments)
       removed_users = [deepcopy(user) for user in self.users.values() if str(user.get("id")) in user_ids]
       removed_pending = [deepcopy(account) for account in self.pending_accounts.values() if str(account.get("id")) in user_ids]
       try:
@@ -414,6 +492,7 @@ class AccountStore:
             self.users.pop(username, None)
         for user_id in user_ids:
           self.pending_accounts.pop(user_id, None)
+        self._tombstone_recharge_payments(user_ids)
         removed_group = deepcopy(self.groups.pop(group_id))
         self.save()
       except Exception:
@@ -423,5 +502,7 @@ class AccountStore:
         self.users.update(previous_users)
         self.pending_accounts.clear()
         self.pending_accounts.update(previous_pending)
+        self.recharge_payments.clear()
+        self.recharge_payments.update(previous_payments)
         raise
       return removed_group, removed_users, removed_pending

@@ -20,8 +20,9 @@ from account_store import AccountStore
 from chat_runtime import ChatRuntime
 from config import SETTINGS
 from micu_api import MicuApiClient, MicuApiError, parse_cny
+from recharge_import import MAX_WORKBOOK_BYTES, parse_recharge_workbook, payment_key
 from upload_store import UploadManager
-from workspace_store import StorageError, WorkspaceStore, parse_query, parse_urlencoded_paths
+from workspace_store import StorageError, WorkspaceStore, parse_multipart, parse_query, parse_urlencoded_paths
 
 
 FRONTEND_DIR = SETTINGS.frontend_dir
@@ -338,6 +339,10 @@ class Handler(BaseHTTPRequestHandler):
         self.accounts()
       elif method == "POST" and path == "/api/accounts/batch":
         self.create_account_batch()
+      elif method == "POST" and path == "/api/admin/recharge-imports/preview":
+        self.preview_recharge_import()
+      elif method == "POST" and path == "/api/admin/recharge-imports":
+        self.apply_recharge_import()
       elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/reset-budget"):
         self.reset_account_budget(path.split("/")[-2])
       elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/revoke-invite"):
@@ -550,6 +555,121 @@ class Handler(BaseHTTPRequestHandler):
     ACCOUNT_STORE.save()
     add_audit(actor["username"], "account MicuAPI balance added", f"{account['id']} amountCny={balance['addedCny']} balanceCny={balance['remainingCny']}")
     self.write_json({"account": admin_account(account)})
+
+  def read_recharge_upload(self) -> tuple[bytes, dict[str, str]]:
+    content_length = int(self.headers.get("Content-Length") or 0)
+    if content_length <= 0:
+      raise ValueError("XLSX file is required")
+    if content_length > MAX_WORKBOOK_BYTES + 1024 * 1024:
+      raise ValueError("XLSX upload exceeds the size limit")
+    fields, files = parse_multipart(self.headers.get("Content-Type", ""), self.rfile.read(content_length))
+    if len(files) != 1:
+      raise ValueError("upload exactly one XLSX file")
+    uploaded = files[0]
+    if Path(uploaded.path).suffix.lower() != ".xlsx":
+      raise ValueError("only .xlsx files are supported")
+    return uploaded.content, fields
+
+  def classify_recharge_import(self, parsed: dict) -> dict:
+    seen: set[str] = set()
+    classified = []
+    for source in parsed["records"]:
+      record = dict(source)
+      payment_number = str(record.pop("paymentNumber", "") or "")
+      if record["status"] != "candidate":
+        classified.append(record)
+        continue
+      key = payment_key(payment_number)
+      if key in seen or ACCOUNT_STORE.recharge_payment(key):
+        record.update({"status": "duplicate", "reason": "支付单号 has already been used", "paymentKey": key})
+      else:
+        seen.add(key)
+        account = user_by_username(record["username"])
+        if not account:
+          record.update({"status": "unmatched", "reason": "用户名 does not match an active account", "paymentKey": key})
+        elif not (account.get("micu") or {}).get("tokenId"):
+          record.update({"status": "invalid", "reason": "account does not have a provisioned MicuAPI token", "paymentKey": key})
+        else:
+          record.update({"status": "eligible", "reason": "", "paymentKey": key, "userId": account["id"]})
+      record["paymentNumber"] = payment_number
+      classified.append(record)
+    summary: dict[str, int] = {}
+    for record in classified:
+      summary[record["status"]] = summary.get(record["status"], 0) + 1
+    return {**parsed, "records": classified, "summary": summary}
+
+  @staticmethod
+  def public_recharge_import(result: dict) -> dict:
+    records = []
+    for source in result["records"]:
+      record = {key: value for key, value in source.items() if key not in {"paymentNumber", "paymentKey", "userId"}}
+      records.append(record)
+    return {**{key: value for key, value in result.items() if key != "records"}, "records": records}
+
+  def preview_recharge_import(self) -> None:
+    self.require_admin()
+    content, _ = self.read_recharge_upload()
+    result = self.classify_recharge_import(parse_recharge_workbook(content))
+    self.write_json(self.public_recharge_import(result))
+
+  def apply_recharge_import(self) -> None:
+    actor = self.require_admin()
+    content, fields = self.read_recharge_upload()
+    parsed = parse_recharge_workbook(content)
+    if not fields.get("previewDigest") or not secrets.compare_digest(fields["previewDigest"], parsed["digest"]):
+      raise ValueError("uploaded workbook does not match the preview")
+    result = self.classify_recharge_import(parsed)
+    batch_id = f"rchb_{secrets.token_urlsafe(9)}"
+    imported_at = time.strftime("%Y-%m-%d %H:%M:%S")
+    for record in result["records"]:
+      if record["status"] != "eligible":
+        continue
+      account = ACCOUNT_STORE.user_by_identifier(record["userId"])
+      if not account:
+        record.update({"status": "unmatched", "reason": "account no longer exists"})
+        continue
+      reservation = {
+        "userId": account["id"],
+        "paidAt": record["paidAt"],
+        "amountCny": record["amountCny"],
+        "creditCny": record["creditCny"],
+        "importedAt": imported_at,
+        "batchId": batch_id,
+        "sheet": record["sheet"],
+        "row": record["row"],
+        "paymentRef": record["paymentRef"],
+      }
+      reserved, _ = ACCOUNT_STORE.reserve_recharge_payment(record["paymentKey"], reservation)
+      if not reserved:
+        record.update({"status": "duplicate", "reason": "支付单号 has already been used"})
+        continue
+      try:
+        balance = MICU_CLIENT.add_balance(account["micu"], record["creditCny"])
+        ACCOUNT_STORE.finish_recharge_payment(
+          record["paymentKey"],
+          status="applied",
+          binding_updates={
+            "lastBalanceCny": balance["remainingCny"],
+            "lastRemainingPercent": balance["remainingPercent"],
+            "lastSyncedAt": int(time.time()),
+            "status": balance["status"],
+            "lastError": "",
+          },
+        )
+        record.update({"status": "applied", "reason": ""})
+      except Exception as exc:
+        ACCOUNT_STORE.finish_recharge_payment(record["paymentKey"], status="review_required", reason=str(exc))
+        record.update({"status": "review_required", "reason": str(exc)})
+    summary: dict[str, int] = {}
+    for record in result["records"]:
+      summary[record["status"]] = summary.get(record["status"], 0) + 1
+    result.update({"batchId": batch_id, "summary": summary})
+    add_audit(
+      actor["username"],
+      "recharge workbook imported",
+      f"{batch_id} applied={summary.get('applied', 0)} duplicate={summary.get('duplicate', 0)} review={summary.get('review_required', 0)} skipped={len(result['records']) - summary.get('applied', 0) - summary.get('duplicate', 0) - summary.get('review_required', 0)}",
+    )
+    self.write_json(self.public_recharge_import(result))
 
   def create_group(self) -> None:
     actor = self.require_admin()
@@ -789,6 +909,7 @@ class Handler(BaseHTTPRequestHandler):
           {"amountCny": "100.00", "qrCodeUrl": "/assets/payment-qr/100.png"},
           {"amountCny": "200.00", "qrCodeUrl": "/assets/payment-qr/200.png"},
         ],
+        "adjustments": ACCOUNT_STORE.recharge_history(str(user.get("id") or "")),
       }
     )
 

@@ -77,6 +77,7 @@ System admins can:
 - Create users and persistent named groups individually or in invitation batches.
 - View and revoke unused invitation tokens.
 - Set an initial MicuAPI CNY balance and add funds to an existing balance.
+- Preview and import fixed-price XLSX payment exports; each unused successful payment credits 80% of its face amount to the exact username in the sheet.
 - Disable or re-enable users and groups.
 - View usage summaries by user, group, workspace, model, and date range.
 - Inspect budget stop events and failed run records.

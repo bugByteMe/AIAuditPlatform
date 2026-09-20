@@ -414,6 +414,24 @@ export function renderOperationProgress() {
   container.classList.toggle("indeterminate", Boolean(progress.indeterminate));
 }
 
+export function renderRechargeHistory() {
+  const container = document.querySelector("#recharge-history");
+  if (!container) return;
+  const adjustments = state.recharge?.adjustments || [];
+  container.innerHTML = adjustments.length
+    ? adjustments
+        .map(
+          (item) => `
+            <div class="recharge-history-row">
+              <span>${escapeHtml(item.paidAt || item.importedAt || "-")}</span>
+              <strong>¥${escapeHtml(item.amountCny || "0.00")}</strong>
+            </div>
+          `,
+        )
+        .join("")
+    : `<div class="empty-state">${t("recharge.historyEmpty")}</div>`;
+}
+
 export function renderArtifacts() {
   const workspace = currentWorkspace();
   const tree = document.querySelector("#artifact-tree");

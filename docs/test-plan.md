@@ -124,3 +124,10 @@
 - Missing QR assets produce a visible configuration message rather than a broken-image-only state.
 - The payment dialog displays the signed-in username and instructs the payer to include it in the payment note.
 - Logging out removes the managed API key from in-memory frontend state and the credential fields.
+- Only system administrators can preview or confirm an XLSX recharge import; preview never changes provider balance.
+- XLSX parsing handles multiple sheets, incorrect `A1` dimensions, dynamic header positions, shared or inline strings, and archive/row limits.
+- Only exact fixed-price sheets and strictly matching successful rows qualify; usernames match case-insensitively without parsing notes.
+- Confirmation credits CNY 40/80/160 while user history displays the original CNY 50/100/200 amount and payment time.
+- Duplicate payment numbers are rejected within one workbook, across persisted batches, and under concurrent confirmation.
+- Provider failures do not stop later records and remain blocked in `review_required` for manual reconciliation.
+- Recharge history persists across restart, is isolated by stable user ID, and becomes an anonymous deduplication tombstone after account deletion.
