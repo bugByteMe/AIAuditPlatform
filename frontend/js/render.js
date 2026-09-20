@@ -121,10 +121,27 @@ function markdownToHtml(value) {
     .join("");
 }
 
-function descendantFilePaths(items, folderPath) {
-  return items
-    .filter((item) => item.type === "file" && item.path.startsWith(`${folderPath}/`))
-    .map((item) => item.path);
+function pathIsSelected(path, selectedPaths) {
+  if (!selectedPaths) return false;
+  const parts = path.split("/");
+  return parts.some((_, index) => selectedPaths.has(parts.slice(0, index + 1).join("/")));
+}
+
+function selectionState(item, items, selectedPaths) {
+  const path = item.path || item.name;
+  if (pathIsSelected(path, selectedPaths)) return { checked: true, indeterminate: false };
+  if (item.type !== "folder") return { checked: false, indeterminate: false };
+  const descendantsSelected = [...(selectedPaths || [])].some((selected) => selected.startsWith(`${path}/`));
+  if (!descendantsSelected) return { checked: false, indeterminate: false };
+  const directChildren = items.filter((candidate) => {
+    const candidatePath = candidate.path || candidate.name;
+    return candidatePath.startsWith(`${path}/`) && candidatePath.split("/").length === path.split("/").length + 1;
+  });
+  const childStates = directChildren.map((child) => selectionState(child, items, selectedPaths));
+  return {
+    checked: childStates.length > 0 && childStates.every((state) => state.checked),
+    indeterminate: childStates.some((state) => state.checked || state.indeterminate),
+  };
 }
 
 function treeRows(items, collapsedFolders, options = {}) {
@@ -142,17 +159,15 @@ function treeRows(items, collapsedFolders, options = {}) {
       const safeName = escapeHtml(file.name);
       const status = file.status ? `<span class="file-status ${file.status}">${t(`artifact.${file.status}`)}</span>` : "";
       const meta = file.type === "folder" ? t("files.folder") : file.size || t("files.file");
-      const collapsed = file.type === "folder" && collapsedFolders.has(path);
-      const icon = file.type === "folder" ? (collapsed ? "▸" : "▾") : "·";
-      const folderAttr = file.type === "folder" ? `data-folder-path="${safePath}"` : "";
-      const folderDescendants = file.type === "folder" ? descendantFilePaths(items, path) : [];
-      const checkable = options.checkboxes && (file.type === "file" || folderDescendants.length);
-      const checked =
-        file.type === "folder"
-          ? folderDescendants.length > 0 && folderDescendants.every((itemPath) => options.selectedPaths?.has(itemPath))
-          : options.selectedPaths?.has(path);
+      const expandable = file.type === "folder" && file.hasChildren;
+      const collapsed = expandable && collapsedFolders.has(path);
+      const loading = expandable && options.loadingFolders?.has(path);
+      const icon = file.type === "folder" ? (loading ? "…" : expandable ? (collapsed ? "▸" : "▾") : "·") : "·";
+      const folderAttr = expandable ? `data-folder-path="${safePath}"` : "";
+      const checkable = options.checkboxes && (file.type === "file" || file.hasChildren);
+      const selected = selectionState(file, items, options.selectedPaths);
       const checkbox = checkable
-        ? `<input type="checkbox" data-artifact="${safePath}" ${file.type === "folder" ? `data-artifact-folder="${safePath}"` : ""} ${checked ? "checked" : ""} ${file.disabled ? "disabled" : ""} />`
+        ? `<input type="checkbox" data-artifact="${safePath}" ${file.type === "folder" ? `data-artifact-folder="${safePath}"` : ""} ${selected.checked ? "checked" : ""} ${selected.indeterminate ? 'data-indeterminate="true"' : ""} ${file.disabled ? "disabled" : ""} />`
           : "";
       const contextAttr = options.context ? `data-context-menu="${options.context}"` : "";
       const treeAttr = options.tree ? `data-tree="${options.tree}"` : "";
@@ -182,9 +197,18 @@ export function renderCurrentUser() {
     ? t("session.customProvider")
     : budget.remainingPercent === null || budget.remainingPercent === undefined
       ? t("session.balanceUnavailable")
-      : `${Number(budget.remainingPercent).toFixed(1)}%`;
-  document.querySelector("#current-budget-label").textContent = `${percentage} · ${used.toLocaleString()} ${t("session.budgetUsed")}`;
-  document.querySelector("#current-budget-label").title = `${used.toLocaleString()} ${t("session.budgetUsed")}`;
+      : `${Number(budget.remainingPercent).toFixed(1).replace(/\.0$/, "")}%`;
+  const compactTokens = used < 1_000
+    ? String(Math.round(used))
+    : used < 1_000_000
+      ? `${(used / 1_000).toFixed(1).replace(/\.0$/, "")}K`
+      : `${(used / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
+  const separator = state.lang === "zh" ? "，" : ", ";
+  const budgetLabel = budget.source === "custom" || budget.remainingPercent === null || budget.remainingPercent === undefined
+    ? `${percentage}${separator}${t("session.platformTokenUsage")} ${compactTokens}`
+    : `${t("session.remaining")} ${percentage}${separator}${t("session.platformTokenUsage")} ${compactTokens}`;
+  document.querySelector("#current-budget-label").textContent = budgetLabel;
+  document.querySelector("#current-budget-label").title = `${t("session.platformTokenUsage")} ${used.toLocaleString()}`;
   const meter = document.querySelector("#current-budget-meter");
   const hasPercentage = budget.remainingPercent !== null && budget.remainingPercent !== undefined;
   meter.style.width = `${Math.max(0, Math.min(100, Number(budget.remainingPercent || 0)))}%`;
@@ -394,12 +418,14 @@ export function renderArtifacts() {
   const workspace = currentWorkspace();
   const tree = document.querySelector("#artifact-tree");
   if (!tree) return;
-  const workspaceFiles = (workspace?.files || []).filter((file) => file.type === "file");
+  const topLevelItems = (workspace?.files || []).filter(
+    (file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren),
+  );
   const selectAll = document.querySelector("#select-all-artifacts");
   if (selectAll) {
-    const selectedCount = workspaceFiles.filter((file) => state.selectedArtifacts.has(file.path)).length;
-    selectAll.checked = workspaceFiles.length > 0 && selectedCount === workspaceFiles.length;
-    selectAll.indeterminate = selectedCount > 0 && selectedCount < workspaceFiles.length;
+    const selectedCount = topLevelItems.filter((file) => pathIsSelected(file.path, state.selectedArtifacts)).length;
+    selectAll.checked = topLevelItems.length > 0 && selectedCount === topLevelItems.length;
+    selectAll.indeterminate = state.selectedArtifacts.size > 0 && !selectAll.checked;
   }
   const artifactStatuses = new Map((workspace?.artifacts || []).map((artifact) => [artifact.path, artifact.status]));
   const files = (workspace?.files || []).map((file) => ({
@@ -411,17 +437,21 @@ export function renderArtifacts() {
         checkboxes: true,
         context: "artifact-file",
         selectedPaths: state.selectedArtifacts,
+        loadingFolders: state.loadingFileFolders,
         tree: "artifacts",
         emptyText: t("files.empty"),
       })
     : "";
+  tree.querySelectorAll('[data-indeterminate="true"]').forEach((checkbox) => {
+    checkbox.indeterminate = true;
+  });
 }
 
 export function renderFileExplorer() {
   const workspace = currentWorkspace();
   const files = workspace?.files || [];
   const tree = document.querySelector("#file-tree");
-  tree.innerHTML = filesToTree(files, state.collapsedFileFolders, { tree: "chat-files" });
+  tree.innerHTML = filesToTree(files, state.collapsedFileFolders, { tree: "chat-files", loadingFolders: state.loadingFileFolders });
 }
 
 export function renderAdmin() {

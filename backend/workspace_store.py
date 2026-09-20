@@ -791,27 +791,48 @@ class WorkspaceStore:
       return []
     return self.diff_snapshots(initial if initial and initial["id"] != latest["id"] else None, latest)
 
-  def file_tree(self, workspace_id: str) -> list[dict]:
+  def file_tree(self, workspace_id: str, parent: str = "", depth: int = 3) -> list[dict]:
     workspace_path = self.workspace_path(workspace_id)
     if not workspace_path.exists():
       return []
+    if depth < 1 or depth > 3:
+      raise StorageError("bad_request", "file tree depth must be between 1 and 3")
+    parent_path = normalize_relative_path(parent) if parent else ""
+    tree_root = ensure_under_root(workspace_path, workspace_path / parent_path) if parent_path else workspace_path
+    if not tree_root.exists():
+      raise StorageError("not_found", "folder not found")
+    if not tree_root.is_dir():
+      raise StorageError("bad_request", "file tree path must be a folder")
+
     rows = []
-    seen_dirs = set()
-    for item in sorted(workspace_path.rglob("*")):
-      relative = item.relative_to(workspace_path).as_posix()
-      parts = relative.split("/")
-      if item.is_dir():
-        seen_dirs.add(relative)
-        rows.append({"name": item.name, "path": relative, "type": "folder", "level": len(parts) - 1})
-      elif item.is_file():
-        parent = posixpath.dirname(relative)
-        if parent and parent not in seen_dirs:
-          for index in range(1, len(parts)):
-            folder = "/".join(parts[:index])
-            if folder not in seen_dirs:
-              seen_dirs.add(folder)
-              rows.append({"name": parts[index - 1], "path": folder, "type": "folder", "level": index - 1})
-        rows.append({"name": item.name, "path": relative, "type": "file", "level": len(parts) - 1, "size": human_size(item.stat().st_size)})
+
+    def visible_children(directory: Path) -> list[Path]:
+      return sorted(
+        (item for item in directory.iterdir() if not item.is_symlink()),
+        key=lambda item: (not item.is_dir(), item.name.casefold(), item.name),
+      )
+
+    def append_children(directory: Path, remaining_depth: int) -> None:
+      for item in visible_children(directory):
+        ensure_under_root(workspace_path, item)
+        relative = item.relative_to(workspace_path).as_posix()
+        parts = relative.split("/")
+        if item.is_dir():
+          has_children = bool(visible_children(item))
+          rows.append({
+            "name": item.name,
+            "path": relative,
+            "type": "folder",
+            "level": len(parts) - 1,
+            "hasChildren": has_children,
+            "childrenLoaded": not has_children or remaining_depth > 1,
+          })
+          if has_children and remaining_depth > 1:
+            append_children(item, remaining_depth - 1)
+        elif item.is_file():
+          rows.append({"name": item.name, "path": relative, "type": "file", "level": len(parts) - 1, "size": human_size(item.stat().st_size)})
+
+    append_children(tree_root, depth)
     return rows
 
   def workspace_file_path(self, workspace_id: str, raw_path: str) -> Path:
@@ -906,11 +927,27 @@ class WorkspaceStore:
     else:
       entries = [entry for entry in self.workspace_artifacts(workspace_id, metadata) if entry["status"] in {"added", "modified"}]
     if selected:
-      allowed = {entry["path"] for entry in entries}
-      for path in selected:
-        if path not in allowed:
-          raise StorageError("bad_request", f"selected path is not downloadable: {path}")
-      entries = [entry for entry in entries if entry["path"] in set(selected)]
+      selected_entries = [
+        entry
+        for entry in entries
+        if any(entry["path"] == path or entry["path"].startswith(f"{path}/") for path in selected)
+      ]
+      matched = {
+        path
+        for path in selected
+        if any(entry["path"] == path or entry["path"].startswith(f"{path}/") for entry in entries)
+      }
+      missing = next(
+        (
+          path
+          for path in selected
+          if path not in matched and not ensure_under_root(self.workspace_path(workspace_id), self.workspace_path(workspace_id) / path).is_dir()
+        ),
+        None,
+      )
+      if missing:
+        raise StorageError("bad_request", f"selected path is not downloadable: {missing}")
+      entries = selected_entries
 
     manifest = {
       "workspaceId": workspace_id,

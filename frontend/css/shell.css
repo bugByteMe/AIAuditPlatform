@@ -111,8 +111,15 @@
 }
 
 .session-row.small {
+  align-items: flex-start;
   margin: 7px 0 0;
   color: #aebdca;
+}
+
+#current-budget-label {
+  max-width: 170px;
+  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .app-shell.sidebar-collapsed .sidebar {

@@ -15,6 +15,7 @@ export const state = {
   selectedUploadFiles: [],
   collapsedFileFolders: new Set(),
   collapsedArtifactFolders: new Set(),
+  loadingFileFolders: new Set(),
   chatLastEventIds: {},
   runtimeConfig: {
     chatPollIntervalMs: 2000,

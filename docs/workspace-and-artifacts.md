@@ -4,6 +4,14 @@
 
 A workspace is a managed directory on the shared filesystem. It contains the files used by Codex for one audit task or related set of tasks.
 
+## File Tree Loading
+
+Workspace list and detail responses include only the first three levels of the file tree. Folders on the third level report whether they contain children but do not include those children. The chat file explorer and workspace-management tree render these three levels by default and request only the direct children of a deeper folder when the user expands it.
+
+File-tree nodes expose their workspace-relative path, absolute display level, type, and whether folder children exist and are already present in the response. The authenticated file-tree endpoint accepts a normalized folder path and a bounded depth; current browser expansion requests use a depth of one. Backend traversal stops at the requested depth and applies the same workspace permission and path-containment checks as file access.
+
+Both frontend trees share loaded node data while retaining independent expanded/collapsed state. A workspace snapshot change invalidates lazily loaded descendants so deleted or replaced paths cannot remain visible. Folder selections are represented as subtree selections and are expanded by the backend for downloads, so selecting or operating on a folder does not require sending its full tree to the browser.
+
 Users create workspaces by uploading files or folders through the web UI. The backend writes uploaded content into a generated workspace path and stores metadata in the database.
 
 Folder uploads use persisted, resumable upload sessions. The browser first sends a file manifest to the control plane, which validates permissions, paths, file count, declared sizes, blocked file types, and group quota before accepting bytes. It then sends bounded binary chunks through the authenticated control-plane API. The control plane streams each chunk to a reserved compute worker without buffering the file or request body in memory.

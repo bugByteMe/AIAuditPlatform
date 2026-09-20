@@ -74,7 +74,79 @@ function stopChatStream() {
 
 function replaceWorkspace(updatedWorkspace) {
   const index = workspaceIndexById(updatedWorkspace.id);
-  if (index >= 0) state.workspaces[index] = updatedWorkspace;
+  if (index < 0) return;
+  const current = state.workspaces[index];
+  const sameSnapshot = current?.latestSnapshotId === updatedWorkspace.latestSnapshotId;
+  if (sameSnapshot) {
+    const files = new Map((current.files || []).map((file) => [file.path, file]));
+    (updatedWorkspace.files || []).forEach((file) => {
+      const existing = files.get(file.path);
+      files.set(file.path, {
+        ...existing,
+        ...file,
+        ...(file.type === "folder" ? { childrenLoaded: Boolean(existing?.childrenLoaded || file.childrenLoaded) } : {}),
+      });
+    });
+    state.workspaces[index] = { ...updatedWorkspace, files: [...files.values()].sort((left, right) => left.path.localeCompare(right.path)) };
+    return;
+  }
+  state.workspaces[index] = updatedWorkspace;
+  if (index === state.selectedWorkspace) resetFileTreeState(updatedWorkspace);
+}
+
+function resetFileTreeState(workspace) {
+  const collapsed = (workspace?.files || [])
+    .filter((file) => file.type === "folder" && file.hasChildren && !file.childrenLoaded)
+    .map((file) => file.path);
+  state.collapsedFileFolders = new Set(collapsed);
+  state.collapsedArtifactFolders = new Set(collapsed);
+  state.loadingFileFolders = new Set();
+  state.selectedArtifacts = new Set(
+    (workspace?.files || [])
+      .filter((file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren))
+      .map((file) => file.path),
+  );
+}
+
+function mergeWorkspaceTreeFiles(workspace, incomingFiles) {
+  const files = new Map((workspace.files || []).map((file) => [file.path, file]));
+  incomingFiles.forEach((file) => files.set(file.path, { ...files.get(file.path), ...file }));
+  workspace.files = [...files.values()].sort((left, right) => left.path.localeCompare(right.path));
+}
+
+async function expandWorkspaceFolder(path, collapsedFolders, renderTree) {
+  const workspace = safeCurrentWorkspace();
+  if (!workspace || state.loadingFileFolders.has(path)) return;
+  const folder = (workspace.files || []).find((file) => file.type === "folder" && file.path === path);
+  if (!folder?.hasChildren) return;
+  if (folder.childrenLoaded) {
+    collapsedFolders.delete(path);
+    renderTree();
+    return;
+  }
+  state.loadingFileFolders.add(path);
+  renderTree();
+  try {
+    const params = new URLSearchParams({ path, depth: "1" });
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/files?${params.toString()}`);
+    const latestWorkspace = state.workspaces.find((item) => item.id === workspace.id);
+    if (!latestWorkspace) return;
+    mergeWorkspaceTreeFiles(latestWorkspace, result.files || []);
+    (result.files || [])
+      .filter((file) => file.type === "folder" && file.hasChildren && !file.childrenLoaded)
+      .forEach((file) => {
+        state.collapsedFileFolders.add(file.path);
+        state.collapsedArtifactFolders.add(file.path);
+      });
+    const latestFolder = latestWorkspace.files.find((file) => file.type === "folder" && file.path === path);
+    if (latestFolder) latestFolder.childrenLoaded = true;
+    collapsedFolders.delete(path);
+  } catch (error) {
+    showToast(error.message || t("toast.workspaceLoadFailed"));
+  } finally {
+    state.loadingFileFolders.delete(path);
+    renderTree();
+  }
 }
 
 async function refreshCurrentUser() {
@@ -277,11 +349,7 @@ async function loadWorkspaces() {
     state.selectedWorkspace = Math.min(state.selectedWorkspace, Math.max(state.workspaces.length - 1, 0));
     state.selectedSession = 0;
     const workspace = safeCurrentWorkspace();
-    state.selectedArtifacts = new Set(
-      (workspace?.files || [])
-        .filter((file) => file.type === "file")
-        .map((file) => file.path),
-    );
+    resetFileTreeState(workspace);
   } catch (error) {
     console.error("Failed to load workspaces", error);
     state.workspaces = [];
@@ -620,14 +688,8 @@ async function deleteAdminGroup(groupId) {
 function selectWorkspace(index) {
   state.selectedWorkspace = Number(index);
   state.selectedSession = 0;
-  state.collapsedFileFolders = new Set();
-  state.collapsedArtifactFolders = new Set();
   const workspace = safeCurrentWorkspace();
-  state.selectedArtifacts = new Set(
-    (workspace?.files || [])
-      .filter((file) => file.type === "file")
-      .map((file) => file.path),
-  );
+  resetFileTreeState(workspace);
   renderDynamic();
   maybeStartChatStream();
 }
@@ -1025,10 +1087,12 @@ function bindGlobalClicks() {
     if (folderRow) {
       const path = folderRow.dataset.folderPath;
       const collapsedSet = folderRow.dataset.tree === "artifacts" ? state.collapsedArtifactFolders : state.collapsedFileFolders;
-      if (collapsedSet.has(path)) collapsedSet.delete(path);
-      else collapsedSet.add(path);
-      if (folderRow.dataset.tree === "artifacts") renderArtifacts();
-      else renderFileExplorer();
+      const renderTree = folderRow.dataset.tree === "artifacts" ? renderArtifacts : renderFileExplorer;
+      if (collapsedSet.has(path)) expandWorkspaceFolder(path, collapsedSet, renderTree);
+      else {
+        collapsedSet.add(path);
+        renderTree();
+      }
       return;
     }
 
@@ -1268,8 +1332,13 @@ async function runResumableUpload({ items, mode, workspaceId = "", name = "", sh
 function downloadCurrentWorkspace(mode) {
   const workspace = safeCurrentWorkspace();
   if (!workspace) return;
+  const selectedPaths = selectedWorkspaceFilePaths(workspace);
+  if (!selectedPaths.length) {
+    showToast(t("toast.noFilesSelected"));
+    return;
+  }
   const params = new URLSearchParams({ mode: "full" });
-  selectedWorkspaceFilePaths(workspace).forEach((path) => params.append("paths", path));
+  selectedPaths.forEach((path) => params.append("paths", path));
   startNativeDownload(authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspace.id)}/download?${params.toString()}`));
   showToast(t("toast.download"));
 }
@@ -1284,23 +1353,40 @@ function workspaceFileDownloadUrl(workspace, path, type) {
     return fileUrl(workspace.id, "raw", path, { download: "1" });
   }
   const params = new URLSearchParams({ mode: "full" });
-  const descendantFiles = (workspace.files || [])
-    .filter((file) => file.type === "file" && file.path.startsWith(`${path}/`))
-  if (!descendantFiles.length) return "";
-  descendantFiles.forEach((file) => params.append("paths", file.path));
+  params.append("paths", path);
   return authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspace.id)}/download?${params.toString()}`);
 }
 
 function selectedWorkspaceFilePaths(workspace = safeCurrentWorkspace()) {
   if (!workspace) return [];
-  const allowed = new Set((workspace.files || []).filter((file) => file.type === "file").map((file) => file.path));
+  const allowed = new Set((workspace.files || []).map((file) => file.path));
   return [...state.selectedArtifacts].filter((path) => allowed.has(path));
 }
 
-function descendantFilePaths(workspace, folderPath) {
-  return (workspace?.files || [])
-    .filter((file) => file.type === "file" && file.path.startsWith(`${folderPath}/`))
-    .map((file) => file.path);
+function directTreeChildren(workspace, folderPath) {
+  const parentDepth = folderPath.split("/").length;
+  return (workspace?.files || []).filter((file) => file.path.startsWith(`${folderPath}/`) && file.path.split("/").length === parentDepth + 1);
+}
+
+function deselectTreePath(workspace, path) {
+  const selectedAncestor = [...state.selectedArtifacts]
+    .filter((selected) => path === selected || path.startsWith(`${selected}/`))
+    .sort((left, right) => right.length - left.length)[0];
+  [...state.selectedArtifacts]
+    .filter((selected) => selected === path || selected.startsWith(`${path}/`))
+    .forEach((selected) => state.selectedArtifacts.delete(selected));
+  if (!selectedAncestor) return;
+  state.selectedArtifacts.delete(selectedAncestor);
+  let branch = selectedAncestor;
+  while (branch !== path) {
+    const children = directTreeChildren(workspace, branch);
+    const next = children.find((child) => path === child.path || path.startsWith(`${child.path}/`));
+    if (!next) return;
+    children
+      .filter((child) => child.path !== next.path && (child.type === "file" || child.hasChildren))
+      .forEach((child) => state.selectedArtifacts.add(child.path));
+    branch = next.path;
+  }
 }
 
 async function openFilePreview(path) {
@@ -1360,8 +1446,7 @@ async function toggleWorkspaceSharing(index = state.selectedWorkspace) {
       method: "PATCH",
       body: JSON.stringify({ shared: !workspace.shared }),
     });
-    const workspaceIndex = state.workspaces.findIndex((item) => item.id === workspace.id);
-    if (workspaceIndex >= 0) state.workspaces[workspaceIndex] = result.workspace;
+    replaceWorkspace(result.workspace);
     renderDynamic();
     showToast(result.workspace.shared ? t("workspace.group") : t("workspace.private"));
   } catch (error) {
@@ -1394,13 +1479,7 @@ async function uploadFilesToCurrentWorkspace(files) {
   setOperationProgress(t("progress.uploadFiles"), 0);
   try {
     const updatedWorkspace = await runResumableUpload({ items, mode: "append", workspaceId: workspace.id, uploadLabel: t("progress.uploadFiles") });
-    const index = workspaceIndexById(workspace.id);
-    if (index >= 0) state.workspaces[index] = updatedWorkspace;
-    state.selectedArtifacts = new Set(
-      (updatedWorkspace.files || [])
-        .filter((file) => file.type === "file")
-        .map((file) => file.path),
-    );
+    replaceWorkspace(updatedWorkspace);
     document.querySelector("#workspace-add-menu").classList.add("hidden");
     renderDynamic();
     showToast(t("toast.filesUploaded"));
@@ -1420,8 +1499,7 @@ async function deleteCurrentWorkspacePath(path) {
     const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/files?${new URLSearchParams({ path }).toString()}`, {
       method: "DELETE",
     });
-    const index = workspaceIndexById(workspace.id);
-    if (index >= 0) state.workspaces[index] = result.workspace;
+    replaceWorkspace(result.workspace);
     state.selectedArtifacts.delete(path);
     closeFileContextMenu();
     renderDynamic();
@@ -1450,9 +1528,7 @@ async function deleteSelectedWorkspacePaths() {
       });
       latestWorkspace = result.workspace;
     }
-    const index = workspaceIndexById(workspace.id);
-    if (index >= 0) state.workspaces[index] = latestWorkspace;
-    paths.forEach((path) => state.selectedArtifacts.delete(path));
+    replaceWorkspace(latestWorkspace);
     renderDynamic();
     showToast(t("toast.fileDeleted"));
   } catch (error) {
@@ -1714,22 +1790,26 @@ function bindInputs() {
     if (!event.target.matches("[data-artifact]")) return;
     const workspace = safeCurrentWorkspace();
     const path = event.target.dataset.artifact;
-    const paths = event.target.dataset.artifactFolder ? descendantFilePaths(workspace, path) : [path];
-    paths.forEach((itemPath) => {
-      if (event.target.checked) state.selectedArtifacts.add(itemPath);
-      else state.selectedArtifacts.delete(itemPath);
-    });
+    if (event.target.checked) {
+      [...state.selectedArtifacts]
+        .filter((selected) => selected === path || selected.startsWith(`${path}/`))
+        .forEach((selected) => state.selectedArtifacts.delete(selected));
+      state.selectedArtifacts.add(path);
+    } else {
+      deselectTreePath(workspace, path);
+    }
     renderArtifacts();
   });
 
   document.querySelector("#select-all-artifacts").addEventListener("change", (event) => {
     const workspace = safeCurrentWorkspace();
-    (workspace?.files || [])
-      .filter((file) => file.type === "file")
-      .forEach((file) => {
-        if (event.target.checked) state.selectedArtifacts.add(file.path);
-        else state.selectedArtifacts.delete(file.path);
-      });
+    state.selectedArtifacts = event.target.checked
+      ? new Set(
+          (workspace?.files || [])
+            .filter((file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren))
+            .map((file) => file.path),
+        )
+      : new Set();
     renderArtifacts();
   });
 

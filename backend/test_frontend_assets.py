@@ -136,10 +136,20 @@ class FrontendAssetTests(unittest.TestCase):
         chat_css = (FRONTEND_ROOT / "css" / "chat.css").read_text(encoding="utf-8")
         self.assertIn('state.user.budget', render_source)
         self.assertIn('used.toLocaleString()', render_source)
+        self.assertIn('session.platformTokenUsage', render_source)
+        self.assertIn('used / 1_000_000', render_source)
         self.assertIn('data-edit-name', render_source)
         self.assertIn('/chat/sessions/${encodeURIComponent(editor.id)}', app_source)
         self.assertIn('grid-template-rows: auto minmax(0, 1fr)', chat_css)
         self.assertIn('height: 100dvh', chat_css)
+
+    def test_file_trees_load_deeper_folders_on_demand(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        self.assertIn('new URLSearchParams({ path, depth: "1" })', app_source)
+        self.assertIn("folder.childrenLoaded", app_source)
+        self.assertIn("file.hasChildren", render_source)
+        self.assertIn("state.loadingFileFolders", render_source)
 
     def test_chat_fork_and_persistent_delete_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

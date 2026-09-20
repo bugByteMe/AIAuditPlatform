@@ -66,6 +66,8 @@ Managed MicuAPI mode uses the external token balance as its hard limit:
 
 Regular user responses expose only the remaining-budget percentage, calculated as remaining quota divided by remaining plus consumed quota. Exact CNY balances are restricted to system-administrator account responses. Cumulative token counts remain visible to users as usage reporting.
 
+The user sidebar combines these values in one readable label, for example `剩余 10%，平台token总计使用 1.9M`. Percentages and compact token values use at most one decimal place and omit a trailing `.0`; token totals use decimal `K` and `M` units. Custom-provider and unavailable-balance states replace the percentage text but continue to show cumulative platform token usage.
+
 Budget checks belong in the backend control plane. Workers may report usage but should not be the source of truth for authorization.
 
 ## Admin Workflows

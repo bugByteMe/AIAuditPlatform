@@ -21,6 +21,7 @@
 - Startup reconciliation backfills missing active-account bindings without duplicating exact-name tokens.
 - Startup reconciliation repairs stale local token names and safely renames legacy ID-named MicuAPI tokens, while rejecting username conflicts.
 - Regular users receive only a remaining-budget percentage, while exact CNY balances remain available only to system administrators.
+- The sidebar renders remaining percentage and cumulative platform usage together, using compact decimal K/M units without unnecessary trailing zeroes.
 
 ## Disk Quotas
 
@@ -63,6 +64,10 @@
 - Fresh storage initializes SQLite metadata, while populated legacy `metadata.json` storage fails safely with no mutation.
 - A worker failure during a streamed upload releases its compute reservation immediately, preserves resumable offsets, and returns a retryable service-unavailable response after consuming the request body.
 - Concurrent chunks for different files can stream into one upload without blocking behind a process-wide worker upload lock.
+- Workspace list and detail responses include no more than the first three file-tree levels.
+- Third-level folders identify unloaded children, and expanding a folder returns only its direct children after permission and path-containment checks.
+- Chat and workspace-management trees reuse loaded descendants, preserve independent collapse state, and invalidate deeper nodes after a snapshot change.
+- Folder selections download or delete the complete server-resolved subtree without transferring the subtree listing first.
 
 ## Chat Lifecycle
 

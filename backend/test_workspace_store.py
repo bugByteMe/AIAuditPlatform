@@ -210,6 +210,29 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual(paths["workpapers"]["type"], "folder")
     self.assertEqual(paths["workpapers/income.txt"]["type"], "file")
 
+  def test_file_tree_limits_initial_depth_and_loads_one_folder_level(self) -> None:
+    workspace = self.store.create_workspace(
+      OWNER,
+      "Deep tree",
+      True,
+      [UploadedFile("one/two/three/four/five.txt", b"deep"), UploadedFile("root.txt", b"root")],
+    )
+    initial = {item["path"]: item for item in self.store.file_tree(workspace["id"], depth=3)}
+    self.assertIn("one/two/three", initial)
+    self.assertNotIn("one/two/three/four", initial)
+    self.assertTrue(initial["one/two/three"]["hasChildren"])
+    self.assertFalse(initial["one/two/three"]["childrenLoaded"])
+    children = self.store.file_tree(workspace["id"], parent="one/two/three", depth=1)
+    self.assertEqual([item["path"] for item in children], ["one/two/three/four"])
+    self.assertFalse(children[0]["childrenLoaded"])
+
+  def test_file_tree_rejects_invalid_depth_and_file_parent(self) -> None:
+    workspace = self.create_workspace()
+    with self.assertRaisesRegex(StorageError, "between 1 and 3"):
+      self.store.file_tree(workspace["id"], depth=4)
+    with self.assertRaisesRegex(StorageError, "must be a folder"):
+      self.store.file_tree(workspace["id"], parent="workpapers/income.txt", depth=1)
+
   def test_file_preview_rejects_unsafe_and_missing_paths(self) -> None:
     workspace = self.create_preview_workspace()
     with self.assertRaises(StorageError):
@@ -357,6 +380,18 @@ class WorkspaceStoreTest(unittest.TestCase):
       manifest_name = next(name for name in names if name.endswith("/manifest.json"))
       manifest = json.loads(archive.read(manifest_name).decode("utf-8"))
       self.assertEqual([item["path"] for item in manifest["included"]], ["output.txt"])
+
+  def test_download_expands_selected_folder_without_duplicate_entries(self) -> None:
+    workspace = self.create_workspace()
+    _, body = self.store.build_download_zip(
+      workspace["id"],
+      OWNER,
+      "full",
+      ["workpapers", "workpapers/income.txt"],
+    )
+    with zipfile.ZipFile(BytesIO(body)) as archive:
+      income_entries = [name for name in archive.namelist() if name.endswith("/files/workpapers/income.txt")]
+      self.assertEqual(len(income_entries), 1)
 
   def test_download_rejects_non_downloadable_path(self) -> None:
     workspace = self.create_workspace()

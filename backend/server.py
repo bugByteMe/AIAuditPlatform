@@ -902,7 +902,13 @@ class Handler(BaseHTTPRequestHandler):
       self.write_json({"workspace": workspace}, HTTPStatus.CREATED)
     elif method == "GET" and action == "files" and not subaction:
       WORKSPACE_STORE.get_workspace(workspace_id, user)
-      self.write_json({"files": WORKSPACE_STORE.file_tree(workspace_id)})
+      params = parse_query(query)
+      parent = (params.get("path") or [""])[0]
+      try:
+        depth = int((params.get("depth") or ["3"])[0])
+      except ValueError as exc:
+        raise StorageError("bad_request", "file tree depth must be an integer") from exc
+      self.write_json({"files": WORKSPACE_STORE.file_tree(workspace_id, parent=parent, depth=depth), "path": parent, "depth": depth})
     elif method == "POST" and action == "files" and not subaction:
       raise StorageError("upload_sessions_required", "use /api/uploads for workspace file uploads")
     elif method == "DELETE" and action == "files" and not subaction:
