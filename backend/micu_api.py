@@ -55,7 +55,10 @@ class MicuApiClient:
     return bool(self.access_token and self.user_id)
 
   def _request(self, method: str, path: str, payload: dict | None = None, *, api_key: str = "") -> dict:
-    headers = {"Accept": "application/json"}
+    headers = {
+      "Accept": "application/json",
+      "User-Agent": "AI-AuditPlatform/1.0",
+    }
     if api_key:
       headers["Authorization"] = f"Bearer {api_key}"
     else:

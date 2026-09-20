@@ -3,7 +3,7 @@ from __future__ import annotations
 from email.message import Message
 from io import BytesIO
 import unittest
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 from urllib.error import HTTPError
 
 from micu_api import MicuApiClient, MicuApiError, parse_cny
@@ -38,6 +38,15 @@ class FakeMicuClient(MicuApiClient):
 
 
 class MicuApiClientTest(unittest.TestCase):
+  def test_management_requests_use_provider_compatible_user_agent(self) -> None:
+    client = MicuApiClient("https://provider.example", "https://inference.example/v1", "secret", "78836", "vip_2", 500_000, 2)
+    response = MagicMock()
+    response.__enter__.return_value.read.return_value = b'{"success":true,"data":{"items":[],"total":0}}'
+    with patch("micu_api.urlopen", return_value=response) as request_call:
+      client.all_tokens()
+    request = request_call.call_args.args[0]
+    self.assertEqual(request.get_header("User-agent"), "AI-AuditPlatform/1.0")
+
   def test_cny_conversion_is_decimal_and_exact(self) -> None:
     client = FakeMicuClient()
     self.assertEqual(parse_cny("1.25"), parse_cny(1.25))
