@@ -19,6 +19,7 @@
 - Adding a CNY amount increases the existing MicuAPI balance and preserves cumulative `usedTokens`.
 - Activation provisions or reuses exactly one MicuAPI token named by username; failure preserves the invite.
 - Startup reconciliation backfills missing active-account bindings without duplicating exact-name tokens.
+- Startup reconciliation repairs stale local token names and safely renames legacy ID-named MicuAPI tokens, while rejecting username conflicts.
 - Regular users receive only a remaining-budget percentage, while exact CNY balances remain available only to system administrators.
 
 ## Disk Quotas

@@ -64,6 +64,29 @@ class MicuApiClientTest(unittest.TestCase):
     self.assertEqual(update[2]["remain_quota"], 2_250_000)
     self.assertIn(("PUT", "/api/token/?status_only=true", {"id": 7, "status": 1}), client.calls)
 
+  def test_align_binding_name_renames_legacy_token_and_repairs_binding(self) -> None:
+    client = FakeMicuClient()
+    client.stored["name"] = "usr_legacy_id"
+    client.find_token = MagicMock(return_value=None)
+    binding = {"tokenId": 7, "tokenName": "usr_legacy_id"}
+
+    result = client.align_binding_name(binding, "alice")
+
+    self.assertEqual(result, "alice")
+    self.assertEqual(binding["tokenName"], "alice")
+    update = next(call for call in client.calls if call[1] == "/api/token/")
+    self.assertEqual(update[2]["name"], "alice")
+
+  def test_align_binding_name_only_repairs_stale_local_name_when_provider_is_correct(self) -> None:
+    client = FakeMicuClient()
+    client.stored["name"] = "alice"
+    binding = {"tokenId": 7, "tokenName": "usr_legacy_id"}
+
+    client.align_binding_name(binding, "alice")
+
+    self.assertEqual(binding["tokenName"], "alice")
+    self.assertFalse(any(call[0] == "PUT" for call in client.calls))
+
   def test_http_error_reports_status_and_type_without_exposing_html(self) -> None:
     client = MicuApiClient("https://provider.example", "https://inference.example/v1", "secret", "78836", "vip_2", 500_000, 2)
     headers = Message()

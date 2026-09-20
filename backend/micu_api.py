@@ -197,6 +197,22 @@ class MicuApiClient:
       "createdByReconcile": created,
     }
 
+  def align_binding_name(self, binding: dict, username: str) -> str:
+    token_id = int(binding.get("tokenId") or 0)
+    if not token_id:
+      raise MicuApiError("missing_token", "MicuAPI binding does not contain a token ID")
+    token = self.token(token_id)
+    current_name = str(token.get("name") or "")
+    if current_name != username:
+      conflict = self.find_token(username)
+      if conflict and int(conflict.get("id") or 0) != token_id:
+        raise MicuApiError("duplicate_token", f"another MicuAPI token is already named {username}")
+      payload = {key: value for key, value in token.items() if key not in {"key", "DeletedAt"}}
+      payload.update({"id": token_id, "name": username})
+      self._request("PUT", "/api/token/", payload)
+    binding["tokenName"] = username
+    return username
+
   def balance(self, binding: dict) -> dict:
     token = self.token(int(binding.get("tokenId") or 0))
     remaining_quota = int(token.get("remain_quota") or 0)

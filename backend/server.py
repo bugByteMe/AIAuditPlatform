@@ -213,16 +213,23 @@ def reconcile_micu_accounts() -> None:
     return
   changed = False
   for user in list(USERS.values()):
-    if (user.get("micu") or {}).get("tokenId"):
-      continue
+    binding = user.get("micu") or {}
+    username = str(user.get("username") or "").strip()
     try:
-      username = str(user.get("username") or "").strip()
       if not username:
         raise MicuApiError("invalid_username", "local account does not have a username")
-      user["micu"] = MICU_CLIENT.ensure_binding(username, SETTINGS.micu_migration_balance_cny)
-      changed = True
+      if binding.get("tokenId"):
+        previous_name = str(binding.get("tokenName") or "")
+        MICU_CLIENT.align_binding_name(binding, username)
+        changed = changed or previous_name != username
+      else:
+        user["micu"] = MICU_CLIENT.ensure_binding(username, SETTINGS.micu_migration_balance_cny)
+        changed = True
     except MicuApiError as exc:
-      user["micu"] = {"tokenName": str(user.get("username") or ""), "status": "error", "lastError": str(exc)}
+      if binding.get("tokenId"):
+        binding.update({"status": "unavailable", "lastError": str(exc)})
+      else:
+        user["micu"] = {"tokenName": username, "status": "error", "lastError": str(exc)}
       changed = True
   if changed:
     ACCOUNT_STORE.save()

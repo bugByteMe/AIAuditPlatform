@@ -22,6 +22,8 @@ System administrators may batch-create pending accounts for an existing or newly
 
 Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Before consuming the invitation, the backend idempotently creates or reuses a MicuAPI token named exactly with the chosen username and retrieves its generated key. Successful registration preserves the group, initial CNY balance, and session limit; provisioning failure leaves the invitation valid.
 
+Startup reconciliation also verifies existing bindings. A stale local `tokenName` is synchronized with the username, and legacy tokens still named by generated user ID are renamed to the username when no conflicting MicuAPI token exists. Conflicts fail closed without switching or deleting either token.
+
 Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a positive concurrent live-run limit, defaulting to one for new and migrated groups. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
 The initial design does not require SSO, device binding, or multi-factor authentication.
