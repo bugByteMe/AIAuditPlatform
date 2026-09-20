@@ -73,12 +73,17 @@ class MicuApiClient:
         result = json.loads(response.read().decode("utf-8") or "{}")
     except HTTPError as exc:
       message = "MicuAPI rejected the request"
+      raw_content_type = str(exc.headers.get("Content-Type") or "") if exc.headers else ""
+      response_type = raw_content_type.split(";", 1)[0].strip().lower() or "unknown"
       try:
         error = json.loads(exc.read().decode("utf-8") or "{}")
-        message = str(error.get("message") or message)
+        provider_message = error.get("message") if isinstance(error, dict) else None
+        if isinstance(provider_message, str) and provider_message.strip():
+          message = " ".join(provider_message.split())[:300]
       except Exception:
         pass
-      raise MicuApiError("not_found" if exc.code == 404 else "http_error", message) from exc
+      detail = f"{message} (HTTP {exc.code}, {response_type})"
+      raise MicuApiError("not_found" if exc.code == 404 else "http_error", detail) from exc
     except (URLError, TimeoutError, OSError) as exc:
       raise MicuApiError("unavailable", "MicuAPI is unavailable") from exc
     except (UnicodeDecodeError, json.JSONDecodeError) as exc:

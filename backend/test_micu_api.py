@@ -1,8 +1,12 @@
 from __future__ import annotations
 
+from email.message import Message
+from io import BytesIO
 import unittest
+from unittest.mock import patch
+from urllib.error import HTTPError
 
-from micu_api import MicuApiClient, parse_cny
+from micu_api import MicuApiClient, MicuApiError, parse_cny
 
 
 class FakeMicuClient(MicuApiClient):
@@ -47,6 +51,37 @@ class MicuApiClientTest(unittest.TestCase):
     update = next(call for call in client.calls if call[1] == "/api/token/")
     self.assertEqual(update[2]["remain_quota"], 2_250_000)
     self.assertIn(("PUT", "/api/token/?status_only=true", {"id": 7, "status": 1}), client.calls)
+
+  def test_http_error_reports_status_and_type_without_exposing_html(self) -> None:
+    client = MicuApiClient("https://provider.example", "https://inference.example/v1", "secret", "78836", "vip_2", 500_000, 2)
+    headers = Message()
+    headers["Content-Type"] = "text/html; charset=utf-8"
+    response = HTTPError(
+      "https://provider.example/api/token/",
+      403,
+      "Forbidden",
+      headers,
+      BytesIO(b"<html>sensitive proxy page</html>"),
+    )
+    with patch("micu_api.urlopen", side_effect=response):
+      with self.assertRaisesRegex(MicuApiError, r"HTTP 403, text/html") as raised:
+        client.all_tokens()
+    self.assertNotIn("sensitive proxy page", str(raised.exception))
+
+  def test_json_http_error_keeps_sanitized_provider_message_and_diagnostics(self) -> None:
+    client = MicuApiClient("https://provider.example", "https://inference.example/v1", "secret", "78836", "vip_2", 500_000, 2)
+    headers = Message()
+    headers["Content-Type"] = "application/json; charset=utf-8"
+    response = HTTPError(
+      "https://provider.example/api/token/",
+      429,
+      "Too Many Requests",
+      headers,
+      BytesIO(b'{"message":"  rate limit\\nreached  "}'),
+    )
+    with patch("micu_api.urlopen", side_effect=response):
+      with self.assertRaisesRegex(MicuApiError, r"rate limit reached \(HTTP 429, application/json\)"):
+        client.all_tokens()
 
 
 if __name__ == "__main__":
