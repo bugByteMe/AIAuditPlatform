@@ -178,14 +178,17 @@ export function renderCurrentUser() {
   const used = Math.max(0, Number(state.user.usedTokens || 0));
   const budget = state.user.budget || {};
   document.querySelector("#current-username").textContent = state.user.username;
-  const balance = budget.source === "custom"
+  const percentage = budget.source === "custom"
     ? t("session.customProvider")
-    : budget.remaining === null || budget.remaining === undefined
+    : budget.remainingPercent === null || budget.remainingPercent === undefined
       ? t("session.balanceUnavailable")
-      : `¥${budget.remaining}`;
-  document.querySelector("#current-budget-label").textContent = `${balance} · ${used.toLocaleString()} ${t("session.budgetUsed")}`;
+      : `${Number(budget.remainingPercent).toFixed(1)}%`;
+  document.querySelector("#current-budget-label").textContent = `${percentage} · ${used.toLocaleString()} ${t("session.budgetUsed")}`;
   document.querySelector("#current-budget-label").title = `${used.toLocaleString()} ${t("session.budgetUsed")}`;
-  document.querySelector("#current-budget-meter").parentElement.classList.add("hidden");
+  const meter = document.querySelector("#current-budget-meter");
+  const hasPercentage = budget.remainingPercent !== null && budget.remainingPercent !== undefined;
+  meter.style.width = `${Math.max(0, Math.min(100, Number(budget.remainingPercent || 0)))}%`;
+  meter.parentElement.classList.toggle("hidden", !hasPercentage);
 }
 
 export function renderWorkspaces() {

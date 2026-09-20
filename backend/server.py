@@ -113,6 +113,7 @@ def check_micu_budget(user: dict) -> None:
   binding.update(
     {
       "lastBalanceCny": balance["remainingCny"],
+      "lastRemainingPercent": balance["remainingPercent"],
       "lastSyncedAt": int(time.time()),
       "status": balance["status"],
       "lastError": "",
@@ -166,23 +167,25 @@ def admin_account(account: dict) -> dict:
     for key, value in account.items()
     if key not in {"passwordHash", "codex", "customCodex", "micu"}
   }
-  public["budget"] = budget_summary(account)
+  public["budget"] = budget_summary(account, include_amount=True)
   if public.get("status") == "active" and not public.get("enabled", True):
     public["status"] = "disabled"
   return public
 
 
-def budget_summary(user: dict) -> dict:
+def budget_summary(user: dict, *, include_amount: bool = False) -> dict:
   mode = str(user.get("providerMode") or "micu")
   if mode == "custom":
-    return {"source": "custom", "currency": None, "remaining": None, "status": "not_applicable"}
+    return {"source": "custom", "remainingPercent": None, "status": "not_applicable"}
   binding = user.get("micu") or {}
-  return {
+  summary = {
     "source": "micu",
-    "currency": "CNY",
-    "remaining": binding.get("lastBalanceCny"),
+    "remainingPercent": binding.get("lastRemainingPercent"),
     "status": str(binding.get("status") or ("provisioning" if user.get("status") == "pending" else "unavailable")),
   }
+  if include_amount:
+    summary.update({"currency": "CNY", "remaining": binding.get("lastBalanceCny")})
+  return summary
 
 
 def refresh_micu_balance(user: dict) -> None:
@@ -191,16 +194,16 @@ def refresh_micu_balance(user: dict) -> None:
   binding = user["micu"]
   try:
     balance = MICU_CLIENT.balance(binding)
-    binding.update({"lastBalanceCny": balance["remainingCny"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
   except MicuApiError as exc:
     binding.update({"status": "unavailable", "lastError": str(exc)})
 
 
-def provision_micu(user_id: str, initial_balance_cny) -> dict:
+def provision_micu(username: str, initial_balance_cny) -> dict:
   if not MICU_CLIENT.configured:
     raise ValueError("MicuAPI management credentials are not configured")
   try:
-    return MICU_CLIENT.ensure_binding(user_id, initial_balance_cny)
+    return MICU_CLIENT.ensure_binding(username, initial_balance_cny)
   except MicuApiError as exc:
     raise ValueError(str(exc)) from exc
 
@@ -213,10 +216,13 @@ def reconcile_micu_accounts() -> None:
     if (user.get("micu") or {}).get("tokenId"):
       continue
     try:
-      user["micu"] = MICU_CLIENT.ensure_binding(str(user["id"]), SETTINGS.micu_migration_balance_cny)
+      username = str(user.get("username") or "").strip()
+      if not username:
+        raise MicuApiError("invalid_username", "local account does not have a username")
+      user["micu"] = MICU_CLIENT.ensure_binding(username, SETTINGS.micu_migration_balance_cny)
       changed = True
     except MicuApiError as exc:
-      user["micu"] = {"tokenName": str(user.get("id") or ""), "status": "error", "lastError": str(exc)}
+      user["micu"] = {"tokenName": str(user.get("username") or ""), "status": "error", "lastError": str(exc)}
       changed = True
   if changed:
     ACCOUNT_STORE.save()
@@ -420,7 +426,7 @@ class Handler(BaseHTTPRequestHandler):
       raise ValueError("invalid invite token")
     if ACCOUNT_STORE.username_exists(username):
       raise ValueError("username already exists")
-    binding = provision_micu(str(pending["id"]), pending.get("initialBudgetCny") or "0.00")
+    binding = provision_micu(username, pending.get("initialBudgetCny") or "0.00")
     try:
       user = ACCOUNT_STORE.activate(
         invite_token,
@@ -533,7 +539,7 @@ class Handler(BaseHTTPRequestHandler):
       balance = MICU_CLIENT.add_balance(binding, amount)
     except MicuApiError as exc:
       raise StorageError("budget_provider_unavailable", str(exc)) from exc
-    binding.update({"lastBalanceCny": balance["remainingCny"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
     ACCOUNT_STORE.save()
     add_audit(actor["username"], "account MicuAPI balance added", f"{account['id']} amountCny={balance['addedCny']} balanceCny={balance['remainingCny']}")
     self.write_json({"account": admin_account(account)})
@@ -673,7 +679,7 @@ class Handler(BaseHTTPRequestHandler):
     if group_name and not group:
       group = ACCOUNT_STORE.create_group(group_name)
     user_id = f"usr_{secrets.token_urlsafe(12)}"
-    binding = provision_micu(user_id, payload.get("budgetCny", "0.00"))
+    binding = provision_micu(username, payload.get("budgetCny", "0.00"))
     USERS[username] = {
       "id": user_id,
       "username": username,

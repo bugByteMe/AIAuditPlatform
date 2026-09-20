@@ -57,6 +57,18 @@ class AccountApiTest(unittest.TestCase):
     self.assertNotIn("customCodex", public_user(pending))
     self.assertEqual(admin_account(pending)["inviteToken"], "invite-placeholder")
 
+    active = {
+      **pending,
+      "status": "active",
+      "providerMode": "micu",
+      "micu": {"apiKey": "managed-placeholder", "lastBalanceCny": "12.34", "lastRemainingPercent": 67.8, "status": "ready"},
+    }
+    user_budget = public_user(active)["budget"]
+    self.assertEqual(user_budget["remainingPercent"], 67.8)
+    self.assertNotIn("remaining", user_budget)
+    self.assertNotIn("currency", user_budget)
+    self.assertEqual(admin_account(active)["budget"]["remaining"], "12.34")
+
   def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
     actor = {"username": "admin", "role": "system_admin"}
     handler = self.handler({}, actor)
@@ -99,7 +111,7 @@ class AccountApiTest(unittest.TestCase):
       with (
         patch("server.ACCOUNT_STORE", store),
         patch("server.USERS", store.users),
-        patch("server.provision_micu", return_value={"tokenId": 7, "tokenName": accounts[0]["id"], "apiKey": "test-key", "status": "ready", "lastBalanceCny": "42.00"}),
+        patch("server.provision_micu", return_value={"tokenId": 7, "tokenName": "new.user", "apiKey": "test-key", "status": "ready", "lastBalanceCny": "42.00"}) as provision,
         patch("server.add_audit", side_effect=lambda actor, event, detail="": audit.append((actor, event, detail))),
       ):
         Handler.register(handler)
@@ -107,6 +119,7 @@ class AccountApiTest(unittest.TestCase):
       user, event = started[0]
       self.assertEqual(event, "registration login success")
       self.assertEqual(user["id"], accounts[0]["id"])
+      provision.assert_called_once_with("new.user", "42.00")
       self.assertTrue(verify_password("password8", user["passwordHash"]))
       self.assertFalse(any(accounts[0]["inviteToken"] in " ".join(item) for item in audit))
 
@@ -150,11 +163,12 @@ class AccountApiTest(unittest.TestCase):
       store.users["alice"]["usedTokens"] = 90
       user["micu"] = {"tokenId": 7, "apiKey": "test-key", "status": "ready", "lastBalanceCny": "1.00"}
       provider = MagicMock()
-      provider.add_balance.return_value = {"addedCny": "5.00", "remainingCny": "6.00", "status": "ready"}
+      provider.add_balance.return_value = {"addedCny": "5.00", "remainingCny": "6.00", "remainingPercent": 75.0, "status": "ready"}
       reset_handler = self.handler({"amountCny": "5.00"}, actor)
       with patch("server.ACCOUNT_STORE", store), patch("server.MICU_CLIENT", provider), patch("server.add_audit"):
         Handler.reset_account_budget(reset_handler, user["id"])
       self.assertEqual(store.users["alice"]["micu"]["lastBalanceCny"], "6.00")
+      self.assertEqual(store.users["alice"]["micu"]["lastRemainingPercent"], 75.0)
       self.assertEqual(store.users["alice"]["usedTokens"], 90)
 
   def test_self_deletion_is_protected(self) -> None:

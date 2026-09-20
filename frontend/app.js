@@ -688,7 +688,9 @@ async function openCodexSettingsModal() {
     if (modeInput) modeInput.checked = true;
     document.querySelector("#codex-base-url-input").value = settings.baseUrl || "https://api.openai.com/v1";
     const micuBudget = settings.micu?.budget || {};
-    const remaining = micuBudget.remaining === null || micuBudget.remaining === undefined ? t("codex.balanceUnavailable") : `¥${micuBudget.remaining}`;
+    const remaining = micuBudget.remainingPercent === null || micuBudget.remainingPercent === undefined
+      ? t("codex.balanceUnavailable")
+      : `${Number(micuBudget.remainingPercent).toFixed(1)}%`;
     document.querySelector("#codex-micu-summary").textContent = `${t("codex.micuBalance")}: ${remaining} · ${settings.micu?.group || ""}`;
     document.querySelector("#codex-custom-fields").classList.toggle("hidden", mode !== "custom");
     status.textContent = mode === "micu" ? t("codex.usingMicu") : (settings.apiKeyConfigured ? t("codex.configured") : t("codex.missing"));

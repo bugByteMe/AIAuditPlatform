@@ -17,8 +17,9 @@
 - Admin budget increases allow new runs after exhaustion.
 - `turn.completed` input and output usage is persisted once even if the terminal event is duplicated; cached input is not double-counted.
 - Adding a CNY amount increases the existing MicuAPI balance and preserves cumulative `usedTokens`.
-- Activation provisions or reuses exactly one MicuAPI token named by immutable user ID; failure preserves the invite.
+- Activation provisions or reuses exactly one MicuAPI token named by username; failure preserves the invite.
 - Startup reconciliation backfills missing active-account bindings without duplicating exact-name tokens.
+- Regular users receive only a remaining-budget percentage, while exact CNY balances remain available only to system administrators.
 
 ## Disk Quotas
 

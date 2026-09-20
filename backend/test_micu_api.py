@@ -52,11 +52,14 @@ class MicuApiClientTest(unittest.TestCase):
     self.assertEqual(parse_cny("1.25"), parse_cny(1.25))
     self.assertEqual(client.quota_from_cny("1.25"), 625_000)
     self.assertEqual(client.cny_from_quota(625_000), "1.25")
+    self.assertEqual(client.remaining_percent(3, 1), 75.0)
+    self.assertEqual(client.remaining_percent(0, 0), 0.0)
 
   def test_add_balance_increments_existing_quota_and_reenables(self) -> None:
     client = FakeMicuClient()
     result = client.add_balance({"tokenId": 7}, "2.50")
     self.assertEqual(result["remainingCny"], "4.50")
+    self.assertEqual(result["remainingPercent"], 100.0)
     update = next(call for call in client.calls if call[1] == "/api/token/")
     self.assertEqual(update[2]["remain_quota"], 2_250_000)
     self.assertIn(("PUT", "/api/token/?status_only=true", {"id": 7, "status": 1}), client.calls)

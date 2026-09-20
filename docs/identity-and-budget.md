@@ -20,7 +20,7 @@ Login uses username and password. Passwords must be stored with a modern passwor
 
 System administrators may batch-create pending accounts for an existing or newly named group. A pending account has an immutable generated user ID and a unique invite token, but no username or password. Invite tokens remain valid until used or revoked and are visible only through system-admin account APIs.
 
-Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Before consuming the invitation, the backend idempotently creates or reuses a MicuAPI token named exactly with the pending account's immutable user ID and retrieves its generated key. Successful registration preserves the group, initial CNY balance, and session limit; provisioning failure leaves the invitation valid.
+Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Before consuming the invitation, the backend idempotently creates or reuses a MicuAPI token named exactly with the chosen username and retrieves its generated key. Successful registration preserves the group, initial CNY balance, and session limit; provisioning failure leaves the invitation valid.
 
 Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a positive concurrent live-run limit, defaulting to one for new and migrated groups. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
@@ -61,6 +61,8 @@ Managed MicuAPI mode uses the external token balance as its hard limit:
 - MicuAPI deducts model cost and enforces exhaustion while the run is active.
 - Administrators add a CNY amount to the token's existing balance; this does not reset cumulative local token usage.
 - Users may select custom-provider mode and supply their own URL and key. Custom mode does not use or gate on the preserved MicuAPI balance.
+
+Regular user responses expose only the remaining-budget percentage, calculated as remaining quota divided by remaining plus consumed quota. Exact CNY balances are restricted to system-administrator account responses. Cumulative token counts remain visible to users as usage reporting.
 
 Budget checks belong in the backend control plane. Workers may report usage but should not be the source of truth for authorization.
 

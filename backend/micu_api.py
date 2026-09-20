@@ -103,6 +103,15 @@ class MicuApiClient:
     amount = (Decimal(max(0, int(quota))) / Decimal(self.quota_per_cny)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
     return format(amount, ".2f")
 
+  @staticmethod
+  def remaining_percent(remaining_quota: int, used_quota: int, unlimited: bool = False) -> float:
+    if unlimited:
+      return 100.0
+    remaining = max(0, int(remaining_quota))
+    used = max(0, int(used_quota))
+    total = remaining + used
+    return round((remaining * 100.0 / total) if total else 0.0, 1)
+
   def all_tokens(self) -> list[dict]:
     items: list[dict] = []
     page = 1
@@ -164,20 +173,25 @@ class MicuApiClient:
       raise MicuApiError("create_unconfirmed", "created MicuAPI token could not be found")
     return token
 
-  def ensure_binding(self, user_id: str, initial_balance_cny) -> dict:
-    token = self.find_token(user_id)
+  def ensure_binding(self, username: str, initial_balance_cny) -> dict:
+    token = self.find_token(username)
     created = False
     if not token:
-      token = self.create_token(user_id, initial_balance_cny)
+      token = self.create_token(username, initial_balance_cny)
       created = True
     key = self.full_key(int(token["id"]))
     return {
       "tokenId": int(token["id"]),
-      "tokenName": user_id,
+      "tokenName": username,
       "apiKey": key,
       "group": str(token.get("group") or self.group),
       "status": "ready",
       "lastBalanceCny": self.cny_from_quota(int(token.get("remain_quota") or 0)),
+      "lastRemainingPercent": self.remaining_percent(
+        int(token.get("remain_quota") or 0),
+        int(token.get("used_quota") or 0),
+        bool(token.get("unlimited_quota")),
+      ),
       "lastSyncedAt": int(time.time()),
       "lastError": "",
       "createdByReconcile": created,
@@ -186,6 +200,7 @@ class MicuApiClient:
   def balance(self, binding: dict) -> dict:
     token = self.token(int(binding.get("tokenId") or 0))
     remaining_quota = int(token.get("remain_quota") or 0)
+    used_quota = int(token.get("used_quota") or 0)
     token_status = int(token.get("status") or 0)
     if not token.get("unlimited_quota") and remaining_quota <= 0:
       status = "exhausted"
@@ -196,6 +211,7 @@ class MicuApiClient:
     return {
       "rawQuota": remaining_quota,
       "remainingCny": self.cny_from_quota(remaining_quota),
+      "remainingPercent": self.remaining_percent(remaining_quota, used_quota, bool(token.get("unlimited_quota"))),
       "status": status,
       "tokenStatus": token_status,
     }
@@ -215,6 +231,7 @@ class MicuApiClient:
       "addedCny": format(amount, ".2f"),
       "rawQuota": new_quota,
       "remainingCny": self.cny_from_quota(new_quota),
+      "remainingPercent": self.remaining_percent(new_quota, int(token.get("used_quota") or 0)),
       "status": "ready" if new_quota > 0 else "exhausted",
     }
 
