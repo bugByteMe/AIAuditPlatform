@@ -523,7 +523,7 @@ export function renderAdmin() {
     const limit = group.diskLimitBytes === null || group.diskLimitBytes === undefined ? null : Number(group.diskLimitBytes);
     const percent = limit === null ? 0 : limit === 0 ? (used > 0 ? 100 : 0) : Math.min(100, Math.round((used / limit) * 100));
     const usage = limit === null ? `${formatBytes(used)} / ${t("admin.unlimited")}` : `${formatBytes(used)} / ${formatBytes(limit)}`;
-    const liveRunLimit = Math.max(1, Number(group.liveRunLimit || 1));
+    const liveRunLimit = Math.max(0, Number(group.liveRunLimit ?? 1));
     return `
       <details class="admin-group" open>
         <summary>

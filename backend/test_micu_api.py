@@ -55,6 +55,18 @@ class MicuApiClientTest(unittest.TestCase):
     self.assertEqual(client.remaining_percent(3, 1), 75.0)
     self.assertEqual(client.remaining_percent(0, 0), 0.0)
 
+  def test_balance_can_be_calculated_from_a_list_token_without_fetching_it_again(self) -> None:
+    client = FakeMicuClient()
+    token = {**client.stored, "status": 1, "remain_quota": 1_500_000, "used_quota": 500_000}
+
+    with patch.object(client, "token") as token_request:
+      balance = client.balance_from_token(token)
+
+    token_request.assert_not_called()
+    self.assertEqual(balance["remainingCny"], "3.00")
+    self.assertEqual(balance["remainingPercent"], 75.0)
+    self.assertEqual(balance["status"], "ready")
+
   def test_add_balance_increments_existing_quota_and_reenables(self) -> None:
     client = FakeMicuClient()
     result = client.add_balance({"tokenId": 7}, "2.50")

@@ -200,6 +200,31 @@ def refresh_micu_balance(user: dict) -> None:
     binding.update({"status": "unavailable", "lastError": str(exc)})
 
 
+def refresh_micu_balances(users) -> None:
+  managed = [
+    user
+    for user in users
+    if str(user.get("providerMode") or "micu") == "micu" and (user.get("micu") or {}).get("tokenId")
+  ]
+  if not managed:
+    return
+  try:
+    tokens_by_id = {int(token.get("id") or 0): token for token in MICU_CLIENT.all_tokens() if token.get("id")}
+  except MicuApiError as exc:
+    for user in managed:
+      user["micu"].update({"status": "unavailable", "lastError": str(exc)})
+    return
+  synced_at = int(time.time())
+  for user in managed:
+    binding = user["micu"]
+    token = tokens_by_id.get(int(binding.get("tokenId") or 0))
+    if not token:
+      binding.update({"status": "unavailable", "lastError": "MicuAPI token was not found"})
+      continue
+    balance = MICU_CLIENT.balance_from_token(token)
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "lastSyncedAt": synced_at, "status": balance["status"], "lastError": ""})
+
+
 def provision_micu(username: str, initial_balance_cny) -> dict:
   if not MICU_CLIENT.configured:
     raise ValueError("MicuAPI management credentials are not configured")
@@ -486,8 +511,7 @@ class Handler(BaseHTTPRequestHandler):
 
   def accounts(self) -> None:
     self.require_admin()
-    for user in USERS.values():
-      refresh_micu_balance(user)
+    refresh_micu_balances(USERS.values())
     user_usage, group_usage = WORKSPACE_STORE.usage_summaries()
     active = [
       {**admin_account(user), **user_usage.get(str(user.get("id") or ""), {"diskUsageBytes": 0, "workspaceCount": 0})}
@@ -680,8 +704,8 @@ class Handler(BaseHTTPRequestHandler):
       raise ValueError("diskLimitBytes must be non-negative or null")
     raw_run_limit = payload.get("liveRunLimit") if "liveRunLimit" in payload else None
     parsed_run_limit = None if raw_run_limit is None else int(raw_run_limit)
-    if parsed_run_limit is not None and parsed_run_limit < 1:
-      raise ValueError("liveRunLimit must be at least 1")
+    if parsed_run_limit is not None and parsed_run_limit < 0:
+      raise ValueError("liveRunLimit must be non-negative")
     group = ACCOUNT_STORE.create_group(str(payload.get("name") or ""))
     if "diskLimitBytes" in payload:
       group = ACCOUNT_STORE.update_group_disk_limit(group["id"], parsed_limit)
@@ -704,8 +728,8 @@ class Handler(BaseHTTPRequestHandler):
     if "diskLimitBytes" in payload and disk_limit is not None and disk_limit < 0:
       raise ValueError("diskLimitBytes must be non-negative or null")
     live_run_limit = int(payload["liveRunLimit"]) if "liveRunLimit" in payload else None
-    if live_run_limit is not None and live_run_limit < 1:
-      raise ValueError("liveRunLimit must be at least 1")
+    if live_run_limit is not None and live_run_limit < 0:
+      raise ValueError("liveRunLimit must be non-negative")
     if "diskLimitBytes" in payload:
       group = ACCOUNT_STORE.update_group_disk_limit(group_id, disk_limit)
       add_audit(actor["username"], "group disk limit updated", f"{group_id} limit={group['diskLimitBytes']}")

@@ -215,6 +215,9 @@ class MicuApiClient:
 
   def balance(self, binding: dict) -> dict:
     token = self.token(int(binding.get("tokenId") or 0))
+    return self.balance_from_token(token)
+
+  def balance_from_token(self, token: dict) -> dict:
     remaining_quota = int(token.get("remain_quota") or 0)
     used_quota = int(token.get("used_quota") or 0)
     token_status = int(token.get("status") or 0)

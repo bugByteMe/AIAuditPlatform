@@ -745,10 +745,10 @@ async function setGroupDiskLimit(groupId) {
 
 async function setGroupLiveRunLimit(groupId) {
   const group = state.groups.find((item) => item.id === groupId);
-  const raw = window.prompt(t("admin.promptLiveRunLimit"), String(group?.liveRunLimit || 1));
+  const raw = window.prompt(t("admin.promptLiveRunLimit"), String(group?.liveRunLimit ?? 1));
   if (raw === null) return;
   const liveRunLimit = Number(raw.trim());
-  if (!Number.isInteger(liveRunLimit) || liveRunLimit < 1) return;
+  if (!Number.isInteger(liveRunLimit) || liveRunLimit < 0) return;
   try {
     await api(`/api/groups/${encodeURIComponent(groupId)}`, {
       method: "PATCH",

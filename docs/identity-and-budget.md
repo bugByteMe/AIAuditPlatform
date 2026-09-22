@@ -24,7 +24,7 @@ Registration requires an invite token, a globally unique case-insensitive userna
 
 Startup reconciliation also verifies existing bindings. A stale local `tokenName` is synchronized with the username, and legacy tokens still named by generated user ID are renamed to the username when no conflicting MicuAPI token exists. Conflicts fail closed without switching or deleting either token.
 
-Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a positive concurrent live-run limit, defaulting to one for new and migrated groups. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
+Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a non-negative concurrent live-run limit, defaulting to one for new and migrated groups; zero pauses admission of new runs for the group. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
 The initial design does not require SSO, device binding, or multi-factor authentication.
 
@@ -65,6 +65,8 @@ Managed MicuAPI mode uses the external token balance as its hard limit:
 - Users may select custom-provider mode and supply their own URL and key. Custom mode does not use or gate on the preserved MicuAPI balance.
 
 Regular user responses expose only the remaining-budget percentage, calculated as remaining quota divided by remaining plus consumed quota. Exact CNY balances are restricted to system-administrator account responses. Cumulative token counts remain visible to users as usage reporting.
+
+The system-administrator account list refreshes managed balances from the paginated MicuAPI token list and matches entries by persisted token ID. This avoids one provider request per account. If the list request fails or a bound token is absent, the last cached amount is retained and its provider status is marked unavailable.
 
 The user sidebar combines these values in one readable label, for example `剩余 10%，平台token总计使用 1.9M`. Percentages and compact token values use at most one decimal place and omit a trailing `.0`; token totals use decimal `K` and `M` units. Custom-provider and unavailable-balance states replace the percentage text but continue to show cumulative platform token usage.
 

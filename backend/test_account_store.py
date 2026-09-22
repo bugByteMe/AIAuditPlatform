@@ -197,13 +197,15 @@ class AccountStoreTest(unittest.TestCase):
       self.assertEqual(reloaded.groups[group["id"]]["liveRunLimit"], 3)
       self.assertEqual(reloaded.users["alice"]["usedTokens"], 75)
 
-  def test_group_live_run_limit_must_be_positive(self) -> None:
+  def test_group_live_run_limit_allows_zero_and_rejects_negative_values(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})
       group = store.create_group("Audit")
-      with self.assertRaisesRegex(ValueError, "at least 1"):
-        store.update_group_live_run_limit(group["id"], 0)
-      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 1)
+      store.update_group_live_run_limit(group["id"], 0)
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 0)
+      with self.assertRaisesRegex(ValueError, "non-negative"):
+        store.update_group_live_run_limit(group["id"], -1)
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 0)
 
   def test_recharge_payment_is_unique_persistent_and_visible_to_its_user(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:

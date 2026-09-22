@@ -98,6 +98,9 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("data-set-group-limit", render_source)
         self.assertIn("data-set-group-live-run-limit", render_source)
         self.assertIn("liveRunLimit", app_source)
+        self.assertIn("group?.liveRunLimit ?? 1", app_source)
+        self.assertIn("liveRunLimit < 0", app_source)
+        self.assertIn("group.liveRunLimit ?? 1", render_source)
 
     def test_recharge_credentials_and_fixed_products_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

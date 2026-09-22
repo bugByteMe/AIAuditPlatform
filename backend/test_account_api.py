@@ -81,6 +81,47 @@ class AccountApiTest(unittest.TestCase):
     self.assertNotIn("currency", user_budget)
     self.assertEqual(admin_account(active)["budget"]["remaining"], "12.34")
 
+  def test_admin_accounts_refreshes_micu_balances_from_one_token_list(self) -> None:
+    users = {
+      "alice": {
+        "id": "usr_alice", "username": "alice", "status": "active", "enabled": True,
+        "providerMode": "micu", "micu": {"tokenId": 7, "lastBalanceCny": "0.00"},
+      },
+      "bob": {
+        "id": "usr_bob", "username": "bob", "status": "active", "enabled": True,
+        "providerMode": "micu", "micu": {"tokenId": 9, "lastBalanceCny": "0.00"},
+      },
+      "custom": {
+        "id": "usr_custom", "username": "custom", "status": "active", "enabled": True,
+        "providerMode": "custom", "customCodex": {},
+      },
+    }
+    account_store = MagicMock()
+    account_store.pending_accounts = {}
+    account_store.groups = {}
+    workspace_store = MagicMock()
+    workspace_store.usage_summaries.return_value = ({}, {})
+    provider = MagicMock()
+    provider.all_tokens.return_value = [{"id": 9}, {"id": 7}]
+    provider.balance_from_token.side_effect = lambda token: {
+      "remainingCny": f"{token['id']}.00", "remainingPercent": float(token["id"]), "status": "ready"
+    }
+    handler = self.handler({}, {"username": "admin", "role": "system_admin"})
+
+    with (
+      patch("server.USERS", users),
+      patch("server.ACCOUNT_STORE", account_store),
+      patch("server.WORKSPACE_STORE", workspace_store),
+      patch("server.MICU_CLIENT", provider),
+    ):
+      Handler.accounts(handler)
+
+    provider.all_tokens.assert_called_once_with()
+    provider.balance.assert_not_called()
+    self.assertEqual(users["alice"]["micu"]["lastBalanceCny"], "7.00")
+    self.assertEqual(users["bob"]["micu"]["lastBalanceCny"], "9.00")
+    self.assertNotIn("micu", users["custom"])
+
   def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
     actor = {"username": "admin", "role": "system_admin"}
     handler = self.handler({}, actor)
@@ -233,12 +274,17 @@ class AccountApiTest(unittest.TestCase):
       self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 4)
       audit.assert_called_once_with("admin", "group live run limit updated", f"{group['id']} limit=4")
 
-      invalid_handler = self.handler({"diskLimitBytes": 4096, "liveRunLimit": 0}, actor)
+      zero_handler = self.handler({"liveRunLimit": 0}, actor)
       with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
-        with self.assertRaisesRegex(ValueError, "at least 1"):
+        Handler.update_group(zero_handler, group["id"])
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 0)
+
+      invalid_handler = self.handler({"diskLimitBytes": 4096, "liveRunLimit": -1}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+        with self.assertRaisesRegex(ValueError, "non-negative"):
           Handler.update_group(invalid_handler, group["id"])
       self.assertEqual(store.groups[group["id"]]["diskLimitBytes"], 2048)
-      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 4)
+      self.assertEqual(store.groups[group["id"]]["liveRunLimit"], 0)
 
       _, invitations = store.create_batch(group_id=group["id"], count=1, budget_tokens=100, max_sessions=1)
       user = store.activate(invitations[0]["inviteToken"], "alice", "hash")

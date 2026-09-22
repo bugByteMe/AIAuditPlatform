@@ -371,8 +371,8 @@ class AccountStore:
       group = self.groups.get(group_id)
       if not group:
         raise ValueError("group not found")
-      if live_run_limit < 1:
-        raise ValueError("liveRunLimit must be at least 1")
+      if live_run_limit < 0:
+        raise ValueError("liveRunLimit must be non-negative")
       previous = group.get("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
       group["liveRunLimit"] = live_run_limit
       try:

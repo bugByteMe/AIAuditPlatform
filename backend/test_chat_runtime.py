@@ -160,6 +160,20 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual(second["run"]["groupId"], "grp_a")
     self.wait_for_status(runtime, second_workspace["id"], second["session"]["id"], "completed", second_user)
 
+  def test_zero_group_live_run_limit_pauses_new_runs(self) -> None:
+    user = {**deepcopy(OWNER), "groupId": "grp_paused"}
+    workspace = self.store.create_workspace(user, "Paused workspace", False, [UploadedFile("file.txt", b"data")])
+    runtime = ChatRuntime(
+      self.store,
+      {user["username"]: user},
+      FakeRunner(),
+      groups={"grp_paused": {"id": "grp_paused", "name": "Paused", "liveRunLimit": 0}},
+    )
+
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(workspace["id"], user, {"prompt": "Blocked"})
+    self.assertEqual(context.exception.code, "group_live_run_limit_reached")
+
   def test_accessible_user_can_rename_chat_session(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())
