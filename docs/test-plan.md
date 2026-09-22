@@ -18,6 +18,10 @@
 - `turn.completed` input and output usage is persisted once even if the terminal event is duplicated; cached input is not double-counted.
 - Adding a CNY amount increases the existing MicuAPI balance and preserves cumulative `usedTokens`.
 - Activation provisions or reuses exactly one MicuAPI token named by username; failure preserves the invite.
+- Concurrent activation requests sharing an invitation or case-insensitive username serialize, and a losing username invitation remains usable.
+- Retrying a completed activation with the same invitation, username, and password reuses its account, MicuAPI binding, and registration session; mismatched retries fail without exposing the stored invitation digest.
+- A zero-session invitation activates successfully but returns no session token, and concurrent login count-and-create cannot exceed the configured limit.
+- A lost registration response can be retried without deleting the winning account's MicuAPI token or consuming another session slot.
 - Startup reconciliation backfills missing active-account bindings without duplicating exact-name tokens.
 - Startup reconciliation repairs stale local token names and safely renames legacy ID-named MicuAPI tokens, while rejecting username conflicts.
 - Regular users receive only a remaining-budget percentage, while exact CNY balances remain available only to system administrators.

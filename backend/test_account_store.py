@@ -132,7 +132,7 @@ class AccountStoreTest(unittest.TestCase):
       store = AccountStore(Path(tempdir) / "accounts.json", {})
       group, accounts = store.create_batch(new_group_name="Audit", count=1, budget_tokens=900, max_sessions=3)
       invite = accounts[0]
-      user = store.activate(invite["inviteToken"], "New.User", "password-hash")
+      user = store.activate(invite["inviteToken"], "New.User", "password-hash", activation_invite_digest="digest")
 
       self.assertEqual(user["id"], invite["id"])
       self.assertEqual(user["groupId"], group["id"])
@@ -140,6 +140,7 @@ class AccountStoreTest(unittest.TestCase):
       self.assertEqual(user["maxSessions"], 3)
       self.assertNotIn(invite["id"], store.pending_accounts)
       self.assertIsNone(store.pending_by_token(invite["inviteToken"]))
+      self.assertEqual(user["activationInviteDigest"], "digest")
       self.assertTrue(store.username_exists("new.user"))
 
   def test_duplicate_username_is_case_insensitive_and_invite_remains_pending(self) -> None:

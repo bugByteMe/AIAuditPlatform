@@ -30,6 +30,7 @@ let activeChatStream = null;
 let activePollTimer = null;
 let activeStreamGeneration = 0;
 let workerStatusLoading = false;
+let registrationSubmitting = false;
 
 export function renderDynamic() {
   renderCurrentUser();
@@ -1716,24 +1717,50 @@ function bindForms() {
 
   document.querySelector("#register-form").addEventListener("submit", async (event) => {
     event.preventDefault();
+    if (registrationSubmitting) return;
+    registrationSubmitting = true;
     const form = new FormData(event.currentTarget);
     const registerError = document.querySelector("#register-error");
     const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const buttonLabel = submitButton?.querySelector(".button-label");
     registerError.textContent = t("auth.registering");
-    if (submitButton) submitButton.disabled = true;
+    if (submitButton) {
+      submitButton.disabled = true;
+      submitButton.classList.add("is-loading");
+      submitButton.setAttribute("aria-busy", "true");
+    }
+    if (buttonLabel) buttonLabel.textContent = t("auth.registering");
     try {
       const result = await api("/api/register", {
         method: "POST",
         body: JSON.stringify({ inviteToken: form.get("inviteToken"), username: form.get("username"), password: form.get("password") }),
       });
-      showAuthenticated(result.user);
-      await loadWorkspaces();
-      await loadAccountControlData();
       event.currentTarget.reset();
+      if (!result.sessionToken) {
+        setAuthMode("login");
+        document.querySelector("#login-error").textContent = result.sessionError === "account_disabled"
+          ? t("auth.activationAccountDisabled")
+          : t("auth.activationSessionLimit");
+        return;
+      }
+      showAuthenticated(result.user);
+      try {
+        await loadWorkspaces();
+        await loadAccountControlData();
+      } catch (error) {
+        console.warn("Post-registration loading failed", error);
+        showToast(t("toast.workspaceLoadFailed"));
+      }
     } catch (error) {
       registerError.textContent = `${t("auth.registerFailed")} ${error.message || ""}`.trim();
     } finally {
-      if (submitButton) submitButton.disabled = false;
+      registrationSubmitting = false;
+      if (submitButton) {
+        submitButton.disabled = false;
+        submitButton.classList.remove("is-loading");
+        submitButton.removeAttribute("aria-busy");
+      }
+      if (buttonLabel) buttonLabel.textContent = t("auth.activate");
     }
   });
 

@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import sys
 import tempfile
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from account_store import AccountStore
-from server import Handler, RequestStopped, admin_account, public_user, verify_password
+from server import Handler, RequestStopped, admin_account, create_user_session, public_user, verify_password
 
 
 class AccountApiTest(unittest.TestCase):
@@ -72,9 +74,12 @@ class AccountApiTest(unittest.TestCase):
     active = {
       **pending,
       "status": "active",
+      "activationInviteDigest": "private-digest",
       "providerMode": "micu",
       "micu": {"apiKey": "managed-placeholder", "lastBalanceCny": "12.34", "lastRemainingPercent": 67.8, "status": "ready"},
     }
+    self.assertNotIn("activationInviteDigest", public_user(active))
+    self.assertNotIn("activationInviteDigest", admin_account(active))
     user_budget = public_user(active)["budget"]
     self.assertEqual(user_budget["remainingPercent"], 67.8)
     self.assertNotIn("remaining", user_budget)
@@ -228,23 +233,141 @@ class AccountApiTest(unittest.TestCase):
       store = AccountStore(Path(tempdir) / "accounts.json", {})
       _, accounts = store.create_batch(new_group_name="Audit", count=1, budget_tokens=42, max_sessions=2)
       handler = self.handler({"inviteToken": accounts[0]["inviteToken"], "username": "new.user", "password": "password8"})
-      started = []
-      handler.start_session = lambda user, event: started.append((user, event))
       audit = []
+      sessions = {}
       with (
         patch("server.ACCOUNT_STORE", store),
         patch("server.USERS", store.users),
+        patch("server.SESSIONS", sessions),
         patch("server.provision_micu", return_value={"tokenId": 7, "tokenName": "new.user", "apiKey": "test-key", "status": "ready", "lastBalanceCny": "42.00"}) as provision,
         patch("server.add_audit", side_effect=lambda actor, event, detail="": audit.append((actor, event, detail))),
       ):
         Handler.register(handler)
 
-      user, event = started[0]
-      self.assertEqual(event, "registration login success")
-      self.assertEqual(user["id"], accounts[0]["id"])
+      body, status, headers = handler.responses[0]
+      self.assertEqual(status, 200)
+      self.assertEqual(body["user"]["id"], accounts[0]["id"])
+      self.assertIn(body["sessionToken"], sessions)
+      self.assertIn("Set-Cookie", headers)
       provision.assert_called_once_with("new.user", "42.00")
-      self.assertTrue(verify_password("password8", user["passwordHash"]))
+      self.assertTrue(verify_password("password8", store.users["new.user"]["passwordHash"]))
       self.assertFalse(any(accounts[0]["inviteToken"] in " ".join(item) for item in audit))
+
+  def test_registration_retry_reuses_account_micu_binding_and_session(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      _, accounts = store.create_batch(new_group_name="Audit", count=1, budget_tokens=42, max_sessions=1)
+      payload = {"inviteToken": accounts[0]["inviteToken"], "username": "new.user", "password": "password8"}
+      first = self.handler(payload)
+      retry = self.handler(payload)
+      sessions = {}
+      provider = MagicMock(return_value={
+        "tokenId": 7, "tokenName": "new.user", "apiKey": "test-key", "status": "ready", "lastBalanceCny": "42.00"
+      })
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.SESSIONS", sessions),
+        patch("server.provision_micu", provider),
+        patch("server.add_audit"),
+      ):
+        Handler.register(first)
+        Handler.register(retry)
+
+      self.assertEqual(len(store.users), 1)
+      self.assertEqual(provider.call_count, 1)
+      self.assertEqual(len(sessions), 1)
+      self.assertEqual(first.responses[0][0]["sessionToken"], retry.responses[0][0]["sessionToken"])
+
+  def test_concurrent_registration_requests_share_one_activation(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      _, accounts = store.create_batch(new_group_name="Audit", count=1, budget_tokens=42, max_sessions=1)
+      payload = {"inviteToken": accounts[0]["inviteToken"], "username": "new.user", "password": "password8"}
+      sessions = {}
+      provider = MagicMock(return_value={
+        "tokenId": 7, "tokenName": "new.user", "apiKey": "test-key", "status": "ready", "lastBalanceCny": "42.00"
+      })
+      barrier = threading.Barrier(2)
+
+      def register_once():
+        handler = self.handler(payload)
+        barrier.wait()
+        Handler.register(handler)
+        return handler.responses[0][0]
+
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.SESSIONS", sessions),
+        patch("server.provision_micu", provider),
+        patch("server.add_audit"),
+      ):
+        with ThreadPoolExecutor(max_workers=2) as executor:
+          responses = list(executor.map(lambda _: register_once(), range(2)))
+
+      self.assertEqual(provider.call_count, 1)
+      self.assertEqual(len(store.users), 1)
+      self.assertEqual(len(sessions), 1)
+      self.assertEqual(responses[0]["sessionToken"], responses[1]["sessionToken"])
+
+  def test_losing_invitation_for_same_username_remains_pending(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      _, accounts = store.create_batch(new_group_name="Audit", count=2, budget_tokens=42, max_sessions=1)
+      first = self.handler({"inviteToken": accounts[0]["inviteToken"], "username": "New.User", "password": "password8"})
+      second = self.handler({"inviteToken": accounts[1]["inviteToken"], "username": "new.user", "password": "password8"})
+      provider = MagicMock(return_value={"tokenId": 7, "tokenName": "New.User", "apiKey": "test-key"})
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.SESSIONS", {}),
+        patch("server.provision_micu", provider),
+        patch("server.add_audit"),
+      ):
+        Handler.register(first)
+        with self.assertRaisesRegex(ValueError, "username already exists"):
+          Handler.register(second)
+
+      self.assertEqual(provider.call_count, 1)
+      self.assertIsNotNone(store.pending_by_token(accounts[1]["inviteToken"]))
+
+  def test_zero_session_invite_activates_without_login_token(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      _, accounts = store.create_batch(new_group_name="Paused", count=1, budget_tokens=0, max_sessions=0)
+      handler = self.handler({"inviteToken": accounts[0]["inviteToken"], "username": "new.user", "password": "password8"})
+      with (
+        patch("server.ACCOUNT_STORE", store),
+        patch("server.USERS", store.users),
+        patch("server.SESSIONS", {}),
+        patch("server.provision_micu", return_value={"tokenId": 7, "tokenName": "new.user", "apiKey": "test-key"}),
+        patch("server.add_audit"),
+      ):
+        Handler.register(handler)
+
+      body, status, _ = handler.responses[0]
+      self.assertEqual(status, 200)
+      self.assertEqual(body["sessionError"], "session_limit")
+      self.assertNotIn("sessionToken", body)
+      self.assertIn("new.user", store.users)
+
+  def test_concurrent_login_session_creation_honors_limit_atomically(self) -> None:
+    user = {"username": "alice", "enabled": True, "maxSessions": 1}
+    sessions = {}
+    barrier = threading.Barrier(2)
+
+    def login_once():
+      barrier.wait()
+      return create_user_session(user, "login success")
+
+    with patch("server.SESSIONS", sessions), patch("server.add_audit"):
+      with ThreadPoolExecutor(max_workers=2) as executor:
+        results = list(executor.map(lambda _: login_once(), range(2)))
+
+    self.assertEqual(len(sessions), 1)
+    self.assertEqual(sum(1 for token, _ in results if token), 1)
+    self.assertEqual(sum(1 for _, error in results if error == "session_limit"), 1)
 
   def test_registration_rejects_short_password_before_consuming_token(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:

@@ -174,28 +174,29 @@ class MicuApiClient:
     return token
 
   def ensure_binding(self, username: str, initial_balance_cny) -> dict:
-    token = self.find_token(username)
-    created = False
-    if not token:
-      token = self.create_token(username, initial_balance_cny)
-      created = True
-    key = self.full_key(int(token["id"]))
-    return {
-      "tokenId": int(token["id"]),
-      "tokenName": username,
-      "apiKey": key,
-      "group": str(token.get("group") or self.group),
-      "status": "ready",
-      "lastBalanceCny": self.cny_from_quota(int(token.get("remain_quota") or 0)),
-      "lastRemainingPercent": self.remaining_percent(
-        int(token.get("remain_quota") or 0),
-        int(token.get("used_quota") or 0),
-        bool(token.get("unlimited_quota")),
-      ),
-      "lastSyncedAt": int(time.time()),
-      "lastError": "",
-      "createdByReconcile": created,
-    }
+    with self.lock:
+      token = self.find_token(username)
+      created = False
+      if not token:
+        token = self.create_token(username, initial_balance_cny)
+        created = True
+      key = self.full_key(int(token["id"]))
+      return {
+        "tokenId": int(token["id"]),
+        "tokenName": username,
+        "apiKey": key,
+        "group": str(token.get("group") or self.group),
+        "status": "ready",
+        "lastBalanceCny": self.cny_from_quota(int(token.get("remain_quota") or 0)),
+        "lastRemainingPercent": self.remaining_percent(
+          int(token.get("remain_quota") or 0),
+          int(token.get("used_quota") or 0),
+          bool(token.get("unlimited_quota")),
+        ),
+        "lastSyncedAt": int(time.time()),
+        "lastError": "",
+        "createdByReconcile": created,
+      }
 
   def align_binding_name(self, binding: dict, username: str) -> str:
     token_id = int(binding.get("tokenId") or 0)

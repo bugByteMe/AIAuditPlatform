@@ -10,6 +10,7 @@ import secrets
 import threading
 import time
 import traceback
+from contextlib import contextmanager
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -31,6 +32,41 @@ SESSION_COOKIE = SETTINGS.session_cookie
 SESSION_TTL_SECONDS = SETTINGS.session_ttl_seconds
 PBKDF2_ITERATIONS = SETTINGS.pbkdf2_iterations
 WORKSPACE_STORE = WorkspaceStore(WORKSPACE_STORAGE_DIR)
+
+
+class KeyedLockPool:
+  def __init__(self):
+    self.guard = threading.Lock()
+    self.entries: dict[str, dict] = {}
+
+  @contextmanager
+  def hold(self, *raw_keys: str):
+    keys = sorted(set(raw_keys))
+    with self.guard:
+      entries = []
+      for key in keys:
+        entry = self.entries.setdefault(key, {"lock": threading.RLock(), "references": 0})
+        entry["references"] += 1
+        entries.append((key, entry))
+    try:
+      for _, entry in entries:
+        entry["lock"].acquire()
+      yield
+    finally:
+      for _, entry in reversed(entries):
+        entry["lock"].release()
+      with self.guard:
+        for key, entry in entries:
+          entry["references"] -= 1
+          if entry["references"] == 0:
+            self.entries.pop(key, None)
+
+
+REGISTRATION_LOCKS = KeyedLockPool()
+
+
+def invite_digest(token: str) -> str:
+  return hashlib.sha256(token.encode("utf-8")).hexdigest()
 
 
 def static_content_type(file_path: Path) -> str:
@@ -136,6 +172,7 @@ CHAT_RUNTIME = ChatRuntime(
 )
 
 SESSIONS: dict[str, dict] = {}
+SESSION_LOCK = threading.RLock()
 AUDIT_LOGS = [
   {"time": "2026-09-12 23:12", "actor": "chen.audit", "event": "login success", "detail": "seed audit log"},
 ]
@@ -149,7 +186,9 @@ def public_user(user: dict) -> dict:
   public = {
     key: value
     for key, value in user.items()
-    if key not in {"passwordHash", "codex", "customCodex", "micu", "inviteToken", "initialBudgetCny"}
+    if key not in {
+      "passwordHash", "codex", "customCodex", "micu", "inviteToken", "initialBudgetCny", "activationInviteDigest"
+    }
   }
   mode = str(user.get("providerMode") or "legacy")
   custom = user.get("customCodex") or user.get("codex") or {}
@@ -166,7 +205,7 @@ def admin_account(account: dict) -> dict:
   public = {
     key: value
     for key, value in account.items()
-    if key not in {"passwordHash", "codex", "customCodex", "micu"}
+    if key not in {"passwordHash", "codex", "customCodex", "micu", "activationInviteDigest"}
   }
   public["budget"] = budget_summary(account, include_amount=True)
   if public.get("status") == "active" and not public.get("enabled", True):
@@ -289,9 +328,50 @@ def add_audit(actor: str, event: str, detail: str = "") -> None:
 UPLOAD_MANAGER = UploadManager(WORKSPACE_STORE, CHAT_RUNTIME.worker_registry, SETTINGS, add_audit)
 
 
+def _prune_expired_sessions_unlocked(now: float) -> None:
+  for token, session in list(SESSIONS.items()):
+    if float(session.get("expiresAt") or 0) <= now:
+      SESSIONS.pop(token, None)
+
+
+def _active_sessions_for_unlocked(username: str) -> int:
+  return sum(1 for session in SESSIONS.values() if session.get("username") == username)
+
+
 def active_sessions_for(username: str) -> int:
+  with SESSION_LOCK:
+    _prune_expired_sessions_unlocked(time.time())
+    return _active_sessions_for_unlocked(username)
+
+
+def create_user_session(user: dict, audit_event: str, registration_digest: str = "") -> tuple[str | None, str | None]:
+  username = str(user["username"])
+  if not user.get("enabled", True):
+    add_audit(username, "login blocked", "account disabled")
+    return None, "account_disabled"
+
   now = time.time()
-  return sum(1 for session in SESSIONS.values() if session["username"] == username and session["expiresAt"] > now)
+  with SESSION_LOCK:
+    _prune_expired_sessions_unlocked(now)
+    if registration_digest:
+      for token, session in SESSIONS.items():
+        if session.get("username") == username and hmac.compare_digest(
+          str(session.get("registrationDigest") or ""), registration_digest
+        ):
+          session["expiresAt"] = now + SESSION_TTL_SECONDS
+          add_audit(username, audit_event, "registration session reused")
+          return token, None
+    if _active_sessions_for_unlocked(username) >= int(user.get("maxSessions", 1)):
+      add_audit(username, "login blocked", "concurrent session limit")
+      return None, "session_limit"
+    token = secrets.token_urlsafe(32)
+    session = {"username": username, "createdAt": now, "expiresAt": now + SESSION_TTL_SECONDS}
+    if registration_digest:
+      session["registrationDigest"] = registration_digest
+    SESSIONS[token] = session
+
+  add_audit(username, audit_event)
+  return token, None
 
 
 def ascii_download_filename(filename: str, fallback: str = "download") -> str:
@@ -458,46 +538,66 @@ class Handler(BaseHTTPRequestHandler):
       raise ValueError("invite token, username, and password are required")
     if len(password) < SETTINGS.registration_min_password_length:
       raise ValueError(f"password must be at least {SETTINGS.registration_min_password_length} characters")
-    pending = ACCOUNT_STORE.pending_by_token(invite_token)
-    if not pending or pending.get("status") != "pending":
-      raise ValueError("invalid invite token")
-    if ACCOUNT_STORE.username_exists(username):
-      raise ValueError("username already exists")
-    binding = provision_micu(username, pending.get("initialBudgetCny") or "0.00")
-    try:
-      user = ACCOUNT_STORE.activate(
-        invite_token,
-        username,
-        hash_password(password),
-        {},
-        binding,
-        "micu",
-      )
-    except Exception as exc:
-      if binding.get("createdByReconcile"):
+    digest = invite_digest(invite_token)
+    normalized_username = username.casefold()
+    with REGISTRATION_LOCKS.hold(f"invite:{digest}", f"username:{normalized_username}"):
+      with ACCOUNT_STORE.lock:
+        pending = ACCOUNT_STORE.pending_by_token(invite_token)
+        activated = next(
+          (
+            candidate
+            for candidate in USERS.values()
+            if hmac.compare_digest(str(candidate.get("activationInviteDigest") or ""), digest)
+          ),
+          None,
+        )
+
+      if not pending or pending.get("status") != "pending":
+        if (
+          not activated
+          or str(activated.get("username") or "").casefold() != normalized_username
+          or not verify_password(password, str(activated.get("passwordHash") or ""))
+        ):
+          raise ValueError("invalid invite token")
+        user = activated
+        audit_event = "registration retry login success"
+      else:
+        if ACCOUNT_STORE.username_exists(username):
+          raise ValueError("username already exists")
+        binding = provision_micu(username, pending.get("initialBudgetCny") or "0.00")
         try:
-          MICU_CLIENT.delete_token(binding)
-        except MicuApiError:
-          pass
-      add_audit("anonymous", "registration failed", str(exc))
-      raise
-    add_audit(username, "account activated", str(user.get("id") or ""))
-    self.start_session(user, "registration login success")
+          user = ACCOUNT_STORE.activate(
+            invite_token,
+            username,
+            hash_password(password),
+            {},
+            binding,
+            "micu",
+            digest,
+          )
+        except Exception as exc:
+          add_audit("anonymous", "registration failed", str(exc))
+          raise
+        add_audit(username, "account activated", str(user.get("id") or ""))
+        audit_event = "registration login success"
+
+      token, session_error = create_user_session(user, audit_event, digest)
+      response = {"user": public_user(user)}
+      headers = None
+      if token:
+        response["sessionToken"] = token
+        headers = {
+          "Set-Cookie": f"{SESSION_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TTL_SECONDS}"
+        }
+      else:
+        response["sessionError"] = session_error
+      self.write_json(response, headers=headers)
 
   def start_session(self, user: dict, audit_event: str) -> None:
-    username = str(user["username"])
-    if not user["enabled"]:
-      add_audit(username, "login blocked", "account disabled")
-      self.write_json({"error": "account_disabled"}, HTTPStatus.FORBIDDEN)
+    token, session_error = create_user_session(user, audit_event)
+    if not token:
+      self.write_json({"error": session_error}, HTTPStatus.FORBIDDEN)
       return
-    if active_sessions_for(username) >= int(user.get("maxSessions", 1)):
-      add_audit(username, "login blocked", "concurrent session limit")
-      self.write_json({"error": "session_limit"}, HTTPStatus.FORBIDDEN)
-      return
-
-    token = secrets.token_urlsafe(32)
-    SESSIONS[token] = {"username": username, "createdAt": time.time(), "expiresAt": time.time() + SESSION_TTL_SECONDS}
-    add_audit(username, audit_event)
     self.write_json(
       {"user": public_user(user), "sessionToken": token},
       headers={"Set-Cookie": f"{SESSION_COOKIE}={token}; HttpOnly; Path=/; SameSite=Lax; Max-Age={SESSION_TTL_SECONDS}"},
@@ -505,7 +605,8 @@ class Handler(BaseHTTPRequestHandler):
 
   def logout(self) -> None:
     token = self.session_token()
-    session = SESSIONS.pop(token, None) if token else None
+    with SESSION_LOCK:
+      session = SESSIONS.pop(token, None) if token else None
     add_audit(session["username"] if session else "anonymous", "logout")
     self.write_json({"ok": True}, headers={"Set-Cookie": f"{SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"})
 
@@ -811,9 +912,10 @@ class Handler(BaseHTTPRequestHandler):
     return CHAT_RUNTIME.delete_user_resources(usernames)
 
   def invalidate_user_sessions(self, usernames: set[str]) -> None:
-    for token, session in list(SESSIONS.items()):
-      if session.get("username") in usernames:
-        SESSIONS.pop(token, None)
+    with SESSION_LOCK:
+      for token, session in list(SESSIONS.items()):
+        if session.get("username") in usernames:
+          SESSIONS.pop(token, None)
 
   def create_account(self) -> None:
     actor = self.require_admin()
@@ -822,41 +924,37 @@ class Handler(BaseHTTPRequestHandler):
     password = str(payload.get("password", "")).strip()
     if not username or not password:
       raise ValueError("username and password are required")
-    if ACCOUNT_STORE.username_exists(username):
-      self.write_json({"error": "account_exists"}, HTTPStatus.CONFLICT)
-      return
-    group_name = str(payload.get("group") or "").strip()
-    group = ACCOUNT_STORE.group_by_name(group_name) if group_name else None
-    if group_name and not group:
-      group = ACCOUNT_STORE.create_group(group_name)
-    user_id = f"usr_{secrets.token_urlsafe(12)}"
-    binding = provision_micu(username, payload.get("budgetCny", "0.00"))
-    USERS[username] = {
-      "id": user_id,
-      "username": username,
-      "displayName": str(payload.get("displayName") or username),
-      "role": str(payload.get("role") or "user"),
-      "groupId": str(group.get("id") if group else ""),
-      "group": group_name,
-      "usedTokens": 0,
-      "enabled": bool(payload.get("enabled", True)),
-      "maxSessions": int(payload.get("maxSessions") or 1),
-      "status": "active",
-      "providerMode": "micu",
-      "micu": binding,
-      "customCodex": {},
-      "passwordHash": hash_password(password),
-    }
-    try:
-      ACCOUNT_STORE.save()
-    except Exception:
-      USERS.pop(username, None)
-      if binding.get("createdByReconcile"):
-        try:
-          MICU_CLIENT.delete_token(binding)
-        except MicuApiError:
-          pass
-      raise
+    with REGISTRATION_LOCKS.hold(f"username:{username.casefold()}"):
+      if ACCOUNT_STORE.username_exists(username):
+        self.write_json({"error": "account_exists"}, HTTPStatus.CONFLICT)
+        return
+      group_name = str(payload.get("group") or "").strip()
+      group = ACCOUNT_STORE.group_by_name(group_name) if group_name else None
+      if group_name and not group:
+        group = ACCOUNT_STORE.create_group(group_name)
+      user_id = f"usr_{secrets.token_urlsafe(12)}"
+      binding = provision_micu(username, payload.get("budgetCny", "0.00"))
+      USERS[username] = {
+        "id": user_id,
+        "username": username,
+        "displayName": str(payload.get("displayName") or username),
+        "role": str(payload.get("role") or "user"),
+        "groupId": str(group.get("id") if group else ""),
+        "group": group_name,
+        "usedTokens": 0,
+        "enabled": bool(payload.get("enabled", True)),
+        "maxSessions": int(payload.get("maxSessions") or 1),
+        "status": "active",
+        "providerMode": "micu",
+        "micu": binding,
+        "customCodex": {},
+        "passwordHash": hash_password(password),
+      }
+      try:
+        ACCOUNT_STORE.save()
+      except Exception:
+        USERS.pop(username, None)
+        raise
     add_audit(actor["username"], "account created", username)
     self.write_json({"account": public_user(USERS[username])}, HTTPStatus.CREATED)
 
@@ -1232,12 +1330,15 @@ class Handler(BaseHTTPRequestHandler):
     token = self.session_token()
     if not token:
       return None
-    session = SESSIONS.get(token)
-    if not session or session["expiresAt"] <= time.time():
-      SESSIONS.pop(token, None)
-      return None
-    session["expiresAt"] = time.time() + SESSION_TTL_SECONDS
-    return USERS.get(session["username"])
+    with SESSION_LOCK:
+      session = SESSIONS.get(token)
+      now = time.time()
+      if not session or session["expiresAt"] <= now:
+        SESSIONS.pop(token, None)
+        return None
+      session["expiresAt"] = now + SESSION_TTL_SECONDS
+      username = session["username"]
+    return USERS.get(username)
 
   def session_token(self) -> str | None:
     authorization = self.headers.get("Authorization", "")

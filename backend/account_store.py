@@ -290,9 +290,12 @@ class AccountStore:
     codex: dict | None = None,
     micu: dict | None = None,
     provider_mode: str = "micu",
+    activation_invite_digest: str = "",
   ) -> dict:
     with self.lock:
-      return self._activate_unlocked(token, username, password_hash, codex, micu, provider_mode)
+      return self._activate_unlocked(
+        token, username, password_hash, codex, micu, provider_mode, activation_invite_digest
+      )
 
   def _activate_unlocked(
     self,
@@ -302,6 +305,7 @@ class AccountStore:
     codex: dict | None = None,
     micu: dict | None = None,
     provider_mode: str = "micu",
+    activation_invite_digest: str = "",
   ) -> dict:
     account = self.pending_by_token(token)
     if not account or account.get("status") != "pending":
@@ -321,6 +325,7 @@ class AccountStore:
         "providerMode": provider_mode,
         "micu": deepcopy(micu or {}),
         "customCodex": deepcopy(codex or {}),
+        "activationInviteDigest": activation_invite_digest,
       }
     )
     previous_pending = deepcopy(account)

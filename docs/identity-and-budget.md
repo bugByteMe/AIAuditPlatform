@@ -20,7 +20,9 @@ Login uses username and password. Passwords must be stored with a modern passwor
 
 System administrators may batch-create pending accounts for an existing or newly named group. A pending account has an immutable generated user ID and a unique invite token, but no username or password. Invite tokens remain valid until used or revoked and are visible only through system-admin account APIs.
 
-Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Before consuming the invitation, the backend idempotently creates or reuses a MicuAPI token named exactly with the chosen username and retrieves its generated key. Successful registration preserves the group, initial CNY balance, and session limit; provisioning failure leaves the invitation valid.
+Registration requires an invite token, a globally unique case-insensitive username, and a password of at least eight characters. Registration requests sharing an invitation or normalized username are coordinated within the single control-plane process. Before consuming the invitation, the backend idempotently creates or reuses a MicuAPI token named exactly with the chosen username and retrieves its generated key. A one-way invitation digest is retained on the activated account so a retry with the same invitation, username, and password can recover the completed activation without provisioning another token. A mismatched retry is rejected, while a different invitation that loses a username race remains available for another username. Provisioned tokens are retained after interrupted local activation so a retry can safely reuse them instead of risking deletion of a token already bound by another request.
+
+Successful registration normally creates a tagged login session. A retry reuses that same session and token rather than consuming another concurrent-session slot. Session counting and creation are atomic within the control-plane process. If the account is disabled or its session limit is zero, activation still succeeds and the registration response reports that login is unavailable without issuing a session token.
 
 Startup reconciliation also verifies existing bindings. A stale local `tokenName` is synchronized with the username, and legacy tokens still named by generated user ID are renamed to the username when no conflicting MicuAPI token exists. Conflicts fail closed without switching or deleting either token.
 
@@ -32,7 +34,7 @@ The initial design does not require SSO, device binding, or multi-factor authent
 
 The system discourages one person sharing an account with others through:
 
-- A configurable non-negative concurrent-session limit per account. A limit of zero blocks new login sessions, including the automatic login attempted after invitation registration.
+- A configurable non-negative concurrent-session limit per account. A limit of zero blocks new login sessions, including automatic login after invitation registration, but does not roll back successful account activation.
 - Logging IP address, user agent, and device/session identifiers.
 - Admin-visible suspicious usage reports.
 - Optional automatic blocking when concurrent session limits are exceeded.
