@@ -56,6 +56,7 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('id="batch-account-form"', html)
         self.assertIn('api("/api/register"', app_source)
         self.assertIn('api("/api/accounts/batch"', app_source)
+        self.assertRegex(html, r'name="maxSessions"[^>]*min="0"')
         self.assertIn("event-running-dots", render_source)
         self.assertIn("event-fold", render_source)
 

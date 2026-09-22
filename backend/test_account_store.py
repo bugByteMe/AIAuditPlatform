@@ -109,6 +109,15 @@ class AccountStoreTest(unittest.TestCase):
       self.assertTrue(all(account["groupId"] == group["id"] for account in accounts))
       self.assertTrue(all(account["initialBudgetCny"] == "5000.00" and account["maxSessions"] == 2 for account in accounts))
 
+  def test_batch_invites_allow_zero_concurrent_sessions(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      _, accounts = store.create_batch(new_group_name="Paused team", count=1, budget_tokens=0, max_sessions=0)
+
+      self.assertEqual(accounts[0]["maxSessions"], 0)
+      with self.assertRaisesRegex(ValueError, "between 0 and"):
+        store.create_batch(new_group_name="Invalid team", count=1, budget_tokens=0, max_sessions=-1)
+
   def test_batch_creation_rolls_back_when_save_fails(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})

@@ -32,7 +32,7 @@ The initial design does not require SSO, device binding, or multi-factor authent
 
 The system discourages one person sharing an account with others through:
 
-- A configurable concurrent-session limit per account.
+- A configurable non-negative concurrent-session limit per account. A limit of zero blocks new login sessions, including the automatic login attempted after invitation registration.
 - Logging IP address, user agent, and device/session identifiers.
 - Admin-visible suspicious usage reports.
 - Optional automatic blocking when concurrent session limits are exceeded.

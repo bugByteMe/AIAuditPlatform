@@ -206,8 +206,8 @@ class AccountStore:
       raise ValueError(f"count must be between 1 and {SETTINGS.batch_invite_max_count}")
     from micu_api import parse_cny
     initial_budget = parse_cny(budget_cny if budget_cny is not None else (budget_tokens or 0))
-    if not 1 <= max_sessions <= SETTINGS.account_max_sessions_limit:
-      raise ValueError(f"maxSessions must be between 1 and {SETTINGS.account_max_sessions_limit}")
+    if not 0 <= max_sessions <= SETTINGS.account_max_sessions_limit:
+      raise ValueError(f"maxSessions must be between 0 and {SETTINGS.account_max_sessions_limit}")
 
     new_group = None
     if new_group_name:

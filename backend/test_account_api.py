@@ -34,6 +34,18 @@ class AccountApiTest(unittest.TestCase):
       self.assertEqual(len(body["accounts"]), 2)
       self.assertTrue(all(account["inviteToken"] for account in body["accounts"]))
 
+  def test_batch_endpoint_preserves_zero_concurrent_sessions(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(Path(tempdir) / "accounts.json", {})
+      actor = {"username": "admin", "role": "system_admin"}
+      handler = self.handler({"newGroupName": "Paused", "count": 1, "budgetTokens": 0, "maxSessions": 0}, actor)
+      with patch("server.ACCOUNT_STORE", store), patch("server.add_audit"):
+        Handler.create_account_batch(handler)
+
+      body, status, _ = handler.responses[0]
+      self.assertEqual(status, 201)
+      self.assertEqual(body["accounts"][0]["maxSessions"], 0)
+
   def test_batch_endpoint_stops_when_admin_check_fails(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})
