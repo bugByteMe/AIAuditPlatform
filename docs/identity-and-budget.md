@@ -66,7 +66,7 @@ Managed MicuAPI mode uses the external token balance as its hard limit:
 - Administrators add a CNY amount to the token's existing balance; this does not reset cumulative local token usage.
 - Users may select custom-provider mode and supply their own URL and key. Custom mode does not use or gate on the preserved MicuAPI balance.
 
-Regular user responses expose only the remaining-budget percentage, calculated as remaining quota divided by remaining plus consumed quota. Exact CNY balances are restricted to system-administrator account responses. Cumulative token counts remain visible to users as usage reporting.
+Regular user responses expose only the remaining-budget percentage, calculated as the current remaining quota divided by the balance immediately after the latest recharge. A successful manual or XLSX recharge therefore resets the percentage to 100%, after which it decreases as that balance is consumed. For an existing account without a saved recharge baseline, the first successful balance refresh establishes the current balance as its baseline. Exact CNY balances are restricted to system-administrator account responses. Cumulative token counts remain visible to users as usage reporting.
 
 The system-administrator account list refreshes managed balances from the paginated MicuAPI token list and matches entries by persisted token ID. This avoids one provider request per account. If the list request fails or a bound token is absent, the last cached amount is retained and its provider status is marked unavailable.
 

@@ -108,8 +108,9 @@ class AccountApiTest(unittest.TestCase):
     workspace_store.usage_summaries.return_value = ({}, {})
     provider = MagicMock()
     provider.all_tokens.return_value = [{"id": 9}, {"id": 7}]
-    provider.balance_from_token.side_effect = lambda token: {
-      "remainingCny": f"{token['id']}.00", "remainingPercent": float(token["id"]), "status": "ready"
+    provider.balance_from_token.side_effect = lambda token, reference: {
+      "remainingCny": f"{token['id']}.00", "remainingPercent": float(token["id"]),
+      "referenceQuota": token["id"] if reference is None else reference, "status": "ready"
     }
     handler = self.handler({}, {"username": "admin", "role": "system_admin"})
 
@@ -125,6 +126,9 @@ class AccountApiTest(unittest.TestCase):
     provider.balance.assert_not_called()
     self.assertEqual(users["alice"]["micu"]["lastBalanceCny"], "7.00")
     self.assertEqual(users["bob"]["micu"]["lastBalanceCny"], "9.00")
+    self.assertEqual(users["alice"]["micu"]["rechargeBaselineQuota"], 7)
+    self.assertEqual(users["bob"]["micu"]["rechargeBaselineQuota"], 9)
+    account_store.save.assert_called_once_with()
     self.assertNotIn("micu", users["custom"])
 
   def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
@@ -186,7 +190,7 @@ class AccountApiTest(unittest.TestCase):
         ],
       }
       provider = MagicMock()
-      provider.add_balance.return_value = {"remainingCny": "41.00", "remainingPercent": 80.0, "status": "ready"}
+      provider.add_balance.return_value = {"rawQuota": 20_500_000, "remainingCny": "41.00", "remainingPercent": 100.0, "status": "ready"}
 
       preview = self.handler({}, actor)
       preview.read_recharge_upload = lambda: (b"xlsx", {})
@@ -207,6 +211,8 @@ class AccountApiTest(unittest.TestCase):
         Handler.apply_recharge_import(apply)
       self.assertEqual(apply.responses[0][0]["summary"]["applied"], 1)
       provider.add_balance.assert_called_once_with(store.users["Alice"]["micu"], "40.00")
+      self.assertEqual(store.users["Alice"]["micu"]["rechargeBaselineQuota"], 20_500_000)
+      self.assertEqual(store.users["Alice"]["micu"]["lastRemainingPercent"], 100.0)
       self.assertEqual(store.recharge_history("usr_alice")[0]["amountCny"], "50.00")
 
       repeated = self.handler({}, actor)
@@ -414,12 +420,13 @@ class AccountApiTest(unittest.TestCase):
       store.users["alice"]["usedTokens"] = 90
       user["micu"] = {"tokenId": 7, "apiKey": "test-key", "status": "ready", "lastBalanceCny": "1.00"}
       provider = MagicMock()
-      provider.add_balance.return_value = {"addedCny": "5.00", "remainingCny": "6.00", "remainingPercent": 75.0, "status": "ready"}
+      provider.add_balance.return_value = {"addedCny": "5.00", "rawQuota": 3_000_000, "remainingCny": "6.00", "remainingPercent": 100.0, "status": "ready"}
       reset_handler = self.handler({"amountCny": "5.00"}, actor)
       with patch("server.ACCOUNT_STORE", store), patch("server.MICU_CLIENT", provider), patch("server.add_audit"):
         Handler.reset_account_budget(reset_handler, user["id"])
       self.assertEqual(store.users["alice"]["micu"]["lastBalanceCny"], "6.00")
-      self.assertEqual(store.users["alice"]["micu"]["lastRemainingPercent"], 75.0)
+      self.assertEqual(store.users["alice"]["micu"]["lastRemainingPercent"], 100.0)
+      self.assertEqual(store.users["alice"]["micu"]["rechargeBaselineQuota"], 3_000_000)
       self.assertEqual(store.users["alice"]["usedTokens"], 90)
 
   def test_self_deletion_is_protected(self) -> None:

@@ -25,6 +25,7 @@
 - Startup reconciliation backfills missing active-account bindings without duplicating exact-name tokens.
 - Startup reconciliation repairs stale local token names and safely renames legacy ID-named MicuAPI tokens, while rejecting username conflicts.
 - Regular users receive only a remaining-budget percentage, while exact CNY balances remain available only to system administrators.
+- A successful manual or XLSX recharge saves the resulting balance as the new percentage baseline, displays 100% immediately, and later refreshes calculate current balance divided by that baseline without using lifetime token consumption.
 - The sidebar renders remaining percentage and cumulative platform usage together, using compact decimal K/M units without unnecessary trailing zeroes.
 
 ## Disk Quotas

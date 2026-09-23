@@ -52,7 +52,7 @@ class MicuApiClientTest(unittest.TestCase):
     self.assertEqual(parse_cny("1.25"), parse_cny(1.25))
     self.assertEqual(client.quota_from_cny("1.25"), 625_000)
     self.assertEqual(client.cny_from_quota(625_000), "1.25")
-    self.assertEqual(client.remaining_percent(3, 1), 75.0)
+    self.assertEqual(client.remaining_percent(3, 4), 75.0)
     self.assertEqual(client.remaining_percent(0, 0), 0.0)
 
   def test_balance_can_be_calculated_from_a_list_token_without_fetching_it_again(self) -> None:
@@ -60,12 +60,30 @@ class MicuApiClientTest(unittest.TestCase):
     token = {**client.stored, "status": 1, "remain_quota": 1_500_000, "used_quota": 500_000}
 
     with patch.object(client, "token") as token_request:
-      balance = client.balance_from_token(token)
+      balance = client.balance_from_token(token, 2_000_000)
 
     token_request.assert_not_called()
     self.assertEqual(balance["remainingCny"], "3.00")
     self.assertEqual(balance["remainingPercent"], 75.0)
+    self.assertEqual(balance["referenceQuota"], 2_000_000)
     self.assertEqual(balance["status"], "ready")
+
+  def test_balance_uses_current_quota_as_baseline_when_binding_predates_recharge_cycles(self) -> None:
+    client = FakeMicuClient()
+    token = {**client.stored, "status": 1, "remain_quota": 1_500_000, "used_quota": 9_000_000}
+
+    balance = client.balance_from_token(token)
+
+    self.assertEqual(balance["referenceQuota"], 1_500_000)
+    self.assertEqual(balance["remainingPercent"], 100.0)
+
+  def test_balance_percentage_decreases_from_latest_recharge_baseline(self) -> None:
+    client = FakeMicuClient()
+    token = {**client.stored, "status": 1, "remain_quota": 1_125_000, "used_quota": 9_000_000}
+
+    balance = client.balance_from_token(token, 2_250_000)
+
+    self.assertEqual(balance["remainingPercent"], 50.0)
 
   def test_add_balance_increments_existing_quota_and_reenables(self) -> None:
     client = FakeMicuClient()

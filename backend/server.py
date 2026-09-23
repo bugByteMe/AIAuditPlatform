@@ -147,15 +147,19 @@ def check_micu_budget(user: dict) -> None:
     balance = MICU_CLIENT.balance(binding)
   except MicuApiError as exc:
     raise StorageError("budget_provider_unavailable", str(exc)) from exc
+  establishes_baseline = "rechargeBaselineQuota" not in binding
   binding.update(
     {
       "lastBalanceCny": balance["remainingCny"],
       "lastRemainingPercent": balance["remainingPercent"],
+      "rechargeBaselineQuota": balance["referenceQuota"],
       "lastSyncedAt": int(time.time()),
       "status": balance["status"],
       "lastError": "",
     }
   )
+  if establishes_baseline:
+    ACCOUNT_STORE.save()
   if balance["status"] == "exhausted":
     raise StorageError("budget_exhausted", "MicuAPI balance is exhausted")
   if balance["status"] != "ready":
@@ -233,8 +237,11 @@ def refresh_micu_balance(user: dict) -> None:
     return
   binding = user["micu"]
   try:
+    establishes_baseline = "rechargeBaselineQuota" not in binding
     balance = MICU_CLIENT.balance(binding)
-    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "rechargeBaselineQuota": balance["referenceQuota"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+    if establishes_baseline:
+      ACCOUNT_STORE.save()
   except MicuApiError as exc:
     binding.update({"status": "unavailable", "lastError": str(exc)})
 
@@ -254,14 +261,18 @@ def refresh_micu_balances(users) -> None:
       user["micu"].update({"status": "unavailable", "lastError": str(exc)})
     return
   synced_at = int(time.time())
+  establishes_baseline = False
   for user in managed:
     binding = user["micu"]
     token = tokens_by_id.get(int(binding.get("tokenId") or 0))
     if not token:
       binding.update({"status": "unavailable", "lastError": "MicuAPI token was not found"})
       continue
-    balance = MICU_CLIENT.balance_from_token(token)
-    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "lastSyncedAt": synced_at, "status": balance["status"], "lastError": ""})
+    balance = MICU_CLIENT.balance_from_token(token, binding.get("rechargeBaselineQuota"))
+    establishes_baseline = establishes_baseline or "rechargeBaselineQuota" not in binding
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "rechargeBaselineQuota": balance["referenceQuota"], "lastSyncedAt": synced_at, "status": balance["status"], "lastError": ""})
+  if establishes_baseline:
+    ACCOUNT_STORE.save()
 
 
 def provision_micu(username: str, initial_balance_cny) -> dict:
@@ -676,7 +687,7 @@ class Handler(BaseHTTPRequestHandler):
       balance = MICU_CLIENT.add_balance(binding, amount)
     except MicuApiError as exc:
       raise StorageError("budget_provider_unavailable", str(exc)) from exc
-    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
+    binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "rechargeBaselineQuota": balance["rawQuota"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
     ACCOUNT_STORE.save()
     add_audit(actor["username"], "account MicuAPI balance added", f"{account['id']} amountCny={balance['addedCny']} balanceCny={balance['remainingCny']}")
     self.write_json({"account": admin_account(account)})
@@ -776,6 +787,7 @@ class Handler(BaseHTTPRequestHandler):
           binding_updates={
             "lastBalanceCny": balance["remainingCny"],
             "lastRemainingPercent": balance["remainingPercent"],
+            "rechargeBaselineQuota": balance["rawQuota"],
             "lastSyncedAt": int(time.time()),
             "status": balance["status"],
             "lastError": "",

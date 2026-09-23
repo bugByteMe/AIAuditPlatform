@@ -30,4 +30,6 @@ Only sheets whose metadata contains `收款项：¥50.00 -`, `收款项：¥100.
 
 Confirmation credits 80% of the face amount: CNY 40, 80, or 160. Payment-number hashes are globally unique and persisted before the external balance call, so repeated or concurrent imports cannot credit the same payment twice. Provider errors are retained as `review_required` and are never retried automatically because the remote result may be uncertain.
 
+After a credit succeeds, the resulting MicuAPI balance becomes the account's new recharge baseline. The user-facing remaining percentage is current balance divided by that baseline, so it is 100% immediately after the recharge and falls as the balance is consumed.
+
 The uploaded workbook and complete payment numbers are not retained. Successful user history shows the original CNY 50, 100, or 200 face amount and payment time; it does not expose the reduced credit amount. Account deletion removes identifying history while retaining an anonymous payment hash tombstone for duplicate protection. Token usage remains informational and is not reset.
