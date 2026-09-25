@@ -658,11 +658,7 @@ class ChatRuntime:
       session = self.chat_store.get_session(session_id)
       if not session or session.get("workspaceId") != workspace_id:
         raise StorageError("not_found", "chat session not found")
-      session_runs = {
-        run_id: run
-        for run_id, run in self.chat_store.runs().items()
-        if run.get("sessionId") == session_id
-      }
+      session_runs = self.chat_store.runs_for_session(session_id)
       if any(run.get("status") in RUNNING_STATES for run in session_runs.values()):
         raise StorageError("session_run_active", "stop the active chat run before deleting this session")
 
@@ -714,19 +710,11 @@ class ChatRuntime:
       session_id = str(payload.get("sessionId") or "")
       if session_id and not self.chat_store.get_session(session_id):
         session_id = ""
-      active_runs = [
-        run
-        for run in self.chat_store.runs().values()
-        if run.get("workspaceId") == workspace_id and run.get("status") in RUNNING_STATES
-      ]
+      active_runs = self.chat_store.active_runs(workspace_id=workspace_id)
       group = self.groups.get(group_id) if group_id else None
       if group:
         live_run_limit = int(group.get("liveRunLimit", 1))
-        group_live_runs = [
-          run
-          for run in self.chat_store.runs().values()
-          if run.get("status") in RUNNING_STATES and self.run_group_id(run) == group_id
-        ]
+        group_live_runs = self.chat_store.active_runs(group_id=group_id)
         if len(group_live_runs) >= live_run_limit:
           raise StorageError(
             "group_live_run_limit_reached",
@@ -1047,13 +1035,7 @@ class ChatRuntime:
         status = "failed"
     run["status"] = status
     run["updated"] = now_string()
-    remaining_runs = [
-      item
-      for item in self.chat_store.runs().values()
-      if item.get("workspaceId") == run["workspaceId"]
-      and item.get("id") != run["id"]
-      and item.get("status") in RUNNING_STATES
-    ]
+    remaining_runs = [item for item in self.chat_store.active_runs(workspace_id=run["workspaceId"]) if item.get("id") != run["id"]]
     workspace["locked"] = bool(remaining_runs or workspace.get("activeUploadId"))
     workspace["activeRunId"] = remaining_runs[0]["id"] if remaining_runs else None
     session = self.chat_store.get_session(run["sessionId"])

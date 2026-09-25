@@ -101,6 +101,17 @@ class ChatStore:
     with self.engine.connect() as connection:
       return {row.id: dict(row.payload) for row in connection.execute(select(self.run_table))}
 
+  def active_runs(self, *, workspace_id: str | None = None, group_id: str | None = None, session_id: str | None = None) -> list[dict]:
+    statement = select(self.run_table.c.payload).where(self.run_table.c.status.in_(["queued", "starting", "running", "stopping"]))
+    if workspace_id is not None:
+      statement = statement.where(self.run_table.c.workspace_id == workspace_id)
+    if group_id is not None:
+      statement = statement.where(self.run_table.c.group_id == group_id)
+    if session_id is not None:
+      statement = statement.where(self.run_table.c.session_id == session_id)
+    with self.engine.connect() as connection:
+      return [dict(row.payload) for row in connection.execute(statement)]
+
   def get_session(self, session_id: str) -> dict | None:
     with self.engine.connect() as connection:
       return self._payload(connection.execute(select(self.session_table.c.payload).where(self.session_table.c.id == session_id)).first())
@@ -108,6 +119,10 @@ class ChatStore:
   def get_run(self, run_id: str) -> dict | None:
     with self.engine.connect() as connection:
       return self._payload(connection.execute(select(self.run_table.c.payload).where(self.run_table.c.id == run_id)).first())
+
+  def runs_for_session(self, session_id: str) -> dict[str, dict]:
+    with self.engine.connect() as connection:
+      return {row.id: dict(row.payload) for row in connection.execute(select(self.run_table).where(self.run_table.c.session_id == session_id))}
 
   def _upsert_session(self, connection, session: dict) -> None:
     payload = dict(session)
