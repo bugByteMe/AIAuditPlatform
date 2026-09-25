@@ -220,6 +220,27 @@ This prevents one workspace deletion from removing file content still referenced
 
 User and group cascade deletion applies the same retained-reference rule: owned workspaces, previews, chats, and Codex homes are removed, then only blobs unreferenced by every retained file version are collected.
 
-## Metadata Compatibility
+## Metadata Persistence and Migration
 
-New installations persist workspace metadata in `workspace_storage/workspace.sqlite3` and do not create `metadata.json` or per-checkpoint manifest JSON files. Automatic migration of populated legacy workspace metadata is intentionally unsupported. Startup refuses a populated legacy `metadata.json` and requires a fresh workspace storage directory; an empty legacy file is tolerated and ignored.
+Production persists workspace, session-reference, checkpoint, bounded
+file-version, and artifact metadata in PostgreSQL when
+`AI_AUDIT_DATABASE_URL` is set. The actual workspace files, content-addressed
+blobs, previews, bundles, upload staging, and Codex homes remain on shared
+storage. Development and isolated tests use
+`workspace_storage/workspace.sqlite3` when the database URL is unset.
+
+To migrate an existing SQLite deployment, stop the control plane so workspace
+metadata cannot change, back up `workspace.sqlite3`, and run:
+
+```bash
+python backend/migrate_workspace_store.py --storage-root /mnt/workspace_storage
+```
+
+The importer requires empty PostgreSQL workspace tables, copies every row in a
+single target transaction, and verifies per-table row counts. It leaves the
+SQLite source untouched for rollback. Start the service with the same
+`AI_AUDIT_DATABASE_URL` only after validation succeeds.
+
+Older `metadata.json` or per-checkpoint manifest JSON files are not imported.
+Startup on the SQLite fallback refuses a populated legacy `metadata.json`; an
+empty legacy file is tolerated and ignored.

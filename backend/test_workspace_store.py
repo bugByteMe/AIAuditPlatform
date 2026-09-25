@@ -8,6 +8,7 @@ import unittest
 import zipfile
 from io import BytesIO
 from pathlib import Path
+from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
@@ -53,6 +54,14 @@ class WorkspaceStoreTest(unittest.TestCase):
         UploadedFile("sheets/report.xlsx", b"not a real workbook"),
       ],
     )
+
+  @mock.patch("workspace_store.PostgresWorkspaceDatabase")
+  def test_database_url_selects_postgres_workspace_metadata(self, postgres_database) -> None:
+    root = Path(self.tempdir.name) / "postgres_workspace_storage"
+    store = WorkspaceStore(root, "postgresql+psycopg://database.example/audit")
+    postgres_database.assert_called_once_with("postgresql+psycopg://database.example/audit")
+    self.assertIs(store.database, postgres_database.return_value)
+    self.assertFalse((root / "workspace.sqlite3").exists())
 
   def test_ascii_download_filename_strips_non_latin_header_chars(self) -> None:
     filename = ascii_download_filename("EK 其他流动资产（新准则）.xlsx")

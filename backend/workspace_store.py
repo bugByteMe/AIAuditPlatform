@@ -20,6 +20,7 @@ from typing import Callable
 from urllib.parse import parse_qs
 
 from config import SETTINGS
+from postgres_workspace_database import PostgresWorkspaceDatabase
 from workspace_database import WorkspaceDatabase
 
 
@@ -103,7 +104,7 @@ class UploadedFile:
 
 
 class WorkspaceStore:
-  def __init__(self, root: Path):
+  def __init__(self, root: Path, database_url: str = ""):
     self.root = root
     self.active_dir = root / "active"
     self.blob_dir = root / "blobs" / "sha256"
@@ -112,7 +113,7 @@ class WorkspaceStore:
     self.chat_session_provider: Callable[[dict], list[dict]] | None = None
     self.account_provider: Callable[[], tuple[dict[str, dict], dict[str, dict]]] | None = None
     self.lock = threading.RLock()
-    self.database = WorkspaceDatabase(root)
+    self.database = PostgresWorkspaceDatabase(database_url) if database_url else WorkspaceDatabase(root)
     self.ensure_layout()
 
   def set_chat_session_provider(self, provider: Callable[[dict], list[dict]]) -> None:

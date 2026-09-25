@@ -38,7 +38,7 @@ WORKSPACE_STORAGE_DIR = SETTINGS.workspace_storage_dir
 SESSION_COOKIE = SETTINGS.session_cookie
 SESSION_TTL_SECONDS = SETTINGS.session_ttl_seconds
 PBKDF2_ITERATIONS = SETTINGS.pbkdf2_iterations
-WORKSPACE_STORE = WorkspaceStore(WORKSPACE_STORAGE_DIR)
+WORKSPACE_STORE = WorkspaceStore(WORKSPACE_STORAGE_DIR, SETTINGS.database_url)
 
 
 class KeyedLockPool:

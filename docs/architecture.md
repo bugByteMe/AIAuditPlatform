@@ -41,8 +41,9 @@ backend and PostgreSQL is selected in production through
 `AI_AUDIT_DATABASE_URL`. Uvicorn's asynchronous transport allows many idle SSE
 connections without dedicating one operating-system thread to each connection.
 Chat event reads and writes do not take the workspace lifecycle lock; lifecycle
-coordination is scoped by workspace, group, session, or run, with only short
-workspace metadata commits using the compatibility database lock.
+coordination is scoped by workspace, group, session, or run. Production stores
+both chat and workspace metadata in PostgreSQL. Large workspace files and
+content-addressed blobs remain on shared storage.
 
 ### Metadata Database
 
