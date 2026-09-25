@@ -123,6 +123,13 @@ The worker persists its run state and event stream beneath `<workspace_storage_d
 
 Live updates use Server-Sent Events. A lightweight event-list reconciliation poll runs alongside SSE so proxy buffering, silent connection stalls, or reconnect races cannot leave the visible history stale. Both paths merge by persisted event ID into the session they were opened for, and terminal status is returned even when no new event payload is available. Event rendering follows new output only when the reader is already near the bottom; otherwise it preserves the visible event anchor across refreshes.
 
+The FastAPI control plane serves each SSE connection with an asynchronous
+stream. Runner threads notify a process-local broker after an event has been
+persisted; the stream then rereads the authoritative event store using the
+client's cursor. This notification is only a wake-up optimization, so reconnects
+and reconciliation remain correct if a notification is missed. Idle streams do
+not retain one request thread per browser.
+
 The production runner launches one Docker container per run from the `docker/codex-runner/Dockerfile` image and executes:
 
 ```text

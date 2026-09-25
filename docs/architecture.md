@@ -20,7 +20,8 @@ The chat UI should support websocket or SSE updates for model output, progress e
 
 ### Backend API
 
-The backend provides:
+The browser-facing control plane is a FastAPI ASGI application served by a
+single Uvicorn worker. It provides:
 
 - Authentication and authorization.
 - User, group, and budget management.
@@ -32,6 +33,13 @@ The backend provides:
 - Audit logging.
 
 The backend is the only component trusted to make access-control and budget decisions.
+
+The single-worker restriction is intentional in the current version: login
+sessions, scheduling state, lifecycle locks, and parts of chat persistence are
+process-local. Uvicorn's asynchronous transport allows many idle SSE
+connections without dedicating one operating-system thread to each connection,
+but it does not remove the shared workspace/chat lifecycle lock. Multi-process
+deployment requires shared transactional state and is a separate design step.
 
 ### Metadata Database
 

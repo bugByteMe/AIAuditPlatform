@@ -10,6 +10,19 @@ python3 -m pip install -r backend/requirements.txt
 
 `openpyxl` is required on the control plane for administrator XLSX recharge imports. Microsoft Excel and LibreOffice are not required for this workflow.
 
+Start the control plane with the existing command-line contract:
+
+```bash
+python backend/server.py --host 0.0.0.0 --port 8000
+```
+
+This command runs FastAPI through Uvicorn. Run exactly one Uvicorn worker;
+current login sessions, scheduler state, and lifecycle locks are process-local.
+When a reverse proxy is used, disable response buffering for chat SSE routes and
+set its idle timeout above the configured SSE keepalive interval. TLS,
+connection limits, and request-header limits should normally be enforced at
+that proxy.
+
 ## Service and Storage
 
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.

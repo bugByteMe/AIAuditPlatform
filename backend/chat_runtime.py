@@ -461,6 +461,7 @@ class ChatRuntime:
     self.queue: queue.Queue[str] = queue.Queue()
     self.active_runs: set[str] = set()
     self.stop_requested: set[str] = set()
+    self.event_callback = None
     self.shutdown = False
     self.store.set_chat_session_provider(self.public_workspace_sessions)
     self.recover_persisted_runs()
@@ -842,10 +843,10 @@ class ChatRuntime:
     while not self.shutdown:
       run_id = self.queue.get()
       node_id = None
+      run = self.chat_store.get_run(run_id)
+      if not run or run.get("status") != "queued":
+        continue
       if self.worker_registry:
-        run = self.chat_store.get_run(run_id)
-        if not run or run.get("status") != "queued":
-          continue
         node_id = self.worker_registry.claim(run_id, float(run["requestedCpu"]), int(run["requestedMemoryBytes"]))
         if not node_id:
           self.queue.put(run_id)
@@ -1049,7 +1050,17 @@ class ChatRuntime:
       event["status"] = status
     if tool_call_id:
       event["toolCallId"] = tool_call_id
-    return self.chat_store.append_event(session_id, event)
+    persisted = self.chat_store.append_event(session_id, event)
+    if self.event_callback:
+      try:
+        self.event_callback(session_id, persisted)
+      except Exception:
+        # Live notification is best-effort; persisted events remain authoritative.
+        pass
+    return persisted
+
+  def set_event_callback(self, callback) -> None:
+    self.event_callback = callback
 
   def public_session(self, session_id: str, include_events: bool = True) -> dict:
     session = self.chat_store.public_session(session_id, include_events=include_events)
