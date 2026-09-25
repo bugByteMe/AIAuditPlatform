@@ -107,7 +107,11 @@ class ServerStreamingTest(unittest.TestCase):
       Handler.chat_api(handler, "GET", "workspace-1", "events", "", "sessionId=chat-1&after=9")
     self.assertEqual(
       responses,
-      [{"events": [], "sessionStatus": "completed", "session": {"id": "chat-1", "status": "completed"}}],
+      [{
+        "events": [], "sessionStatus": "completed",
+        "session": {"id": "chat-1", "status": "completed", "events": []},
+        "latestEventId": 9, "hasMore": False,
+      }],
     )
 
   def test_upload_chunk_passes_request_stream_without_reading_it_into_memory(self) -> None:
