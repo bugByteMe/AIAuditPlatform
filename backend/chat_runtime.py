@@ -950,6 +950,10 @@ class ChatRuntime:
           with self.condition:
             self.condition.notify_all()
     except Exception as exc:
+      # Test and shutdown teardown may remove an ephemeral workspace root while
+      # a daemon runner is finishing. There is no durable state left to repair.
+      if not self.store.root.exists():
+        return
       if node_id and self.worker_registry and isinstance(exc, WorkerUnavailable):
         time.sleep(max(0.0, SETTINGS.worker_run_lease_seconds))
       with self.store.lock:
