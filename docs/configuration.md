@@ -93,4 +93,31 @@ The agent API is intentionally narrow: health; run start, status/events, stop, l
 - `micu_management_url`, `micu_inference_url`, `micu_user_id`, `micu_token_group`, `micu_quota_per_cny`, `micu_request_timeout_seconds`, and `micu_migration_balance_cny` configure managed per-user MicuAPI tokens. This deployment uses Micu user ID `78836`, token group `vip_2`, and a `10.00` CNY migration balance.
 - Supply the management credential only through `AI_AUDIT_MICU_MANAGEMENT_TOKEN`. Never place it in the JSON file, logs, documentation, or tests. Token-group availability is region-sensitive, so validate `vip_2` from the deployed control-plane host.
 
+## WeChat Pay
+
+WeChat Pay is disabled by default. Enable it only after the public HTTPS proxy is
+installed and the key files are mounted outside source control:
+
+```text
+AI_AUDIT_WECHAT_PAY_ENABLED=true
+AI_AUDIT_WECHAT_APP_ID=<appid>
+AI_AUDIT_WECHAT_MERCHANT_ID=<merchant-id>
+AI_AUDIT_WECHAT_NOTIFY_URL=https://audit.example.com/api/payments/wechat/notify
+AI_AUDIT_WECHAT_PUBLIC_KEY_ID=<PUB_KEY_ID_...>
+AI_AUDIT_WECHAT_API_V3_KEY=<32-byte-secret>
+AI_AUDIT_WECHAT_MERCHANT_CERT_FILE=/etc/ai-audit/wechatpay/apiclient_cert.pem
+AI_AUDIT_WECHAT_MERCHANT_KEY_FILE=/etc/ai-audit/wechatpay/apiclient_key.pem
+AI_AUDIT_WECHAT_PUBLIC_KEY_FILE=/etc/ai-audit/wechatpay/pub_key.pem
+```
+
+`wechat_order_expiry_seconds`, `wechat_reconcile_interval_seconds`, and
+`wechat_request_timeout_seconds` configure order expiry, recovery queries, and
+provider timeouts. Never put the API v3 key or private-key content in
+`config/ai_audit.json`.
+
+Copy `docker/nginx/ai-audit.conf.example`, replace its domain and TLS certificate
+paths, validate it with `nginx -t`, and register the exact notification URL with
+WeChat Pay. Nginx terminates public TLS and forwards the callback body and
+`Wechatpay-*` headers unchanged to Uvicorn.
+
 Environment variable names use the `AI_AUDIT_` prefix and uppercase setting name, except the existing `SKILL_PATH` override for `skill_path`. List values such as `AI_AUDIT_BLOCKED_UPLOAD_SUFFIXES` use comma-separated entries.

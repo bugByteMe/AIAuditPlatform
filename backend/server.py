@@ -13,6 +13,8 @@ import threading
 import time
 import traceback
 from contextlib import asynccontextmanager, contextmanager
+from datetime import datetime, timezone
+from decimal import Decimal
 from http import HTTPStatus
 from http.cookies import SimpleCookie
 from http.server import BaseHTTPRequestHandler
@@ -28,6 +30,7 @@ from account_store import AccountStore
 from chat_runtime import ChatRuntime
 from config import SETTINGS
 from micu_api import MicuApiClient, MicuApiError, parse_cny
+from wechat_pay import WechatPayClient, WechatPayError
 from recharge_import import MAX_WORKBOOK_BYTES, parse_recharge_workbook, payment_key
 from upload_store import UploadManager
 from workspace_store import StorageError, WorkspaceStore, parse_multipart, parse_query, parse_urlencoded_paths
@@ -143,6 +146,26 @@ MICU_CLIENT = MicuApiClient(
   SETTINGS.micu_quota_per_cny,
   SETTINGS.micu_request_timeout_seconds,
 )
+WECHAT_PAY = WechatPayClient(
+  enabled=SETTINGS.wechat_pay_enabled,
+  app_id=SETTINGS.wechat_app_id,
+  merchant_id=SETTINGS.wechat_merchant_id,
+  notify_url=SETTINGS.wechat_notify_url,
+  api_v3_key=SETTINGS.wechat_api_v3_key,
+  merchant_cert_file=SETTINGS.wechat_merchant_cert_file,
+  merchant_key_file=SETTINGS.wechat_merchant_key_file,
+  public_key_id=SETTINGS.wechat_public_key_id,
+  public_key_file=SETTINGS.wechat_public_key_file,
+  timeout_seconds=SETTINGS.wechat_request_timeout_seconds,
+)
+RECHARGE_PRODUCTS = {
+  "1.00": {"amountFen": 100, "creditCny": "0.80", "debug": True},
+  "50.00": {"amountFen": 5_000, "creditCny": "40.00", "debug": False},
+  "100.00": {"amountFen": 10_000, "creditCny": "80.00", "debug": False},
+  "200.00": {"amountFen": 20_000, "creditCny": "160.00", "debug": False},
+}
+WECHAT_CALLBACK_MAX_BYTES = 64 * 1024
+WECHAT_RECONCILE_STOP = threading.Event()
 WORKSPACE_STORE.set_account_provider(lambda: (ACCOUNT_STORE.users, ACCOUNT_STORE.groups))
 
 
@@ -379,6 +402,146 @@ def add_audit(actor: str, event: str, detail: str = "") -> None:
   del AUDIT_LOGS[SETTINGS.audit_log_limit:]
 
 
+def utc_timestamp(epoch: float) -> str:
+  return datetime.fromtimestamp(epoch, timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
+
+
+def public_recharge_order(order: dict) -> dict:
+  return {
+    "id": order.get("id"),
+    "amountCny": order.get("amountCny"),
+    "creditCny": order.get("creditCny"),
+    "status": order.get("status"),
+    "createdAt": order.get("createdAt"),
+    "expiresAt": order.get("expiresAt"),
+    "reason": "manual_review_required" if order.get("status") == "review_required" else "",
+    "qrCodeUrl": f"/api/recharge/orders/{quote(str(order.get('id') or ''))}/qr" if order.get("codeUrl") else "",
+  }
+
+
+def validate_paid_transaction(order: dict, transaction: dict) -> None:
+  amount = transaction.get("amount") or {}
+  try:
+    paid_fen = int(amount.get("total"))
+  except (TypeError, ValueError) as exc:
+    raise WechatPayError("invalid_wechat_transaction", "transaction amount is invalid") from exc
+  checks = (
+    (transaction.get("trade_state") == "SUCCESS", "transaction is not successful"),
+    (str(transaction.get("appid") or "") == WECHAT_PAY.app_id, "AppID does not match"),
+    (str(transaction.get("mchid") or "") == WECHAT_PAY.merchant_id, "merchant ID does not match"),
+    (str(transaction.get("out_trade_no") or "") == str(order.get("outTradeNo") or ""), "merchant order number does not match"),
+    (str(amount.get("currency") or "") == "CNY", "transaction currency does not match"),
+    (paid_fen == int(order.get("amountFen") or 0), "transaction amount does not match"),
+    (bool(str(transaction.get("transaction_id") or "").strip()), "transaction ID is missing"),
+  )
+  for valid, message in checks:
+    if not valid:
+      raise WechatPayError("invalid_wechat_transaction", message)
+
+
+def apply_wechat_transaction(order: dict, transaction: dict) -> dict:
+  validate_paid_transaction(order, transaction)
+  current = ACCOUNT_STORE.recharge_order(str(order["id"]))
+  if not current:
+    raise WechatPayError("unknown_wechat_order", "recharge order was not found")
+  if current.get("status") == "applied":
+    return current
+  transaction_id = str(transaction["transaction_id"])
+  key = payment_key(transaction_id)
+  existing = ACCOUNT_STORE.recharge_payment(key)
+  if existing:
+    if str(existing.get("userId") or "") != str(current.get("userId") or "") or str(existing.get("amountCny") or "") != str(current.get("amountCny") or ""):
+      return ACCOUNT_STORE.update_recharge_order(current["id"], status="review_required", reason="transaction was already associated with different recharge data")
+    mapped_status = {"applied": "applied", "processing": "crediting"}.get(str(existing.get("status")), "review_required")
+    if mapped_status == "crediting":
+      return ACCOUNT_STORE.transition_recharge_order(current["id"], {"creating", "pending", "paid", "crediting"}, status="crediting")
+    return ACCOUNT_STORE.update_recharge_order(current["id"], status=mapped_status, reason=str(existing.get("reason") or ""))
+
+  paid_at = str(transaction.get("success_time") or utc_timestamp(time.time()))
+  ACCOUNT_STORE.transition_recharge_order(
+    current["id"], {"creating", "pending", "failed", "expired", "closed"}, status="paid", paidAt=paid_at, reason=""
+  )
+  reservation = {
+    "userId": current["userId"],
+    "paidAt": paid_at,
+    "amountCny": current["amountCny"],
+    "creditCny": current["creditCny"],
+    "recordedAt": time.strftime("%Y-%m-%d %H:%M:%S"),
+    "source": "wechat_native",
+    "orderId": current["id"],
+    "paymentRef": f"***{transaction_id[-4:]}",
+  }
+  reserved, existing = ACCOUNT_STORE.reserve_recharge_payment(key, reservation)
+  if not reserved:
+    mapped_status = {"applied": "applied", "processing": "crediting"}.get(str(existing.get("status")), "review_required")
+    if mapped_status == "crediting":
+      return ACCOUNT_STORE.transition_recharge_order(current["id"], {"creating", "pending", "paid", "crediting"}, status="crediting")
+    return ACCOUNT_STORE.update_recharge_order(current["id"], status=mapped_status, reason=str(existing.get("reason") or ""))
+  ACCOUNT_STORE.transition_recharge_order(current["id"], {"paid"}, status="crediting", paymentKey=key)
+  account = ACCOUNT_STORE.user_by_identifier(str(current["userId"]))
+  if not account or not (account.get("micu") or {}).get("tokenId"):
+    reason = "recharge account or MicuAPI binding is unavailable"
+    ACCOUNT_STORE.finish_recharge_payment(key, status="review_required", reason=reason)
+    add_audit("wechat-pay", "recharge requires review", f"order={current['id']} reason=account_unavailable")
+    return ACCOUNT_STORE.update_recharge_order(current["id"], status="review_required", reason=reason)
+  try:
+    balance = MICU_CLIENT.add_balance(account["micu"], current["creditCny"])
+    ACCOUNT_STORE.finish_recharge_payment(
+      key,
+      status="applied",
+      binding_updates={
+        "lastBalanceCny": balance["remainingCny"],
+        "lastRemainingPercent": balance["remainingPercent"],
+        "rechargeBaselineQuota": balance["rawQuota"],
+        "lastSyncedAt": int(time.time()),
+        "status": balance["status"],
+        "lastError": "",
+      },
+    )
+    applied = ACCOUNT_STORE.update_recharge_order(current["id"], status="applied", reason="", appliedAt=utc_timestamp(time.time()))
+    add_audit(str(account.get("username") or "wechat-pay"), "WeChat recharge applied", f"order={current['id']} amountCny={current['amountCny']} creditCny={current['creditCny']}")
+    return applied
+  except Exception as exc:
+    reason = str(exc)
+    ACCOUNT_STORE.finish_recharge_payment(key, status="review_required", reason=reason)
+    reviewed = ACCOUNT_STORE.update_recharge_order(current["id"], status="review_required", reason=reason)
+    add_audit("wechat-pay", "recharge requires review", f"order={current['id']} provider_result_uncertain")
+    return reviewed
+
+
+def reconcile_wechat_order(order: dict) -> dict:
+  current = ACCOUNT_STORE.recharge_order(str(order.get("id") or ""))
+  if not current or current.get("status") not in {"creating", "pending", "paid"}:
+    return current or order
+  now = time.time()
+  try:
+    transaction = WECHAT_PAY.query_order(str(current["outTradeNo"]))
+    ACCOUNT_STORE.update_recharge_order(current["id"], lastCheckedAtEpoch=now)
+    trade_state = str(transaction.get("trade_state") or "")
+    if trade_state == "SUCCESS":
+      return apply_wechat_transaction(current, transaction)
+    if trade_state in {"CLOSED", "REVOKED", "PAYERROR"}:
+      return ACCOUNT_STORE.update_recharge_order(current["id"], status="closed", reason="")
+    if now >= float(current.get("expiresAtEpoch") or 0):
+      try:
+        WECHAT_PAY.close_order(str(current["outTradeNo"]))
+      except WechatPayError:
+        pass
+      return ACCOUNT_STORE.update_recharge_order(current["id"], status="expired", reason="")
+  except WechatPayError:
+    ACCOUNT_STORE.update_recharge_order(current["id"], lastCheckedAtEpoch=now)
+  return ACCOUNT_STORE.recharge_order(str(current["id"])) or current
+
+
+def reconcile_wechat_orders() -> None:
+  if not WECHAT_PAY.configured:
+    return
+  while not WECHAT_RECONCILE_STOP.is_set():
+    for order in ACCOUNT_STORE.pending_recharge_orders():
+      reconcile_wechat_order(order)
+    WECHAT_RECONCILE_STOP.wait(max(5.0, SETTINGS.wechat_reconcile_interval_seconds))
+
+
 UPLOAD_MANAGER = UploadManager(WORKSPACE_STORE, CHAT_RUNTIME.worker_registry, SETTINGS, add_audit)
 
 
@@ -528,6 +691,12 @@ class Handler(BaseHTTPRequestHandler):
         self.update_codex_settings()
       elif method == "GET" and path == "/api/recharge":
         self.recharge_info()
+      elif method == "POST" and path == "/api/recharge/orders":
+        self.create_recharge_order()
+      elif path.startswith("/api/recharge/orders/"):
+        self.recharge_order_api(method, path)
+      elif method == "POST" and path == "/api/payments/wechat/notify":
+        self.wechat_payment_notify()
       elif method == "GET" and path == "/api/workspaces":
         self.list_workspaces()
       elif method == "POST" and path == "/api/workspaces":
@@ -542,6 +711,9 @@ class Handler(BaseHTTPRequestHandler):
       self.write_json({"error": exc.code, "message": exc.message}, self.status_for_storage_error(exc))
     except ValueError as exc:
       self.write_json({"error": "bad_request", "message": str(exc)}, HTTPStatus.BAD_REQUEST)
+    except WechatPayError as exc:
+      status = HTTPStatus.SERVICE_UNAVAILABLE if exc.code == "wechat_pay_unavailable" else HTTPStatus.BAD_REQUEST
+      self.write_json({"error": exc.code, "message": exc.message}, status)
     except RequestStopped:
       return
     except Exception:
@@ -1081,14 +1253,110 @@ class Handler(BaseHTTPRequestHandler):
         "username": user["username"],
         "baseUrl": SETTINGS.micu_inference_url,
         "apiKey": api_key,
+        "paymentReady": WECHAT_PAY.configured,
+        "paymentError": "" if WECHAT_PAY.configured or not WECHAT_PAY.enabled else "; ".join(WECHAT_PAY.configuration_errors()),
         "products": [
-          {"amountCny": "50.00", "qrCodeUrl": "/assets/payment-qr/50.png"},
-          {"amountCny": "100.00", "qrCodeUrl": "/assets/payment-qr/100.png"},
-          {"amountCny": "200.00", "qrCodeUrl": "/assets/payment-qr/200.png"},
+          {"amountCny": amount, "creditCny": product["creditCny"], "debug": product["debug"]}
+          for amount, product in RECHARGE_PRODUCTS.items()
         ],
         "adjustments": ACCOUNT_STORE.recharge_history(str(user.get("id") or "")),
       }
     )
+
+  def create_recharge_order(self) -> None:
+    user = self.require_user()
+    WECHAT_PAY.require_configured()
+    if not (user.get("micu") or {}).get("tokenId"):
+      raise WechatPayError("wechat_pay_unavailable", "MicuAPI account is not provisioned")
+    payload = self.read_json()
+    try:
+      amount = Decimal(str(payload.get("amountCny") or "")).quantize(Decimal("0.01"))
+    except Exception as exc:
+      raise ValueError("a supported recharge amount is required") from exc
+    amount_cny = f"{amount:.2f}"
+    product = RECHARGE_PRODUCTS.get(amount_cny)
+    if not product:
+      raise ValueError("unsupported recharge amount")
+    now = time.time()
+    expires = now + SETTINGS.wechat_order_expiry_seconds
+    order_id = f"wpo_{secrets.token_urlsafe(12)}"
+    out_trade_no = f"AIA{int(now)}{secrets.token_hex(8)}"
+    order = ACCOUNT_STORE.create_recharge_order(
+      {
+        "id": order_id,
+        "outTradeNo": out_trade_no,
+        "userId": user["id"],
+        "amountCny": amount_cny,
+        "amountFen": product["amountFen"],
+        "creditCny": product["creditCny"],
+        "debug": product["debug"],
+        "status": "creating",
+        "createdAt": utc_timestamp(now),
+        "createdAtEpoch": now,
+        "expiresAt": utc_timestamp(expires),
+        "expiresAtEpoch": expires,
+        "reason": "",
+      }
+    )
+    try:
+      result = WECHAT_PAY.create_native_order(
+        out_trade_no,
+        int(product["amountFen"]),
+        f"AI Audit recharge CNY {amount_cny}",
+        order["expiresAt"],
+      )
+      code_url = str(result.get("code_url") or "").strip()
+      if not code_url.startswith("weixin://"):
+        raise WechatPayError("wechat_pay_request_failed", "WeChat Pay did not return a valid Native Pay code URL")
+      order = ACCOUNT_STORE.update_recharge_order(order_id, status="pending", codeUrl=code_url)
+    except Exception as exc:
+      ACCOUNT_STORE.update_recharge_order(order_id, status="failed", reason=str(exc))
+      raise
+    add_audit(user["username"], "WeChat recharge order created", f"order={order_id} amountCny={amount_cny}")
+    self.write_json({"order": public_recharge_order(order)}, HTTPStatus.CREATED)
+
+  def recharge_order_api(self, method: str, path: str) -> None:
+    user = self.require_user()
+    suffix = path.removeprefix("/api/recharge/orders/")
+    wants_qr = suffix.endswith("/qr")
+    order_id = unquote(suffix[:-3] if wants_qr else suffix).strip("/")
+    order = ACCOUNT_STORE.recharge_order(order_id)
+    if not order:
+      raise StorageError("not_found", "recharge order was not found")
+    if str(order.get("userId") or "") != str(user.get("id") or ""):
+      raise StorageError("forbidden", "recharge order does not belong to this account")
+    if method != "GET":
+      raise StorageError("not_found", "recharge endpoint was not found")
+    if wants_qr:
+      code_url = str(order.get("codeUrl") or "")
+      if not code_url:
+        raise StorageError("not_found", "recharge QR code is unavailable")
+      import qrcode
+      image = qrcode.make(code_url)
+      output = io.BytesIO()
+      image.save(output, format="PNG")
+      self.write_binary(output.getvalue(), "image/png", headers={"X-Content-Type-Options": "nosniff"}, no_store=True)
+      return
+    if order.get("status") in {"creating", "pending", "paid"}:
+      last_checked = float(order.get("lastCheckedAtEpoch") or 0)
+      if time.time() - last_checked >= 5:
+        order = reconcile_wechat_order(order)
+    self.write_json({"order": public_recharge_order(order)})
+
+  def wechat_payment_notify(self) -> None:
+    content_length = int(self.headers.get("Content-Length") or 0)
+    if content_length <= 0 or content_length > WECHAT_CALLBACK_MAX_BYTES:
+      raise WechatPayError("invalid_wechat_callback", "invalid WeChat Pay callback size")
+    body = self.rfile.read(content_length)
+    decoded = WECHAT_PAY.decode_callback(self.headers, body)
+    if decoded["eventType"] != "TRANSACTION.SUCCESS":
+      raise WechatPayError("invalid_wechat_callback", "unexpected WeChat Pay callback event")
+    transaction = decoded["transaction"]
+    order = ACCOUNT_STORE.recharge_order(str(transaction.get("out_trade_no") or ""))
+    if not order:
+      raise WechatPayError("unknown_wechat_order", "recharge order was not found")
+    apply_wechat_transaction(order, transaction)
+    self.write_binary(b"", "application/json; charset=utf-8", HTTPStatus.NO_CONTENT, no_store=True)
 
   def update_codex_settings(self) -> None:
     user = self.require_user()
@@ -1694,9 +1962,12 @@ async def app_lifespan(_app: FastAPI):
   SSE_BROKER.bind(asyncio.get_running_loop())
   CHAT_RUNTIME.set_event_callback(SSE_BROKER.persisted)
   threading.Thread(target=reconcile_micu_accounts, name="micu-account-reconciler", daemon=True).start()
+  WECHAT_RECONCILE_STOP.clear()
+  threading.Thread(target=reconcile_wechat_orders, name="wechat-pay-reconciler", daemon=True).start()
   try:
     yield
   finally:
+    WECHAT_RECONCILE_STOP.set()
     CHAT_RUNTIME.set_event_callback(None)
     SSE_BROKER.unbind()
 

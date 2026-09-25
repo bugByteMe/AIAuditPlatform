@@ -42,6 +42,18 @@ def _float(key: str, env_name: str, default: float) -> float:
   return float(_value(key, env_name, default))
 
 
+def _bool(key: str, env_name: str, default: bool) -> bool:
+  value = _value(key, env_name, default)
+  if isinstance(value, bool):
+    return value
+  normalized = str(value).strip().lower()
+  if normalized in {"1", "true", "yes", "on"}:
+    return True
+  if normalized in {"0", "false", "no", "off"}:
+    return False
+  raise ValueError(f"invalid boolean value for {key}")
+
+
 def _path(key: str, env_name: str, default: str | Path) -> Path:
   raw = _value(key, env_name, str(default))
   path = Path(raw)
@@ -143,6 +155,18 @@ class Settings:
     self.micu_quota_per_cny = _int("micu_quota_per_cny", "AI_AUDIT_MICU_QUOTA_PER_CNY", 500_000)
     self.micu_request_timeout_seconds = _float("micu_request_timeout_seconds", "AI_AUDIT_MICU_REQUEST_TIMEOUT_SECONDS", 10)
     self.micu_migration_balance_cny = str(_value("micu_migration_balance_cny", "AI_AUDIT_MICU_MIGRATION_BALANCE_CNY", "10.00"))
+    self.wechat_pay_enabled = _bool("wechat_pay_enabled", "AI_AUDIT_WECHAT_PAY_ENABLED", False)
+    self.wechat_app_id = str(_value("wechat_app_id", "AI_AUDIT_WECHAT_APP_ID", ""))
+    self.wechat_merchant_id = str(_value("wechat_merchant_id", "AI_AUDIT_WECHAT_MERCHANT_ID", ""))
+    self.wechat_notify_url = str(_value("wechat_notify_url", "AI_AUDIT_WECHAT_NOTIFY_URL", ""))
+    self.wechat_public_key_id = str(_value("wechat_public_key_id", "AI_AUDIT_WECHAT_PUBLIC_KEY_ID", ""))
+    self.wechat_api_v3_key = str(os.environ.get("AI_AUDIT_WECHAT_API_V3_KEY") or "")
+    self.wechat_merchant_cert_file = self._optional_secret_path("AI_AUDIT_WECHAT_MERCHANT_CERT_FILE")
+    self.wechat_merchant_key_file = self._optional_secret_path("AI_AUDIT_WECHAT_MERCHANT_KEY_FILE")
+    self.wechat_public_key_file = self._optional_secret_path("AI_AUDIT_WECHAT_PUBLIC_KEY_FILE")
+    self.wechat_order_expiry_seconds = _int("wechat_order_expiry_seconds", "AI_AUDIT_WECHAT_ORDER_EXPIRY_SECONDS", 15 * 60)
+    self.wechat_reconcile_interval_seconds = _float("wechat_reconcile_interval_seconds", "AI_AUDIT_WECHAT_RECONCILE_INTERVAL_SECONDS", 30)
+    self.wechat_request_timeout_seconds = _float("wechat_request_timeout_seconds", "AI_AUDIT_WECHAT_REQUEST_TIMEOUT_SECONDS", 10)
     self.codex_image = str(_value("codex_image", "AI_AUDIT_CODEX_IMAGE", "ai-audit-codex-runner:0.153.4"))
     self.codex_root = _path("codex_root", "AI_AUDIT_CODEX_ROOT", "workspace_storage/codex")
     self.codex_home_root = self._codex_home_root()
@@ -188,6 +212,13 @@ class Settings:
   def _codex_home_root(self) -> Path:
     raw = _value("codex_home_root", "AI_AUDIT_CODEX_HOME_ROOT", "")
     path = Path(raw) if raw else self.codex_root / "homes"
+    return path if path.is_absolute() else ROOT / path
+
+  def _optional_secret_path(self, env_name: str) -> Path | None:
+    raw = str(os.environ.get(env_name) or "").strip()
+    if not raw:
+      return None
+    path = Path(raw)
     return path if path.is_absolute() else ROOT / path
 
 

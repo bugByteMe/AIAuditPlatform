@@ -7,6 +7,7 @@ export const state = {
   createdInvites: [],
   auditLogs: [],
   recharge: null,
+  rechargeOrder: null,
   rechargeImport: null,
   workspaces: [],
   workspacesLoaded: false,

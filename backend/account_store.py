@@ -11,7 +11,7 @@ from pathlib import Path
 from config import SETTINGS
 
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
@@ -32,6 +32,7 @@ class AccountStore:
     self.pending_accounts: dict[str, dict] = {}
     self.groups: dict[str, dict] = {}
     self.recharge_payments: dict[str, dict] = {}
+    self.recharge_orders: dict[str, dict] = {}
     self.load_or_seed()
 
   def load_or_seed(self) -> None:
@@ -39,7 +40,7 @@ class AccountStore:
     existed = self.path.exists()
     raw = json.loads(self.path.read_text(encoding="utf-8")) if existed else deepcopy(self.seed_users)
     migrated = not (isinstance(raw, dict) and raw.get("schemaVersion") == SCHEMA_VERSION)
-    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3, 4, 5}:
+    if isinstance(raw, dict) and raw.get("schemaVersion") in {2, 3, 4, 5, 6}:
       state = self.migrate_versioned(raw)
     else:
       state = self.migrate_legacy(raw) if migrated else raw
@@ -47,6 +48,7 @@ class AccountStore:
     self.pending_accounts.update(deepcopy(state.get("pendingAccounts") or {}))
     self.groups.update(deepcopy(state.get("groups") or {}))
     self.recharge_payments.update(deepcopy(state.get("rechargePayments") or {}))
+    self.recharge_orders.update(deepcopy(state.get("rechargeOrders") or {}))
     recovered = self._normalize_provider_state()
     if migrated or not existed or recovered:
       self.save()
@@ -90,6 +92,7 @@ class AccountStore:
       "pendingAccounts": {},
       "groups": groups,
       "rechargePayments": {},
+      "rechargeOrders": {},
     }
 
   def migrate_versioned(self, state: dict) -> dict:
@@ -99,6 +102,7 @@ class AccountStore:
       group.setdefault("diskLimitBytes", None)
       group.setdefault("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
     migrated.setdefault("rechargePayments", {})
+    migrated.setdefault("rechargeOrders", {})
     return migrated
 
   def _normalize_provider_state(self) -> bool:
@@ -124,6 +128,10 @@ class AccountStore:
       if payment.get("status") == "processing":
         payment.update({"status": "review_required", "reason": "server restarted before provider result was persisted"})
         changed = True
+    for order in self.recharge_orders.values():
+      if order.get("status") == "crediting":
+        order.update({"status": "review_required", "reason": "server restarted before balance result was persisted"})
+        changed = True
     return changed
 
   def state(self) -> dict:
@@ -133,6 +141,7 @@ class AccountStore:
       "pendingAccounts": self.pending_accounts,
       "groups": self.groups,
       "rechargePayments": self.recharge_payments,
+      "rechargeOrders": self.recharge_orders,
     }
 
   def save(self, users: dict[str, dict] | None = None) -> None:
@@ -398,6 +407,67 @@ class AccountStore:
       payment = self.recharge_payments.get(key)
       return deepcopy(payment) if payment else None
 
+  def create_recharge_order(self, order: dict) -> dict:
+    with self.lock:
+      order_id = str(order.get("id") or "")
+      out_trade_no = str(order.get("outTradeNo") or "")
+      if not order_id or not out_trade_no:
+        raise ValueError("recharge order id and merchant order number are required")
+      if order_id in self.recharge_orders or any(item.get("outTradeNo") == out_trade_no for item in self.recharge_orders.values()):
+        raise ValueError("recharge order already exists")
+      self.recharge_orders[order_id] = deepcopy(order)
+      try:
+        self.save()
+      except Exception:
+        self.recharge_orders.pop(order_id, None)
+        raise
+      return deepcopy(self.recharge_orders[order_id])
+
+  def recharge_order(self, identifier: str) -> dict | None:
+    with self.lock:
+      order = self.recharge_orders.get(identifier)
+      if not order:
+        order = next((item for item in self.recharge_orders.values() if item.get("outTradeNo") == identifier), None)
+      return deepcopy(order) if order else None
+
+  def update_recharge_order(self, order_id: str, **updates) -> dict:
+    with self.lock:
+      order = self.recharge_orders.get(order_id)
+      if not order:
+        raise ValueError("recharge order was not found")
+      previous = deepcopy(order)
+      order.update(deepcopy(updates))
+      try:
+        self.save()
+      except Exception:
+        self.recharge_orders[order_id] = previous
+        raise
+      return deepcopy(order)
+
+  def transition_recharge_order(self, order_id: str, allowed_statuses: set[str], **updates) -> dict:
+    with self.lock:
+      order = self.recharge_orders.get(order_id)
+      if not order:
+        raise ValueError("recharge order was not found")
+      if str(order.get("status") or "") not in allowed_statuses:
+        return deepcopy(order)
+      previous = deepcopy(order)
+      order.update(deepcopy(updates))
+      try:
+        self.save()
+      except Exception:
+        self.recharge_orders[order_id] = previous
+        raise
+      return deepcopy(order)
+
+  def pending_recharge_orders(self) -> list[dict]:
+    with self.lock:
+      return [
+        deepcopy(order)
+        for order in self.recharge_orders.values()
+        if order.get("status") in {"creating", "pending", "paid"}
+      ]
+
   def reserve_recharge_payment(self, key: str, payment: dict) -> tuple[bool, dict]:
     with self.lock:
       existing = self.recharge_payments.get(key)
@@ -441,7 +511,7 @@ class AccountStore:
           "id": payment["id"],
           "paidAt": payment["paidAt"],
           "amountCny": payment["amountCny"],
-          "importedAt": payment["importedAt"],
+          "importedAt": payment.get("importedAt") or payment.get("recordedAt") or payment.get("completedAt") or "",
         }
         for payment in self.recharge_payments.values()
         if payment.get("status") == "applied" and str(payment.get("userId") or "") == user_id
@@ -455,6 +525,19 @@ class AccountStore:
       payment.clear()
       payment.update({"id": f"rch_deleted_{secrets.token_hex(6)}", "status": "used", "deletedAt": _timestamp()})
 
+  def _tombstone_recharge_orders(self, user_ids: set[str]) -> None:
+    for order in self.recharge_orders.values():
+      if str(order.get("userId") or "") not in user_ids:
+        continue
+      retained = {
+        "id": order.get("id"),
+        "outTradeNo": order.get("outTradeNo"),
+        "status": "deleted",
+        "deletedAt": _timestamp(),
+      }
+      order.clear()
+      order.update(retained)
+
   def remove_accounts(self, user_ids: set[str]) -> tuple[list[dict], list[dict]]:
     with self.lock:
       removed_users = [deepcopy(user) for user in self.users.values() if str(user.get("id")) in user_ids]
@@ -462,6 +545,7 @@ class AccountStore:
       previous_users = deepcopy(self.users)
       previous_pending = deepcopy(self.pending_accounts)
       previous_payments = deepcopy(self.recharge_payments)
+      previous_orders = deepcopy(self.recharge_orders)
       try:
         for username, user in list(self.users.items()):
           if str(user.get("id")) in user_ids:
@@ -469,6 +553,7 @@ class AccountStore:
         for user_id in user_ids:
           self.pending_accounts.pop(user_id, None)
         self._tombstone_recharge_payments(user_ids)
+        self._tombstone_recharge_orders(user_ids)
         self.save()
       except Exception:
         self.users.clear()
@@ -477,6 +562,8 @@ class AccountStore:
         self.pending_accounts.update(previous_pending)
         self.recharge_payments.clear()
         self.recharge_payments.update(previous_payments)
+        self.recharge_orders.clear()
+        self.recharge_orders.update(previous_orders)
         raise
       return removed_users, removed_pending
 
@@ -489,6 +576,7 @@ class AccountStore:
       previous_users = deepcopy(self.users)
       previous_pending = deepcopy(self.pending_accounts)
       previous_payments = deepcopy(self.recharge_payments)
+      previous_orders = deepcopy(self.recharge_orders)
       removed_users = [deepcopy(user) for user in self.users.values() if str(user.get("id")) in user_ids]
       removed_pending = [deepcopy(account) for account in self.pending_accounts.values() if str(account.get("id")) in user_ids]
       try:
@@ -498,6 +586,7 @@ class AccountStore:
         for user_id in user_ids:
           self.pending_accounts.pop(user_id, None)
         self._tombstone_recharge_payments(user_ids)
+        self._tombstone_recharge_orders(user_ids)
         removed_group = deepcopy(self.groups.pop(group_id))
         self.save()
       except Exception:
@@ -509,5 +598,7 @@ class AccountStore:
         self.pending_accounts.update(previous_pending)
         self.recharge_payments.clear()
         self.recharge_payments.update(previous_payments)
+        self.recharge_orders.clear()
+        self.recharge_orders.update(previous_orders)
         raise
       return removed_group, removed_users, removed_pending

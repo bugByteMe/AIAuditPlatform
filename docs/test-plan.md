@@ -125,9 +125,12 @@
 ## Recharge
 
 - The recharge endpoint requires authentication and returns only the current user's managed MicuAPI URL and key.
-- The frontend offers exactly CNY 50, CNY 100, and CNY 200 choices and resolves them to the expected on-disk QR assets.
-- Missing QR assets produce a visible configuration message rather than a broken-image-only state.
-- The payment dialog displays the signed-in username and instructs the payer to include it in the payment note.
+- Native order creation accepts only CNY 1, CNY 50, CNY 100, and CNY 200; the CNY 1 debug order credits CNY 0.80.
+- Each QR order is bound to its authenticated owner, expires, and cannot be read by another user.
+- Callback RSA signatures, timestamp bounds, AES-GCM decryption, AppID, merchant, order, currency, and amount are validated before credit.
+- Duplicate and concurrent callbacks, active queries, and spreadsheet imports credit MicuAPI exactly once.
+- Pending orders reconcile after restart, while interrupted or uncertain credits become `review_required` without automatic retry.
+- Full WeChat transaction IDs, callback bodies, and payer identifiers are not persisted or returned.
 - Logging out removes the managed API key from in-memory frontend state and the credential fields.
 - Only system administrators can preview or confirm an XLSX recharge import; preview never changes provider balance.
 - XLSX parsing handles multiple sheets, incorrect `A1` dimensions, dynamic header positions, shared or inline strings, and archive/row limits.

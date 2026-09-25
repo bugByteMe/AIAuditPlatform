@@ -74,7 +74,7 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 6)
+      self.assertEqual(store.state()["schemaVersion"], 7)
       self.assertIsNone(store.groups["grp_1"]["diskLimitBytes"])
       self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
@@ -93,7 +93,7 @@ class AccountStoreTest(unittest.TestCase):
         encoding="utf-8",
       )
       store = AccountStore(path, {})
-      self.assertEqual(store.state()["schemaVersion"], 6)
+      self.assertEqual(store.state()["schemaVersion"], 7)
       self.assertEqual(store.groups["grp_1"]["liveRunLimit"], 1)
 
   def test_batch_invites_have_unique_ids_tokens_and_no_credentials(self) -> None:
@@ -241,6 +241,34 @@ class AccountStoreTest(unittest.TestCase):
       tombstone = store.recharge_payment("payment-hash")
       self.assertEqual(tombstone["status"], "used")
       self.assertNotIn("userId", tombstone)
+
+  def test_recharge_order_is_persistent_and_anonymized_with_user(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      path = Path(tempdir) / "accounts.json"
+      store = AccountStore(path, {"alice": {"id": "usr_alice", "username": "alice"}})
+      store.create_recharge_order(
+        {"id": "wpo_1", "outTradeNo": "AIA1", "userId": "usr_alice", "status": "pending", "amountCny": "1.00"}
+      )
+      self.assertEqual(AccountStore(path, {}).recharge_order("AIA1")["id"], "wpo_1")
+      store.remove_accounts({"usr_alice"})
+      tombstone = store.recharge_order("wpo_1")
+      self.assertEqual(tombstone["status"], "deleted")
+      self.assertNotIn("userId", tombstone)
+
+  def test_interrupted_wechat_credit_requires_review_after_restart(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      path = Path(tempdir) / "accounts.json"
+      store = AccountStore(path, {"alice": {"id": "usr_alice", "username": "alice"}})
+      store.create_recharge_order(
+        {"id": "wpo_1", "outTradeNo": "AIA1", "userId": "usr_alice", "status": "crediting"}
+      )
+      store.reserve_recharge_payment(
+        "payment-hash",
+        {"userId": "usr_alice", "paidAt": "2026-09-25 12:00:00", "amountCny": "1.00"},
+      )
+      recovered = AccountStore(path, {})
+      self.assertEqual(recovered.recharge_order("wpo_1")["status"], "review_required")
+      self.assertEqual(recovered.recharge_payment("payment-hash")["status"], "review_required")
 
 
 if __name__ == "__main__":

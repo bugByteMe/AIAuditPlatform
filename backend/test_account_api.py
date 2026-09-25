@@ -4,6 +4,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import io
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -11,7 +12,7 @@ from unittest.mock import MagicMock, patch
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from account_store import AccountStore
-from server import Handler, RequestStopped, admin_account, create_user_session, public_user, verify_password
+from server import Handler, RequestStopped, admin_account, apply_wechat_transaction, create_user_session, public_user, verify_password
 
 
 class AccountApiTest(unittest.TestCase):
@@ -157,8 +158,9 @@ class AccountApiTest(unittest.TestCase):
     self.assertEqual(status, 200)
     self.assertEqual(body["username"], "alice")
     self.assertEqual(body["apiKey"], "managed-placeholder")
-    self.assertEqual([item["amountCny"] for item in body["products"]], ["50.00", "100.00", "200.00"])
-    self.assertTrue(all(item["qrCodeUrl"].startswith("/assets/payment-qr/") for item in body["products"]))
+    self.assertEqual([item["amountCny"] for item in body["products"]], ["1.00", "50.00", "100.00", "200.00"])
+    self.assertEqual(body["products"][0]["creditCny"], "0.80")
+    self.assertTrue(body["products"][0]["debug"])
     handler.require_user.assert_called_once_with()
     audit.assert_called_once_with("alice", "MicuAPI credentials viewed", "usr_alice")
 
@@ -233,6 +235,80 @@ class AccountApiTest(unittest.TestCase):
     handler.require_admin = lambda: (_ for _ in ()).throw(RequestStopped())
     with self.assertRaises(RequestStopped):
       Handler.preview_recharge_import(handler)
+
+  def test_wechat_debug_recharge_credits_eighty_cents_exactly_once(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      store = AccountStore(
+        Path(tempdir) / "accounts.json",
+        {"alice": {"id": "usr_alice", "username": "alice", "micu": {"tokenId": 7}}},
+      )
+      order = store.create_recharge_order(
+        {
+          "id": "wpo_debug",
+          "outTradeNo": "AIADEBUG1",
+          "userId": "usr_alice",
+          "amountCny": "1.00",
+          "amountFen": 100,
+          "creditCny": "0.80",
+          "status": "pending",
+        }
+      )
+      transaction = {
+        "appid": "wx-test",
+        "mchid": "1900000001",
+        "out_trade_no": "AIADEBUG1",
+        "transaction_id": "4200000000001",
+        "trade_state": "SUCCESS",
+        "success_time": "2026-09-25T12:00:00+08:00",
+        "amount": {"total": 100, "currency": "CNY"},
+      }
+      provider = MagicMock()
+      provider.add_balance.return_value = {
+        "rawQuota": 900_000, "remainingCny": "1.80", "remainingPercent": 100.0, "status": "ready"
+      }
+      wechat = MagicMock(app_id="wx-test", merchant_id="1900000001")
+      with patch("server.ACCOUNT_STORE", store), patch("server.MICU_CLIENT", provider), patch("server.WECHAT_PAY", wechat), patch("server.add_audit"):
+        with ThreadPoolExecutor(max_workers=4) as executor:
+          results = list(executor.map(lambda _: apply_wechat_transaction(order, transaction), range(8)))
+      self.assertEqual(store.recharge_order("wpo_debug")["status"], "applied")
+      self.assertTrue(all(result["status"] in {"crediting", "applied"} for result in results))
+      provider.add_balance.assert_called_once_with(store.users["alice"]["micu"], "0.80")
+
+  def test_create_debug_recharge_order_is_bound_to_current_user(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      user = {"id": "usr_alice", "username": "alice", "micu": {"tokenId": 7}}
+      store = AccountStore(Path(tempdir) / "accounts.json", {"alice": user})
+      handler = self.handler({"amountCny": "1.00"})
+      handler.require_user = MagicMock(return_value=store.users["alice"])
+      wechat = MagicMock()
+      wechat.create_native_order.return_value = {"code_url": "weixin://wxpay/bizpayurl?pr=test"}
+      with patch("server.ACCOUNT_STORE", store), patch("server.WECHAT_PAY", wechat), patch("server.add_audit"):
+        Handler.create_recharge_order(handler)
+      body, status, _ = handler.responses[0]
+      self.assertEqual(status, 201)
+      self.assertEqual(body["order"]["amountCny"], "1.00")
+      persisted = store.recharge_order(body["order"]["id"])
+      self.assertEqual(persisted["userId"], "usr_alice")
+      self.assertEqual(persisted["creditCny"], "0.80")
+      wechat.require_configured.assert_called_once_with()
+      wechat.create_native_order.assert_called_once()
+
+  def test_wechat_callback_decodes_and_acknowledges_after_processing(self) -> None:
+    handler = self.handler({})
+    handler.headers = {"Content-Length": "2"}
+    handler.rfile = io.BytesIO(b"{}")
+    binary_responses = []
+    handler.write_binary = lambda body, content_type, status=200, headers=None, no_store=False: binary_responses.append((body, int(status)))
+    transaction = {"out_trade_no": "AIA1"}
+    store = MagicMock()
+    store.recharge_order.return_value = {"id": "wpo_1"}
+    wechat = MagicMock()
+    wechat.decode_callback.return_value = {"eventType": "TRANSACTION.SUCCESS", "transaction": transaction}
+    with patch("server.ACCOUNT_STORE", store), patch("server.WECHAT_PAY", wechat), patch("server.apply_wechat_transaction") as apply:
+      Handler.wechat_payment_notify(handler)
+    wechat.decode_callback.assert_called_once_with(handler.headers, b"{}")
+    apply.assert_called_once_with(store.recharge_order.return_value, transaction)
+    self.assertEqual(binary_responses, [(b"", 204)])
 
   def test_registration_activates_and_starts_session(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:

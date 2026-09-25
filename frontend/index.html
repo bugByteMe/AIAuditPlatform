@@ -307,11 +307,11 @@
                 </div>
               </div>
               <div class="recharge-products">
+                <button type="button" class="recharge-product" data-recharge-amount="1"><strong>¥1</strong><span data-i18n="recharge.debugSelect">调试</span></button>
                 <button type="button" class="recharge-product" data-recharge-amount="50"><strong>¥50</strong><span data-i18n="recharge.select">选择</span></button>
                 <button type="button" class="recharge-product" data-recharge-amount="100"><strong>¥100</strong><span data-i18n="recharge.select">选择</span></button>
                 <button type="button" class="recharge-product" data-recharge-amount="200"><strong>¥200</strong><span data-i18n="recharge.select">选择</span></button>
               </div>
-              <p class="payment-reminder"><span data-i18n="recharge.noteReminder">付款时请务必在备注中填写用户名：</span> <strong id="recharge-username">-</strong></p>
             </section>
             <section class="panel recharge-history-panel">
               <div class="panel-head">
@@ -533,7 +533,7 @@
         </div>
         <img class="payment-qr" id="recharge-qr-image" alt="Payment QR code" />
         <p class="form-error hidden" id="recharge-qr-missing" data-i18n="recharge.qrMissing">付款二维码尚未配置，请联系管理员。</p>
-        <p class="payment-reminder"><span data-i18n="recharge.noteReminder">付款时请务必在备注中填写用户名：</span> <strong id="recharge-modal-username">-</strong></p>
+        <p class="payment-reminder" id="recharge-order-status" data-i18n="recharge.orderCreating">正在创建微信支付订单...</p>
         <div class="modal-actions">
           <button type="button" class="btn primary" data-close-recharge-qr data-i18n="recharge.close">关闭</button>
         </div>

@@ -31,6 +31,8 @@ let activePollTimer = null;
 let activeStreamGeneration = 0;
 let workerStatusLoading = false;
 let registrationSubmitting = false;
+let rechargeOrderPollTimer = null;
+let rechargeOrderGeneration = 0;
 
 export function renderDynamic() {
   renderCurrentUser();
@@ -606,12 +608,17 @@ async function loadRechargeData() {
     state.recharge = result;
     document.querySelector("#recharge-base-url").value = result.baseUrl || "";
     document.querySelector("#recharge-api-key").value = result.apiKey || "";
-    document.querySelector("#recharge-username").textContent = result.username || state.user?.username || "-";
-    error.textContent = "";
+    document.querySelectorAll("[data-recharge-amount]").forEach((button) => {
+      button.disabled = !result.paymentReady;
+    });
+    error.textContent = result.paymentReady ? "" : result.paymentError || t("recharge.paymentDisabled");
     renderRechargeHistory();
   } catch (loadError) {
     state.recharge = null;
     error.textContent = loadError.message;
+    document.querySelectorAll("[data-recharge-amount]").forEach((button) => {
+      button.disabled = true;
+    });
     renderRechargeHistory();
   }
 }
@@ -704,11 +711,38 @@ async function applyRechargeImport() {
 }
 
 function closeRechargeQrModal() {
+  rechargeOrderGeneration += 1;
+  window.clearTimeout(rechargeOrderPollTimer);
+  rechargeOrderPollTimer = null;
+  state.rechargeOrder = null;
   document.querySelector("#recharge-qr-modal").classList.add("hidden");
   document.querySelector("#recharge-qr-image").removeAttribute("src");
 }
 
-function openRechargeQrModal(amount) {
+function renderRechargeOrderStatus(order) {
+  const key = `recharge.order.${order?.status || "pending"}`;
+  const translated = t(key);
+  document.querySelector("#recharge-order-status").textContent = translated === key ? order?.status || "" : translated;
+}
+
+async function pollRechargeOrder(orderId) {
+  if (state.rechargeOrder?.id !== orderId) return;
+  try {
+    const result = await api(`/api/recharge/orders/${encodeURIComponent(orderId)}`);
+    state.rechargeOrder = result.order;
+    renderRechargeOrderStatus(result.order);
+    if (result.order.status === "applied") {
+      await Promise.all([refreshCurrentUser(), loadRechargeData()]);
+      return;
+    }
+    if (["expired", "closed", "failed", "review_required"].includes(result.order.status)) return;
+  } catch (error) {
+    document.querySelector("#recharge-order-status").textContent = error.message;
+  }
+  rechargeOrderPollTimer = window.setTimeout(() => pollRechargeOrder(orderId), 2000);
+}
+
+async function openRechargeQrModal(amount) {
   const product = state.recharge?.products?.find((item) => Number(item.amountCny) === Number(amount));
   if (!product) {
     showToast(t("recharge.notReady"));
@@ -717,10 +751,11 @@ function openRechargeQrModal(amount) {
   }
   const image = document.querySelector("#recharge-qr-image");
   const missing = document.querySelector("#recharge-qr-missing");
-  const username = state.recharge.username || state.user?.username || "-";
+  window.clearTimeout(rechargeOrderPollTimer);
+  const generation = ++rechargeOrderGeneration;
   document.querySelector("#recharge-qr-amount").textContent = `¥${Number(product.amountCny).toFixed(0)}`;
-  document.querySelector("#recharge-modal-username").textContent = username;
-  image.classList.remove("hidden");
+  document.querySelector("#recharge-order-status").textContent = t("recharge.orderCreating");
+  image.classList.add("hidden");
   missing.classList.add("hidden");
   image.onload = () => {
     image.classList.remove("hidden");
@@ -730,8 +765,24 @@ function openRechargeQrModal(amount) {
     image.classList.add("hidden");
     missing.classList.remove("hidden");
   };
-  image.src = product.qrCodeUrl;
   document.querySelector("#recharge-qr-modal").classList.remove("hidden");
+  try {
+    const result = await api("/api/recharge/orders", {
+      method: "POST",
+      body: JSON.stringify({ amountCny: product.amountCny }),
+    });
+    if (generation !== rechargeOrderGeneration) return;
+    state.rechargeOrder = result.order;
+    renderRechargeOrderStatus(result.order);
+    image.src = authenticatedApiUrl(result.order.qrCodeUrl);
+    pollRechargeOrder(result.order.id);
+  } catch (error) {
+    if (generation !== rechargeOrderGeneration) return;
+    state.rechargeOrder = null;
+    image.classList.add("hidden");
+    missing.classList.remove("hidden");
+    document.querySelector("#recharge-order-status").textContent = error.message;
+  }
 }
 
 async function revokeInvite(userId) {

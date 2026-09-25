@@ -54,9 +54,19 @@ class ConfigurationTest(unittest.TestCase):
       "upload_max_concurrent_streams",
       "upload_reservation_cpus",
       "upload_reservation_memory",
+      "wechat_pay_enabled",
+      "wechat_app_id",
+      "wechat_merchant_id",
+      "wechat_notify_url",
+      "wechat_public_key_id",
+      "wechat_order_expiry_seconds",
+      "wechat_reconcile_interval_seconds",
+      "wechat_request_timeout_seconds",
     }
     self.assertEqual(set(), expected - set(payload))
     self.assertNotIn("default_codex_api_key", payload)
+    self.assertNotIn("wechat_api_v3_key", payload)
+    self.assertNotIn("wechat_merchant_key_file", payload)
 
   def test_configured_limits_are_loaded(self) -> None:
     self.assertGreater(SETTINGS.max_file_bytes, 0)
