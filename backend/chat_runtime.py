@@ -519,8 +519,9 @@ class ChatRuntime:
         stored = self.chat_store.get_run(str(run["id"]))
         if stored:
           self.finalize_run(metadata, stored, "failed", "control plane restarted before the local run completed")
-          self.chat_store.save_run(stored)
           self.store.save_metadata(metadata)
+          self.chat_store.save_run(stored)
+          self.publish_run_finalization(stored)
 
   def ensure_chat_metadata(self, metadata: dict) -> None:
     for workspace in metadata.get("workspaces", {}).values():
@@ -827,8 +828,9 @@ class ChatRuntime:
       self.chat_store.save_run(run)
       if was_queued:
         self.finalize_run(metadata, run, "stopped", None)
-        self.chat_store.save_run(run)
         self.store.save_metadata(metadata)
+        self.chat_store.save_run(run)
+        self.publish_run_finalization(run)
       with self.condition:
         self.condition.notify_all()
     if not was_queued:
@@ -896,8 +898,9 @@ class ChatRuntime:
             metadata = self.store.load_metadata()
             self.ensure_chat_metadata(metadata)
             self.finalize_run(metadata, run, "stopped", None)
-            self.chat_store.save_run(run)
             self.store.save_metadata(metadata)
+            self.chat_store.save_run(run)
+            self.publish_run_finalization(run)
           with self.condition:
             self.condition.notify_all()
           return
@@ -945,8 +948,9 @@ class ChatRuntime:
           remote_status = str(run_for_worker.get("remoteStatus") or "")
           final_status = "stopped" if run_id in self.stop_requested or run["status"] == "stopping" or remote_status == "stopped" else "completed"
           self.finalize_run(metadata, run, final_status, None)
-          self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
+          self.chat_store.save_run(run)
+          self.publish_run_finalization(run)
           with self.condition:
             self.condition.notify_all()
     except Exception as exc:
@@ -962,8 +966,9 @@ class ChatRuntime:
         run = self.chat_store.get_run(run_id)
         if run:
           self.finalize_run(metadata, run, "failed", str(exc))
-          self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
+          self.chat_store.save_run(run)
+          self.publish_run_finalization(run)
           with self.condition:
             self.condition.notify_all()
     finally:
@@ -1042,7 +1047,13 @@ class ChatRuntime:
     remaining_runs = [item for item in self.chat_store.active_runs(workspace_id=run["workspaceId"]) if item.get("id") != run["id"]]
     workspace["locked"] = bool(remaining_runs or workspace.get("activeUploadId"))
     workspace["activeRunId"] = remaining_runs[0]["id"] if remaining_runs else None
+
+  def publish_run_finalization(self, run: dict) -> None:
+    """Expose terminal chat state only after workspace and run commits succeed."""
     session = self.chat_store.get_session(run["sessionId"])
+    if not session:
+      return
+    status = str(run["status"])
     session["status"] = status
     session["updated"] = run["updated"]
     if status in {"completed", "stopped"}:
