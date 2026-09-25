@@ -377,6 +377,34 @@ class WorkspaceDatabase:
       connection.commit()
       return old_references - new_references
 
+  def save_workspace_lifecycle(self, workspace: dict) -> None:
+    """Persist only lifecycle/session-reference fields for one workspace.
+
+    Chat admission uses this instead of rewriting the compatibility metadata
+    view. SQLite may briefly serialize the row transaction, while unrelated
+    filesystem scans and chat event I/O remain outside it.
+    """
+    with closing(self.connect()) as connection, connection:
+      connection.execute("BEGIN IMMEDIATE")
+      connection.execute(
+        """
+        UPDATE workspaces SET locked=?, updated=?, active_run_id=?, active_upload_id=?
+        WHERE id=?
+        """,
+        (
+          int(bool(workspace.get("locked"))), str(workspace.get("updated") or ""),
+          workspace.get("activeRunId"), workspace.get("activeUploadId"), workspace["id"],
+        ),
+      )
+      connection.execute("DELETE FROM workspace_sessions WHERE workspace_id = ?", (workspace["id"],))
+      for ordinal, item in enumerate(workspace.get("sessions", [])):
+        session_id = str(item.get("id") or "")
+        if session_id:
+          connection.execute(
+            "INSERT INTO workspace_sessions(workspace_id, session_id, ordinal) VALUES (?, ?, ?)",
+            (workspace["id"], session_id, ordinal),
+          )
+
   def referenced_blobs(self) -> set[str]:
     with closing(self.connect()) as connection, connection:
       return {row[0] for row in connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")}

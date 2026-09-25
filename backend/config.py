@@ -123,6 +123,7 @@ class Settings:
     self.host = str(_value("host", "AI_AUDIT_HOST", "0.0.0.0"))
     self.port = _int("port", "AI_AUDIT_PORT", 8000)
     self.local_run_capacity = _int("local_run_capacity", "AI_AUDIT_LOCAL_RUN_CAPACITY", 1)
+    self.database_url = os.environ.get("AI_AUDIT_DATABASE_URL", "").strip()
     raw_nodes = os.environ.get("AI_AUDIT_COMPUTE_NODES_JSON")
     self.compute_nodes = normalize_compute_nodes(json.loads(raw_nodes) if raw_nodes else FILE_CONFIG.get("compute_nodes", []))
     self.worker_auth_token = str(os.environ.get("AI_AUDIT_WORKER_AUTH_TOKEN") or "")

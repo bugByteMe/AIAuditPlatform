@@ -26,6 +26,7 @@ that proxy.
 ## Service and Storage
 
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.
+- `AI_AUDIT_DATABASE_URL` selects normalized production chat persistence. Keep the PostgreSQL URL in the service environment, never in `ai_audit.json` or source control. When unset, a local `chat/chat.sqlite3` database is used.
 - `session_cookie`, `session_ttl_seconds`, `pbkdf2_iterations`, and `audit_log_limit` configure authentication persistence and audit retention.
 - `max_file_bytes`, `max_workspace_bytes`, `max_file_count`, `max_text_preview_bytes`, `blocked_upload_suffixes`, and `office_preview_timeout_seconds` configure upload and preview limits.
 - `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation; `upload_chunk_timeout_seconds` bounds control-plane forwarding of one chunk to a worker.

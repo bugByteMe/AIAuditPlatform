@@ -34,12 +34,15 @@ single Uvicorn worker. It provides:
 
 The backend is the only component trusted to make access-control and budget decisions.
 
-The single-worker restriction is intentional in the current version: login
-sessions, scheduling state, lifecycle locks, and parts of chat persistence are
-process-local. Uvicorn's asynchronous transport allows many idle SSE
-connections without dedicating one operating-system thread to each connection,
-but it does not remove the shared workspace/chat lifecycle lock. Multi-process
-deployment requires shared transactional state and is a separate design step.
+The current deployment keeps one API/scheduler process because login sessions
+and scheduler ownership remain process-local. Chat sessions, runs, and events
+use normalized row storage: SQLite is the zero-configuration development
+backend and PostgreSQL is selected in production through
+`AI_AUDIT_DATABASE_URL`. Uvicorn's asynchronous transport allows many idle SSE
+connections without dedicating one operating-system thread to each connection.
+Chat event reads and writes do not take the workspace lifecycle lock; lifecycle
+coordination is scoped by workspace, group, session, or run, with only short
+workspace metadata commits using the compatibility database lock.
 
 ### Metadata Database
 

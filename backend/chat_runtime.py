@@ -7,6 +7,7 @@ import shutil
 import subprocess
 import threading
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Iterable
 
@@ -18,6 +19,34 @@ from workspace_store import StorageError, WorkspaceStore, generated_id, now_stri
 
 RUNNING_STATES = {"queued", "starting", "running", "stopping"}
 TERMINAL_STATES = {"completed", "stopped", "failed"}
+
+
+class KeyedLockPool:
+  def __init__(self):
+    self.guard = threading.Lock()
+    self.entries: dict[str, dict] = {}
+
+  @contextmanager
+  def hold(self, *keys: str):
+    ordered = sorted(set(keys))
+    locks = []
+    with self.guard:
+      for key in ordered:
+        entry = self.entries.setdefault(key, {"lock": threading.RLock(), "references": 0})
+        entry["references"] += 1
+        locks.append((key, entry["lock"]))
+    try:
+      for _, lock in locks:
+        lock.acquire()
+      yield
+    finally:
+      for _, lock in reversed(locks):
+        lock.release()
+      with self.guard:
+        for key, _ in locks:
+          self.entries[key]["references"] -= 1
+          if self.entries[key]["references"] == 0:
+            self.entries.pop(key, None)
 
 
 class RunnerError(RuntimeError):
@@ -443,7 +472,7 @@ class ChatRuntime:
     self.users = users
     self.groups = groups if groups is not None else {}
     self.runner = runner or DockerCodexRunner()
-    self.chat_store = chat_store or ChatStore(store.root / "chat")
+    self.chat_store = chat_store or ChatStore(store.root / "chat", SETTINGS.database_url)
     self.save_users = save_users
     self.budget_checker = budget_checker
     self.capacity = max(1, capacity)
@@ -455,9 +484,9 @@ class ChatRuntime:
       self.codex_preparer.codex_root = store.root / "codex"
       self.codex_preparer.codex_home_root = store.root / "codex" / "homes"
     self.scheduler_poll_seconds = max(0.01, SETTINGS.scheduler_poll_seconds)
-    # Serialize chat lifecycle metadata changes with workspace/upload mutations.
-    self.lock = store.lock
+    self.lock = threading.RLock()
     self.condition = threading.Condition(self.lock)
+    self.lifecycle_locks = KeyedLockPool()
     self.queue: queue.Queue[str] = queue.Queue()
     self.active_runs: set[str] = set()
     self.stop_requested: set[str] = set()
@@ -469,7 +498,7 @@ class ChatRuntime:
     self.scheduler.start()
 
   def public_workspace_sessions(self, workspace: dict) -> list[dict]:
-    return [self.public_session(item["id"]) for item in workspace.get("sessions", []) if self.chat_store.get_session(item.get("id"))]
+    return [self.public_session(item["id"], include_events=False) for item in workspace.get("sessions", []) if self.chat_store.get_session(item.get("id"))]
 
   def recover_persisted_runs(self) -> None:
     for run in self.chat_store.runs().values():
@@ -485,7 +514,7 @@ class ChatRuntime:
         self.active_runs.add(str(run["id"]))
         threading.Thread(target=self.execute_run, args=(str(run["id"]), node_id), name=f"ai-audit-recover-{run['id']}", daemon=True).start()
         continue
-      with self.lock:
+      with self.store.lock:
         metadata = self.store.load_metadata()
         stored = self.chat_store.get_run(str(run["id"]))
         if stored:
@@ -498,14 +527,13 @@ class ChatRuntime:
       workspace.setdefault("sessions", [])
 
   def list_sessions(self, workspace_id: str, user: dict) -> list[dict]:
-    with self.lock:
-      metadata = self.store.load_metadata()
-      self.ensure_chat_metadata(metadata)
-      workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
-      return [self.public_session(session["id"]) for session in workspace.get("sessions", []) if self.chat_store.get_session(session["id"])]
+    metadata = self.store.load_metadata()
+    self.ensure_chat_metadata(metadata)
+    workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+    return [self.public_session(session["id"], include_events=False) for session in workspace.get("sessions", []) if self.chat_store.get_session(session["id"])]
 
   def create_session(self, workspace_id: str, user: dict, title: str | None = None) -> dict:
-    with self.lock:
+    with self.lifecycle_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
@@ -525,11 +553,11 @@ class ChatRuntime:
       self.chat_store.save_session(session)
       workspace.setdefault("sessions", []).insert(0, {"id": session["id"]})
       workspace["updated"] = timestamp
-      self.store.save_metadata(metadata)
+      self.store.save_workspace_lifecycle(workspace)
       return self.public_session(session["id"])
 
   def fork_session(self, workspace_id: str, session_id: str, user: dict, title: str | None = None) -> dict:
-    with self.lock:
+    with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"session:{session_id}"):
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
@@ -596,11 +624,11 @@ class ChatRuntime:
       self.chat_store.replace_events(fork_id, stable_events)
       session_refs.insert(source_index + 1, {"id": fork_id})
       workspace["updated"] = timestamp
-      self.store.save_metadata(metadata)
+      self.store.save_workspace_lifecycle(workspace)
       return self.public_session(fork_id, include_events=False)
 
   def update_session(self, workspace_id: str, session_id: str, user: dict, title: str) -> dict:
-    with self.lock:
+    with self.lifecycle_locks.hold(f"session:{session_id}"):
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
@@ -618,7 +646,7 @@ class ChatRuntime:
       return self.public_session(session_id)
 
   def delete_session(self, workspace_id: str, session_id: str, user: dict) -> dict:
-    with self.lock:
+    with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"session:{session_id}"):
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
@@ -642,7 +670,7 @@ class ChatRuntime:
       if workspace.get("activeRunId") in session_runs:
         workspace["activeRunId"] = None
       workspace["updated"] = now_string()
-      self.store.save_metadata(metadata)
+      self.store.save_workspace_lifecycle(workspace)
       removed = self.chat_store.delete_session(session_id)
       if not removed:
         raise StorageError("not_found", "chat session not found")
@@ -676,7 +704,8 @@ class ChatRuntime:
     self.user_codex_settings(user)
     if self.worker_registry and not self.worker_registry.compatible(self.requested_cpu, self.requested_memory_bytes):
       raise StorageError("no_compatible_worker", "no configured compute node can satisfy the run resources")
-    with self.lock:
+    group_id = str(user.get("groupId") or "")
+    with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"group:{group_id}"):
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
@@ -690,7 +719,6 @@ class ChatRuntime:
         for run in self.chat_store.runs().values()
         if run.get("workspaceId") == workspace_id and run.get("status") in RUNNING_STATES
       ]
-      group_id = str(user.get("groupId") or "")
       group = self.groups.get(group_id) if group_id else None
       if group:
         live_run_limit = int(group.get("liveRunLimit", 1))
@@ -762,9 +790,10 @@ class ChatRuntime:
       self.append_event(session["id"], "user", prompt, run["id"])
       queue_message = "Run queued. Waiting for compute capacity." if self.worker_registry else "Run queued. Waiting for local Docker capacity."
       self.append_event(session["id"], "queued", queue_message, run["id"])
-      self.store.save_metadata(metadata)
+      self.store.save_workspace_lifecycle(workspace)
       self.queue.put(run["id"])
-      self.condition.notify_all()
+      with self.condition:
+        self.condition.notify_all()
       return {"session": self.public_session(session["id"]), "run": run}
 
   def run_group_id(self, run: dict) -> str:
@@ -793,7 +822,7 @@ class ChatRuntime:
     return session
 
   def stop_run(self, workspace_id: str, run_id: str, user: dict) -> dict:
-    with self.lock:
+    with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"run:{run_id}"):
       metadata = self.store.load_metadata()
       self.ensure_chat_metadata(metadata)
       self.store.get_workspace_from_metadata(metadata, workspace_id, user)
@@ -812,7 +841,8 @@ class ChatRuntime:
         self.finalize_run(metadata, run, "stopped", None)
         self.chat_store.save_run(run)
         self.store.save_metadata(metadata)
-      self.condition.notify_all()
+      with self.condition:
+        self.condition.notify_all()
     if not was_queued:
       if self.worker_registry and run.get("workerId"):
         self.worker_registry.client(str(run["workerId"])).stop(str(run["id"]))
@@ -820,15 +850,19 @@ class ChatRuntime:
         self.runner.stop(run)
     return {"run": run}
 
-  def events(self, workspace_id: str, session_id: str, after: int, user: dict) -> list[dict]:
-    with self.lock:
-      metadata = self.store.load_metadata()
-      self.ensure_chat_metadata(metadata)
-      self.store.get_workspace_from_metadata(metadata, workspace_id, user)
-      session = self.chat_store.get_session(session_id)
-      if not session or session["workspaceId"] != workspace_id:
-        raise StorageError("not_found", "chat session not found")
-      return [event for event in self.chat_store.events(session_id) if int(event["id"]) > after]
+  def events(
+    self, workspace_id: str, session_id: str, after: int, user: dict, *,
+    before: int | None = None, limit: int = 500, latest: bool = False,
+  ) -> list[dict]:
+    # Reads are independent and indexed. They must not queue behind run
+    # lifecycle changes or terminal workspace scans.
+    metadata = self.store.load_metadata()
+    self.ensure_chat_metadata(metadata)
+    self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+    session = self.chat_store.get_session(session_id)
+    if not session or session["workspaceId"] != workspace_id:
+      raise StorageError("not_found", "chat session not found")
+    return self.chat_store.events(session_id, after, before=before, limit=limit, latest=latest)
 
   def wait_events(self, workspace_id: str, session_id: str, after: int, user: dict, timeout: float = 15) -> list[dict]:
     deadline = time.monotonic() + timeout
@@ -863,19 +897,21 @@ class ChatRuntime:
 
   def execute_run(self, run_id: str, node_id: str | None = None) -> None:
     try:
-      with self.lock:
-        metadata = self.store.load_metadata()
-        self.ensure_chat_metadata(metadata)
+      with self.lifecycle_locks.hold(f"run:{run_id}"):
         run = self.chat_store.get_run(run_id)
         if not run:
           return
         if run.get("status") in TERMINAL_STATES:
           return
         if run_id in self.stop_requested:
-          self.finalize_run(metadata, run, "stopped", None)
-          self.chat_store.save_run(run)
-          self.store.save_metadata(metadata)
-          self.condition.notify_all()
+          with self.store.lock:
+            metadata = self.store.load_metadata()
+            self.ensure_chat_metadata(metadata)
+            self.finalize_run(metadata, run, "stopped", None)
+            self.chat_store.save_run(run)
+            self.store.save_metadata(metadata)
+          with self.condition:
+            self.condition.notify_all()
           return
         run["status"] = "starting"
         run["updated"] = now_string()
@@ -886,8 +922,8 @@ class ChatRuntime:
         self.append_event(run["sessionId"], "starting", start_message, run_id)
         self.chat_store.save_session(session)
         self.chat_store.save_run(run)
-        self.store.save_metadata(metadata)
-        self.condition.notify_all()
+        with self.condition:
+          self.condition.notify_all()
       workspace_path = self.store.workspace_path(run["workspaceId"])
       run_for_worker = {**run, "codexSettings": self.user_codex_settings(self.users[run["user"]])}
       if node_id and self.worker_registry:
@@ -898,9 +934,7 @@ class ChatRuntime:
       else:
         event_stream = self.runner.start(run_for_worker, workspace_path)
       for event in event_stream:
-        with self.lock:
-          metadata = self.store.load_metadata()
-          self.ensure_chat_metadata(metadata)
+        with self.lifecycle_locks.hold(f"run:{run_id}"):
           stored_run = self.chat_store.get_run(run_id)
           if not stored_run:
             return
@@ -913,8 +947,9 @@ class ChatRuntime:
           stored_run["workerEventCursor"] = int(run_for_worker.get("workerEventCursor") or stored_run.get("workerEventCursor") or 0)
           self.record_runner_event(stored_run, event)
           self.chat_store.save_run(stored_run)
-          self.condition.notify_all()
-      with self.lock:
+          with self.condition:
+            self.condition.notify_all()
+      with self.store.lock:
         metadata = self.store.load_metadata()
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
@@ -924,11 +959,12 @@ class ChatRuntime:
           self.finalize_run(metadata, run, final_status, None)
           self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
-          self.condition.notify_all()
+          with self.condition:
+            self.condition.notify_all()
     except Exception as exc:
       if node_id and self.worker_registry and isinstance(exc, WorkerUnavailable):
         time.sleep(max(0.0, SETTINGS.worker_run_lease_seconds))
-      with self.lock:
+      with self.store.lock:
         metadata = self.store.load_metadata()
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
@@ -936,7 +972,8 @@ class ChatRuntime:
           self.finalize_run(metadata, run, "failed", str(exc))
           self.chat_store.save_run(run)
           self.store.save_metadata(metadata)
-          self.condition.notify_all()
+          with self.condition:
+            self.condition.notify_all()
     finally:
       if node_id and self.worker_registry:
         stored_run = self.chat_store.get_run(run_id)
@@ -1134,12 +1171,11 @@ class ChatRuntime:
 
   def stop_and_wait_for_users(self, usernames: set[str], actor: dict, timeout: float | None = None) -> set[str]:
     timeout = timeout if timeout is not None else SETTINGS.docker_stop_timeout_seconds + SETTINGS.process_wait_timeout_seconds + 5
-    with self.lock:
-      runs = [
-        run
-        for run in self.chat_store.runs().values()
-        if run.get("user") in usernames and run.get("status") in RUNNING_STATES
-      ]
+    runs = [
+      run
+      for run in self.chat_store.runs().values()
+      if run.get("user") in usernames and run.get("status") in RUNNING_STATES
+    ]
     for run in runs:
       self.stop_run(str(run["workspaceId"]), str(run["id"]), actor)
     deadline = time.monotonic() + timeout
@@ -1158,7 +1194,7 @@ class ChatRuntime:
         self.condition.wait(min(0.25, wait_for))
 
   def delete_user_resources(self, usernames: set[str]) -> dict:
-    with self.lock:
+    with self.store.lock:
       metadata = self.store.load_metadata()
       workspace_ids = {
         workspace_id

@@ -70,7 +70,7 @@ class ChatRuntimeTest(unittest.TestCase):
       sessions = runtime.list_sessions(workspace_id, user or self.users["li.review"])
       session = next(item for item in sessions if item["id"] == session_id)
       if session["status"] == status:
-        return session
+        return runtime.public_session(session_id)
       time.sleep(0.05)
     self.fail(f"session did not reach {status}")
 
@@ -89,8 +89,7 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertTrue(any(event[0] == "assistant" for event in session["events"]))
     reloaded_workspace = self.store.list_workspaces(self.users["li.review"])[0]
     reloaded_session = next(item for item in reloaded_workspace["sessions"] if item["id"] == result["session"]["id"])
-    self.assertTrue(any(event[0] == "assistant" for event in reloaded_session["events"]))
-    self.assertTrue(any(event[3] == result["run"]["id"] for event in reloaded_session["events"]))
+    self.assertEqual(reloaded_session["events"], [])
 
   def test_exclusive_workspace_lock_rejects_second_active_run(self) -> None:
     workspace = self.create_workspace()
@@ -316,7 +315,7 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertNotEqual(fork["id"], source["id"])
     self.assertEqual(fork["forkedFromSessionId"], source["id"])
     self.assertEqual(fork["events"], [])
-    persisted_fork = next(item for item in runtime.list_sessions(workspace["id"], self.users["li.review"]) if item["id"] == fork["id"])
+    persisted_fork = runtime.public_session(fork["id"])
     self.assertEqual([event[1] for event in persisted_fork["events"]], ["Earlier question", "Earlier answer"])
     with patch.object(runtime.chat_store, "events", side_effect=AssertionError("append must not rescan history")):
       appended = runtime.chat_store.append_event(fork["id"], {"type": "progress", "message": "Next event"})
@@ -332,7 +331,7 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertTrue(run["run"]["codexFork"])
     self.assertEqual(run["run"]["codexSessionId"], "native-source")
     self.wait_for_status(runtime, workspace["id"], fork["id"], "completed")
-    source_after = next(item for item in runtime.list_sessions(workspace["id"], self.users["li.review"]) if item["id"] == source["id"])
+    source_after = runtime.public_session(source["id"])
     self.assertEqual([event[1] for event in source_after["events"]], ["Earlier question", "Earlier answer"])
 
   def test_active_session_fork_uses_last_completed_turn(self) -> None:
@@ -352,7 +351,7 @@ class ChatRuntimeTest(unittest.TestCase):
     active = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "In-progress question", "sessionId": source["id"]})
     fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"], "Stable branch")
 
-    persisted_fork = next(item for item in runtime.list_sessions(workspace["id"], self.users["li.review"]) if item["id"] == fork["id"])
+    persisted_fork = runtime.public_session(fork["id"])
     messages = [event[1] for event in persisted_fork["events"]]
     self.assertEqual(messages, ["Completed question", "Completed answer"])
     fork_home = runtime.codex_preparer.session_home("li.review", fork["id"])
@@ -592,6 +591,26 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertTrue(second["run"]["codexResume"])
     self.assertEqual(second["run"]["codexSessionId"], "native-1")
     self.wait_for_status(runtime, workspace["id"], session["id"], "completed")
+
+  def test_workspace_session_summaries_do_not_embed_history(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Check revenue"})
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+    public = self.store.public_workspace(self.store.get_workspace(workspace["id"], self.users["li.review"]))
+    self.assertTrue(public["sessions"])
+    self.assertEqual(public["sessions"][0]["events"], [])
+
+  def test_event_cursor_reads_are_bounded_and_incremental(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"])
+    for index in range(12):
+      runtime.append_event(session["id"], "progress", f"event-{index}", None)
+    page = runtime.events(workspace["id"], session["id"], 5, self.users["li.review"], limit=3)
+    self.assertEqual([event["id"] for event in page], [6, 7, 8])
+    latest = runtime.events(workspace["id"], session["id"], 0, self.users["li.review"], limit=3, latest=True)
+    self.assertEqual([event["id"] for event in latest], [10, 11, 12])
 
   def test_default_model_is_gpt_56_sol(self) -> None:
     workspace = self.create_workspace()

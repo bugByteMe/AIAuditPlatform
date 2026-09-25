@@ -197,6 +197,10 @@ class WorkspaceStore:
     self.prune_preview_blobs(candidates)
     self.remove_empty_blob_directories()
 
+  def save_workspace_lifecycle(self, workspace: dict) -> None:
+    with self.lock:
+      self.database.save_workspace_lifecycle(workspace)
+
   def prune_preview_blobs(self, digests: set[str]) -> None:
     if not digests or not self.preview_dir.exists():
       return

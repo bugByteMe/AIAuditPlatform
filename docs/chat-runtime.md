@@ -123,6 +123,14 @@ The worker persists its run state and event stream beneath `<workspace_storage_d
 
 Live updates use Server-Sent Events. A lightweight event-list reconciliation poll runs alongside SSE so proxy buffering, silent connection stalls, or reconnect races cannot leave the visible history stale. Both paths merge by persisted event ID into the session they were opened for, and terminal status is returned even when no new event payload is available. Event rendering follows new output only when the reader is already near the bottom; otherwise it preserves the visible event anchor across refreshes.
 
+Workspace responses contain chat-session summaries rather than embedded
+transcripts. The browser fetches the latest selected-session page separately.
+Event reads are indexed by session and event ID, accept `after` or `before`, and
+are bounded to at most 500 rows. Production chat metadata is stored in
+PostgreSQL; development and isolated tests use the same normalized schema in
+SQLite. Legacy JSON and JSONL records are imported once into empty normalized
+tables and retained for rollback.
+
 The FastAPI control plane serves each SSE connection with an asynchronous
 stream. Runner threads notify a process-local broker after an event has been
 persisted; the stream then rereads the authoritative event store using the

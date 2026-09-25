@@ -1301,9 +1301,22 @@ class Handler(BaseHTTPRequestHandler):
       params = parse_query(query)
       session_id = (params.get("sessionId") or [""])[0]
       after = int((params.get("after") or ["0"])[0] or 0)
-      events = CHAT_RUNTIME.events(workspace_id, session_id, after, user)
-      public_session = CHAT_RUNTIME.public_session(session_id)
-      self.write_json({"events": events, "sessionStatus": public_session.get("status"), "session": public_session})
+      before_value = (params.get("before") or [""])[0]
+      before = int(before_value) if before_value else None
+      if before is not None and "after" in params:
+        raise ValueError("before and after cannot be used together")
+      limit = min(500, max(1, int((params.get("limit") or ["200"])[0] or 200)))
+      latest = (params.get("latest") or [""])[0].lower() in {"1", "true", "yes"}
+      if before is not None or latest or "limit" in params:
+        events = CHAT_RUNTIME.events(workspace_id, session_id, after, user, before=before, limit=limit, latest=latest)
+      else:
+        events = CHAT_RUNTIME.events(workspace_id, session_id, after, user)
+      public_session = CHAT_RUNTIME.public_session(session_id, include_events=False)
+      latest_event_id = int(events[-1]["id"]) if events else after
+      self.write_json({
+        "events": events, "sessionStatus": public_session.get("status"), "session": public_session,
+        "latestEventId": latest_event_id, "hasMore": len(events) == limit,
+      })
     elif method == "GET" and action == "stream" and not tail:
       params = parse_query(query)
       session_id = (params.get("sessionId") or [""])[0]

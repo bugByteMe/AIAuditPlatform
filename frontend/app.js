@@ -102,6 +102,17 @@ function replaceWorkspace(updatedWorkspace) {
   const index = workspaceIndexById(updatedWorkspace.id);
   if (index < 0) return;
   const current = state.workspaces[index];
+  const currentSessions = new Map((current?.sessions || []).map((session) => [session.id, session]));
+  const sessions = (updatedWorkspace.sessions || []).map((session) => {
+    const existing = currentSessions.get(session.id);
+    return {
+      ...existing,
+      ...session,
+      events: session.events?.length ? session.events : (existing?.events || []),
+      historyLoaded: Boolean(existing?.historyLoaded),
+    };
+  });
+  updatedWorkspace = { ...updatedWorkspace, sessions };
   const sameSnapshot = current?.latestSnapshotId === updatedWorkspace.latestSnapshotId;
   if (sameSnapshot) {
     const files = new Map((current.files || []).map((file) => [file.path, file]));
@@ -356,10 +367,31 @@ function startChatStreamForSession(workspaceId, sessionId) {
   scheduleChatPoll(workspaceId, sessionId, generation);
 }
 
-function maybeStartChatStream() {
+async function loadLatestSessionHistory(workspaceId, session) {
+  if (!workspaceId || !session || session.historyLoaded) return;
+  const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
+    sessionId: session.id,
+    latest: "true",
+    limit: "200",
+  }).toString()}`);
+  mergeSessionEvents(session, result.events || [], state.chatLastEventIds);
+  session.historyLoaded = true;
+}
+
+async function maybeStartChatStream() {
   const workspace = safeCurrentWorkspace();
   const session = currentSessionObject();
-  if (!workspace || !session || !LIVE_CHAT_STATES.has(session.status)) {
+  if (!workspace || !session) {
+    stopChatStream();
+    return;
+  }
+  try {
+    await loadLatestSessionHistory(workspace.id, session);
+    renderDynamic();
+  } catch (error) {
+    console.warn("Chat history load failed", error);
+  }
+  if (!LIVE_CHAT_STATES.has(session.status)) {
     stopChatStream();
     return;
   }
