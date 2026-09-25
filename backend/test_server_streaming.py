@@ -17,8 +17,8 @@ class FakeChatRuntime:
   def events(self, workspace_id, session_id, after, user):
     return []
 
-  def public_session(self, session_id):
-    return {"id": session_id, "status": "completed"}
+  def public_session(self, session_id, include_events=True):
+    return {"id": session_id, "status": "completed", "events": [] if not include_events else []}
 
   def fork_session(self, workspace_id, session_id, user, title):
     return {"id": "chat-fork", "title": title, "forkedFromSessionId": session_id}
