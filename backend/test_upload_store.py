@@ -183,9 +183,9 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(registry.reservations, set())
 
   def test_remote_worker_upload_commits_using_worker_result(self):
-    remote_root = Path(self.temp.name) / "remote-worker"
-    registry = RemoteUploadRegistry(remote_root)
+    registry = RemoteUploadRegistry(self.store.root)
     manager = UploadManager(self.store, worker_registry=registry, settings=settings())
+    manager.local_worker = WorkerUploadStore(Path(self.temp.name) / "control-local")
     upload = manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
     manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)
     manager.complete(upload["id"], USER)
