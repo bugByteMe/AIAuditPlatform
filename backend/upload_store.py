@@ -558,7 +558,7 @@ class UploadManager:
       if worker_status["status"] == "ready":
         session["status"] = "committing"
         self.save(data)
-        result = self.local_worker.result(upload_id)
+        result = client.upload_result(upload_id) if self.worker_registry else self.local_worker.result(upload_id)
         workspace = self.store.commit_prepared_upload(user, session, result)
         session["status"] = "committed"
         session["workspace"] = workspace

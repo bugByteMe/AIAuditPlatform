@@ -117,6 +117,9 @@ class WorkerClient:
   def complete_upload(self, upload_id: str) -> dict:
     return self.request("POST", f"/v1/uploads/{urllib.parse.quote(upload_id)}/complete", {})
 
+  def upload_result(self, upload_id: str) -> dict:
+    return self.request("GET", f"/v1/uploads/{urllib.parse.quote(upload_id)}/result")
+
   def cancel_upload(self, upload_id: str) -> dict:
     return self.request("DELETE", f"/v1/uploads/{urllib.parse.quote(upload_id)}")
 
