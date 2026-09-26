@@ -1460,7 +1460,18 @@ function uploadFingerprint(items, mode, workspaceId = "", name = "", shared = fa
   });
 }
 
-async function runResumableUpload({ items, mode, workspaceId = "", name = "", shared = false, signal, uploadLabel }) {
+function isUploadSessionMissing(error) {
+  const status = Number(error?.status || 0);
+  const code = String(error?.code || "").toLowerCase();
+  const message = String(error?.message || "").toLowerCase();
+  if (status !== 404) return false;
+  return code === "not_found"
+    || message === "not_found"
+    || message.includes("upload session not found")
+    || message.includes("not found");
+}
+
+async function runResumableUploadAttempt({ items, mode, workspaceId = "", name = "", shared = false, signal, uploadLabel }) {
   const fingerprint = uploadFingerprint(items, mode, workspaceId, name, shared);
   let saved = null;
   try {
@@ -1543,6 +1554,23 @@ async function runResumableUpload({ items, mode, workspaceId = "", name = "", sh
   window.localStorage.removeItem(PENDING_UPLOAD_KEY);
   setOperationProgress(t("progress.committingUpload"), 100);
   return upload.workspace;
+}
+
+async function runResumableUpload(options) {
+  let lastError = null;
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      return await runResumableUploadAttempt(options);
+    } catch (error) {
+      lastError = error;
+      if (attempt === 0 && isUploadSessionMissing(error)) {
+        window.localStorage.removeItem(PENDING_UPLOAD_KEY);
+        continue;
+      }
+      throw error;
+    }
+  }
+  throw lastError || new Error("Upload processing failed");
 }
 
 function downloadCurrentWorkspace(mode) {

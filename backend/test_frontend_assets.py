@@ -142,6 +142,8 @@ class FrontendAssetTests(unittest.TestCase):
         api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")
         self.assertIn('api("/api/uploads"', app_source)
         self.assertIn("uploadChunkApi", app_source)
+        self.assertIn("function isUploadSessionMissing(error)", app_source)
+        self.assertIn("runResumableUploadAttempt(options)", app_source)
         self.assertIn("progress.processingUpload", app_source)
         self.assertIn('xhr.open("PUT"', api_source)
         self.assertNotIn('uploadApi(\n      "/api/workspaces"', app_source)
