@@ -8,7 +8,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from compute_nodes import WorkerUnavailable
-from upload_store import UploadManager
+from upload_store import UploadManager, WorkerUploadStore
 from workspace_store import StorageError, UploadedFile, WorkspaceStore
 
 
@@ -57,6 +57,51 @@ class SingleUploadRegistry:
     self.nodes = {"worker": {}}
     self.reservations = set()
     self.worker = FailingUploadClient()
+
+  def claim_upload(self, upload_id, *_args):
+    if self.reservations:
+      return None
+    self.reservations.add(upload_id)
+    return "worker"
+
+  def node_status(self, _node_id):
+    return {"healthy": True}
+
+  def client(self, _node_id):
+    return self.worker
+
+  def release(self, _node_id, upload_id):
+    self.reservations.discard(upload_id)
+
+
+class RemoteUploadClient:
+  def __init__(self, root: Path):
+    self.worker = WorkerUploadStore(root)
+
+  def initialize_upload(self, payload):
+    return self.worker.initialize(payload)
+
+  def upload_status(self, upload_id):
+    return self.worker.status(upload_id)
+
+  def complete_upload(self, upload_id):
+    return self.worker.complete(upload_id)
+
+  def upload_result(self, upload_id):
+    return self.worker.result(upload_id)
+
+  def stream_upload_chunk(self, upload_id, index, offset, source, length, _buffer_bytes):
+    return self.worker.write_chunk(upload_id, index, offset, source, length)
+
+  def cancel_upload(self, upload_id):
+    return self.worker.cancel(upload_id)
+
+
+class RemoteUploadRegistry:
+  def __init__(self, root: Path):
+    self.nodes = {"worker": {}}
+    self.reservations = set()
+    self.worker = RemoteUploadClient(root)
 
   def claim_upload(self, upload_id, *_args):
     if self.reservations:
@@ -136,6 +181,21 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(session["status"], "uploading")
     self.assertFalse(session["reservationHeld"])
     self.assertEqual(registry.reservations, set())
+
+  def test_remote_worker_upload_commits_using_worker_result(self):
+    remote_root = Path(self.temp.name) / "remote-worker"
+    registry = RemoteUploadRegistry(remote_root)
+    manager = UploadManager(self.store, worker_registry=registry, settings=settings())
+    upload = manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
+    manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)
+    manager.complete(upload["id"], USER)
+    result = manager.status(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    while result["status"] != "committed" and time.monotonic() < deadline:
+      time.sleep(0.02)
+      result = manager.status(upload["id"], USER)
+    self.assertEqual(result["status"], "committed")
+    self.assertEqual((self.store.workspace_path(result["workspaceId"]) / "a.txt").read_bytes(), b"abc")
 
   def test_append_upload_locks_workspace_and_cancel_releases_it(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])

@@ -267,6 +267,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
         action = parts[3] if len(parts) > 3 else ""
         if method == "GET" and not action:
           self.write_json(self.state.uploads.status(upload_id))
+        elif method == "GET" and action == "result":
+          self.write_json(self.state.uploads.result(upload_id))
         elif method == "PUT" and action == "files" and len(parts) == 5:
           query = parse_qs(parsed.query)
           length = int(self.headers.get("Content-Length") or -1)
