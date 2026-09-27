@@ -611,6 +611,8 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual([event["id"] for event in page], [6, 7, 8])
     latest = runtime.events(workspace["id"], session["id"], 0, self.users["li.review"], limit=3, latest=True)
     self.assertEqual([event["id"] for event in latest], [10, 11, 12])
+    older = runtime.events(workspace["id"], session["id"], 0, self.users["li.review"], before=10, limit=3)
+    self.assertEqual([event["id"] for event in older], [7, 8, 9])
 
   def test_default_model_is_gpt_56_sol(self) -> None:
     workspace = self.create_workspace()

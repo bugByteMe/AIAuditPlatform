@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { findSessionById, initializeEventCursors, mergeSessionEvents, sessionEventCursor } from "./chatEvents.js";
+import { findSessionById, initializeEventCursors, mergeHistoricalEvents, mergeSessionEvents, sessionEventCursor } from "./chatEvents.js";
 
 test("initial cursor uses the highest persisted event id, not visible event count", () => {
   const session = { id: "chat-1", events: [["command", "done", "done", "run-1", 8, "completed", "tool-1"]] };
@@ -37,4 +37,27 @@ test("out-of-order batches advance monotonically and coalesce tool updates", () 
   assert.equal(session.events.length, 2);
   assert.equal(session.events.find((event) => event[0] === "command")[1], "done");
   assert.equal(mergeSessionEvents(session, [{ id: 2, type: "assistant", message: "duplicate" }], cursors), false);
+});
+
+test("historical pages prepend without changing live status or cursor", () => {
+  const session = { id: "chat-1", status: "running", events: [["assistant", "new", "new", "run-1", 10, "", ""]] };
+  const cursors = { "chat-1": 10 };
+  const changed = mergeHistoricalEvents(session, [
+    { id: 8, type: "assistant", message: "older", runId: "run-1" },
+    { id: 9, type: "completed", message: "old run completed", runId: "run-0" },
+  ]);
+  assert.equal(changed, true);
+  assert.deepEqual(session.events.map((event) => event[4]), [8, 9, 10]);
+  assert.equal(session.status, "running");
+  assert.equal(cursors["chat-1"], 10);
+});
+
+test("historical tool starts do not replace a newer coalesced result", () => {
+  const session = { id: "chat-1", events: [["command", "done", "done", "run-1", 20, "completed", "tool-1"]] };
+  mergeHistoricalEvents(session, [
+    { id: 4, type: "command", message: "starting", runId: "run-1", status: "started", toolCallId: "tool-1" },
+    { id: 5, type: "assistant", message: "context", runId: "run-1" },
+  ]);
+  assert.deepEqual(session.events.map((event) => event[4]), [5, 20]);
+  assert.equal(session.events[1][1], "done");
 });

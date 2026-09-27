@@ -131,6 +131,11 @@ PostgreSQL; development and isolated tests use the same normalized schema in
 SQLite. Legacy JSON and JSONL records are imported once into empty normalized
 tables and retained for rollback.
 
+When the reader scrolls to the top of the selected chat, the browser requests
+the next older page with the smallest raw event ID as the `before` cursor. It
+prepends that page while preserving the visible anchor, the forward live-event
+cursor, and newer coalesced tool-call results.
+
 The FastAPI control plane serves each SSE connection with an asynchronous
 stream. Runner threads notify a process-local broker after an event has been
 persisted; the stream then rereads the authoritative event store using the

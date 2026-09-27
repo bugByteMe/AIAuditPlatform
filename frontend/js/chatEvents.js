@@ -44,3 +44,32 @@ export function mergeSessionEvents(session, events, cursors) {
   cursors[session.id] = cursor;
   return changed;
 }
+
+export function mergeHistoricalEvents(session, events) {
+  if (!session || !events.length) return false;
+  session.events = session.events || [];
+  const existingIds = new Set(session.events.map((event) => Number(event[4]) || 0));
+  let changed = false;
+  [...events]
+    .sort((left, right) => Number(left.id) - Number(right.id))
+    .forEach((event) => {
+      const eventId = Number(event.id) || 0;
+      if (!eventId || existingIds.has(eventId)) return;
+      const toolCallId = event.toolCallId || "";
+      const existingToolIndex =
+        toolCallId && ["command", "tool"].includes(event.type)
+          ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
+          : -1;
+      const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId];
+      if (existingToolIndex < 0) {
+        session.events.push(tuple);
+        changed = true;
+      } else if (eventId > (Number(session.events[existingToolIndex][4]) || 0)) {
+        session.events[existingToolIndex] = tuple;
+        changed = true;
+      }
+      existingIds.add(eventId);
+    });
+  if (changed) session.events.sort((left, right) => (Number(left[4]) || 0) - (Number(right[4]) || 0));
+  return changed;
+}

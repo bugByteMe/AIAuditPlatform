@@ -4,6 +4,7 @@ import {
   TERMINAL_CHAT_STATES,
   findSessionById,
   initializeEventCursors,
+  mergeHistoricalEvents,
   mergeSessionEvents,
   sessionEventCursor,
 } from "./js/chatEvents.js";
@@ -24,6 +25,7 @@ import {
   renderWorkspaces,
 } from "./js/render.js";
 import { currentWorkspace } from "./js/selectors.js";
+import { isEventStreamNearTop } from "./js/scrollPosition.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 let activeChatStream = null;
@@ -376,8 +378,41 @@ async function loadLatestSessionHistory(workspaceId, session) {
     latest: "true",
     limit: "200",
   }).toString()}`);
-  mergeSessionEvents(session, result.events || [], state.chatLastEventIds);
+  const events = result.events || [];
+  mergeSessionEvents(session, events, state.chatLastEventIds);
+  session.historyBefore = events.length ? Math.min(...events.map((event) => Number(event.id) || 0)) : 0;
+  session.historyHasMore = Boolean(result.hasMore && events.length);
   session.historyLoaded = true;
+}
+
+async function loadOlderSessionHistory() {
+  const workspace = safeCurrentWorkspace();
+  const session = currentSessionObject();
+  if (!workspace || !session?.historyLoaded || !session.historyHasMore || session.historyLoading) return;
+  const before = Number(session.historyBefore || 0);
+  if (before <= 1) {
+    session.historyHasMore = false;
+    return;
+  }
+  session.historyLoading = true;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/events?${new URLSearchParams({
+      sessionId: session.id,
+      before,
+      limit: "200",
+    }).toString()}`);
+    const current = findSessionById(state.workspaces, workspace.id, session.id);
+    if (!current) return;
+    const events = result.events || [];
+    if (events.length) current.historyBefore = Math.min(...events.map((event) => Number(event.id) || before));
+    current.historyHasMore = Boolean(result.hasMore && events.length);
+    if (mergeHistoricalEvents(current, events)) renderDynamic();
+  } catch (error) {
+    console.warn("Older chat history load failed", error);
+  } finally {
+    const current = findSessionById(state.workspaces, workspace.id, session.id);
+    if (current) current.historyLoading = false;
+  }
 }
 
 async function maybeStartChatStream() {
@@ -1977,6 +2012,9 @@ function bindForms() {
 }
 
 function bindInputs() {
+  document.querySelector("#event-stream").addEventListener("scroll", (event) => {
+    if (isEventStreamNearTop(event.currentTarget)) loadOlderSessionHistory();
+  }, { passive: true });
   document.querySelector("#recharge-import-input").addEventListener("change", (event) => {
     const file = event.target.files?.[0];
     if (file) previewRechargeImport(file);

@@ -76,6 +76,10 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("scheduleChatPoll(workspaceId, sessionId, generation)", app_source)
         self.assertIn("findSessionById(state.workspaces, workspaceId, sessionId)", app_source)
         self.assertIn("initializeEventCursors(state.workspaces", app_source)
+        self.assertIn('before,\n      limit: "200"', app_source)
+        self.assertIn('querySelector("#event-stream").addEventListener("scroll"', app_source)
+        self.assertIn("mergeHistoricalEvents(current, events)", app_source)
+        self.assertIn("export function mergeHistoricalEvents", chat_events_source)
         self.assertIn("sessionEventCursor", chat_events_source)
 
     def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
