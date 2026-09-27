@@ -53,8 +53,8 @@ def main() -> None:
   from config import SETTINGS
 
   parser = argparse.ArgumentParser(description="AI Audit backend")
-  parser.add_argument("--host", default=SETTINGS.backend_host)
-  parser.add_argument("--port", type=int, default=SETTINGS.backend_port)
+  parser.add_argument("--host", default=SETTINGS.host)
+  parser.add_argument("--port", type=int, default=SETTINGS.port)
   args = parser.parse_args()
   uvicorn.run(app, host=args.host, port=args.port)
 

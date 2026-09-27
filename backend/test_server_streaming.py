@@ -10,6 +10,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import server
 from server import Handler, app
 
 
@@ -44,6 +45,11 @@ class FakeUploadManager:
 
 
 class ServerStreamingTest(unittest.TestCase):
+  def test_server_entrypoint_uses_configured_host_and_port(self) -> None:
+    with patch.object(sys, "argv", ["server.py"]), patch("uvicorn.run") as run:
+      server.main()
+    run.assert_called_once_with(app, host=server.SETTINGS.host, port=server.SETTINGS.port)
+
   def test_fastapi_health_and_options_preserve_transport_contract(self) -> None:
     with TestClient(app) as client:
       response = client.get("/api/health", headers={"Origin": "https://audit.example"})
