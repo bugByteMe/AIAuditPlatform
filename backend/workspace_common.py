@@ -62,6 +62,7 @@ def ensure_under_root(root: Path, candidate: Path) -> Path:
     raise StorageError("unsafe_path", "resolved path escapes storage root")
   return resolved
 
+@dataclass
 class UploadedFile:
   path: str
   content: bytes
@@ -129,4 +130,3 @@ def parse_urlencoded_paths(values: list[str]) -> list[str]:
   for value in values:
     paths.extend(item for item in value.split(",") if item)
   return paths
-

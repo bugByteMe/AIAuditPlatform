@@ -8,7 +8,7 @@ import time
 
 from compute_nodes import WorkerUnavailable
 from config import SETTINGS
-from worker_upload import TrackedReader, WorkerUploadStore
+from worker_upload import TrackedReader, WorkerUploadStore, _atomic_json
 from workspace_store import StorageError
 
 class UploadManager:
