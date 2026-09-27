@@ -6,6 +6,7 @@ import os
 import shutil
 import threading
 import time
+from hashlib import sha256
 from pathlib import Path
 
 from config import SETTINGS
