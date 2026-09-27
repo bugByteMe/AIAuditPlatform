@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import threading
 import traceback
@@ -376,4 +377,3 @@ class BaseHandler(BaseHTTPRequestHandler):
     self.send_header("Cache-Control", "no-store")
     self.end_headers()
     self.wfile.write(body)
-

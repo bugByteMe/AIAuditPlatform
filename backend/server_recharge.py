@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from decimal import Decimal
+from urllib.parse import quote
 
 from micu_api import MicuApiError, parse_cny
 from recharge_import import payment_key
@@ -140,4 +141,3 @@ def reconcile_wechat_orders() -> None:
     for order in ACCOUNT_STORE.pending_recharge_orders():
       reconcile_wechat_order(order)
     WECHAT_RECONCILE_STOP.wait(max(5.0, SETTINGS.wechat_reconcile_interval_seconds))
-

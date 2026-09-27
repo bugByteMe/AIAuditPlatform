@@ -9,7 +9,7 @@ import time
 from pathlib import Path
 
 from config import SETTINGS
-from workspace_store import StorageError, UploadedFile
+from workspace_store import StorageError, UploadedFile, ensure_under_root
 
 def _atomic_json(path: Path, payload: dict) -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
