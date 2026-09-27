@@ -18,6 +18,7 @@ from chat_runtime import DockerCodexRunner, safe_segment
 from config import SETTINGS
 from upload_store import WorkerUploadStore
 from workspace_store import StorageError
+from workspace_snapshots import scan_workspace_manifest
 
 
 TERMINAL = {"completed", "stopped", "failed"}
@@ -120,38 +121,51 @@ class WorkerState:
       return self.public_run(run)
 
   def execute(self, run_id: str, workspace_path: Path, codex_home: Path) -> None:
+    runner_error = None
+    target_status = "completed"
     try:
       with self.lock:
         run = self.runs[run_id]
         if run["status"] == "stopping":
-          run["status"] = "failed" if run.get("failureReason") else "stopped"
-          run["error"] = str(run.get("failureReason") or "")
-          self.save_runs()
-          self.condition.notify_all()
-          return
-        run["status"] = "running"
-        self.save_runs()
-      for event in self.runner.start_prepared(run, workspace_path, codex_home):
-        with self.lock:
-          if self.runs[run_id]["status"] == "stopping":
-            break
-          self.append_event(run_id, event)
-      with self.lock:
-        run = self.runs[run_id]
-        if run.get("failureReason"):
-          run["status"] = "failed"
-          run["error"] = str(run["failureReason"])
+          target_status = "failed" if run.get("failureReason") else "stopped"
         else:
-          run["status"] = "stopped" if run["status"] == "stopping" else "completed"
+          run["status"] = "running"
         self.save_runs()
+      if target_status == "completed":
+        for event in self.runner.start_prepared(run, workspace_path, codex_home):
+          with self.lock:
+            if self.runs[run_id]["status"] == "stopping":
+              target_status = "stopped"
+              break
+            self.append_event(run_id, event)
     except Exception as exc:
-      with self.lock:
-        run = self.runs.get(run_id)
-        if run:
-          run["status"] = "failed"
-          run["error"] = str(exc)
-          self.append_event(run_id, {"type": "error", "message": str(exc)})
-          self.save_runs()
+      runner_error = exc
+      target_status = "failed"
+
+    result_files = None
+    checkpoint_error = None
+    try:
+      result_files = scan_workspace_manifest(workspace_path, self.root / "blobs" / "sha256")
+    except Exception as exc:
+      checkpoint_error = exc
+      target_status = "failed"
+
+    with self.lock:
+      run = self.runs.get(run_id)
+      if not run:
+        return
+      if run.get("failureReason"):
+        target_status = "failed"
+      elif run.get("status") == "stopping" and target_status == "completed":
+        target_status = "stopped"
+      error = runner_error or checkpoint_error or (run.get("failureReason") if target_status == "failed" else None)
+      run["status"] = target_status
+      run["error"] = str(error or "")
+      if result_files is not None:
+        run["resultFiles"] = result_files
+      if error:
+        self.append_event(run_id, {"type": "error", "message": str(error)})
+      self.save_runs()
 
   def renew_lease(self, run_id: str) -> dict:
     with self.lock:
@@ -205,7 +219,10 @@ class WorkerState:
       return {"id": run_id, "acknowledged": True}
 
   def public_run(self, run: dict) -> dict:
-    return {key: run.get(key) for key in ["id", "status", "container", "error", "created"]}
+    public = {key: run.get(key) for key in ["id", "status", "container", "error", "created"]}
+    if run.get("status") in TERMINAL and isinstance(run.get("resultFiles"), dict):
+      public["resultFiles"] = run["resultFiles"]
+    return public
 
   def run_events(self, run_id: str, after: int, wait_seconds: float) -> dict:
     deadline = time.monotonic() + max(0, min(wait_seconds, 10))

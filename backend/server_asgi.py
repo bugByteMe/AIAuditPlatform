@@ -11,6 +11,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from fastapi import FastAPI, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
@@ -59,7 +60,9 @@ class AsgiHandler(Handler):
     response_headers.update(headers or {})
     self.response = Response(content=body, status_code=int(status), headers=response_headers)
 
-  def write_file(self, file_path: Path, content_type: str, filename: str, disposition: str) -> None:
+  def write_file(
+    self, file_path: Path, content_type: str, filename: str, disposition: str, *, delete_after: bool = False,
+  ) -> None:
     ascii_filename = ascii_download_filename(filename)
     headers = {
       **cors_headers(self.request),
@@ -68,7 +71,8 @@ class AsgiHandler(Handler):
       "Cache-Control": "no-store",
       "Connection": "close",
     }
-    self.response = FileResponse(file_path, media_type=content_type, headers=headers)
+    background = BackgroundTask(file_path.unlink, missing_ok=True) if delete_after else None
+    self.response = FileResponse(file_path, media_type=content_type, headers=headers, background=background)
 
   def serve_static(self, request_path: str) -> None:
     relative = unquote(request_path.lstrip("/")) or "index.html"

@@ -342,27 +342,34 @@ class BaseHandler(BaseHTTPRequestHandler):
       self.wfile.flush()
       self.close_connection = True
 
-  def write_file(self, file_path: Path, content_type: str, filename: str, disposition: str) -> None:
-    ascii_filename = ascii_download_filename(filename)
-    self.send_response(HTTPStatus.OK)
-    self.send_header("Content-Type", content_type)
-    self.send_header("Content-Disposition", f"{disposition}; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(filename)}")
-    self.send_header("X-Content-Type-Options", "nosniff")
-    self.send_header("Cache-Control", "no-store")
-    self.send_header("Connection", "close")
-    origin = self.headers.get("Origin")
-    if origin:
-      self.send_header("Access-Control-Allow-Origin", origin)
-      self.send_header("Access-Control-Allow-Credentials", "true")
-    self.end_headers()
-    with file_path.open("rb") as source:
-      while True:
-        chunk = source.read(1024 * 1024)
-        if not chunk:
-          break
-        self.wfile.write(chunk)
-    self.wfile.flush()
-    self.close_connection = True
+  def write_file(
+    self, file_path: Path, content_type: str, filename: str, disposition: str, *, delete_after: bool = False,
+  ) -> None:
+    try:
+      ascii_filename = ascii_download_filename(filename)
+      self.send_response(HTTPStatus.OK)
+      self.send_header("Content-Type", content_type)
+      self.send_header("Content-Length", str(file_path.stat().st_size))
+      self.send_header("Content-Disposition", f"{disposition}; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(filename)}")
+      self.send_header("X-Content-Type-Options", "nosniff")
+      self.send_header("Cache-Control", "no-store")
+      self.send_header("Connection", "close")
+      origin = self.headers.get("Origin")
+      if origin:
+        self.send_header("Access-Control-Allow-Origin", origin)
+        self.send_header("Access-Control-Allow-Credentials", "true")
+      self.end_headers()
+      with file_path.open("rb") as source:
+        while True:
+          chunk = source.read(1024 * 1024)
+          if not chunk:
+            break
+          self.wfile.write(chunk)
+      self.wfile.flush()
+      self.close_connection = True
+    finally:
+      if delete_after:
+        file_path.unlink(missing_ok=True)
 
   def serve_static(self, request_path: str) -> None:
     relative = unquote(request_path.lstrip("/")) or "index.html"

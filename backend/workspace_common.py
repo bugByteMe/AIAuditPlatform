@@ -5,6 +5,7 @@ import posixpath
 import time
 import uuid
 from dataclasses import dataclass
+from hashlib import sha256
 from pathlib import Path
 from urllib.parse import parse_qs
 
@@ -17,6 +18,8 @@ MAX_TEXT_PREVIEW_BYTES = SETTINGS.max_text_preview_bytes
 BLOCKED_SUFFIXES = {suffix.lower() for suffix in SETTINGS.blocked_upload_suffixes}
 TEXT_SUFFIXES = {".csv", ".css", ".html", ".js", ".json", ".log", ".md", ".py", ".txt", ".ts", ".xml", ".yaml", ".yml"}
 OFFICE_SUFFIXES = {".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx"}
+FILE_STREAM_CHUNK_BYTES = 1024 * 1024
+BUNDLE_TEMP_TTL_SECONDS = 60 * 60
 
 class StorageError(ValueError):
   def __init__(self, code: str, message: str):
@@ -40,6 +43,17 @@ def human_size(value: int) -> str:
       return f"{size:.1f} {unit}".replace(".0 ", " ")
     size /= 1024
   return f"{value} B"
+
+def stream_sha256(path: Path, chunk_bytes: int = FILE_STREAM_CHUNK_BYTES) -> str:
+  digest = sha256()
+  with path.open("rb") as source:
+    while chunk := source.read(chunk_bytes):
+      digest.update(chunk)
+  return digest.hexdigest()
+
+def read_prefix(path: Path, limit: int) -> bytes:
+  with path.open("rb") as source:
+    return source.read(limit)
 
 def normalize_relative_path(raw_path: str) -> str:
   path = raw_path.replace("\\", "/").strip()

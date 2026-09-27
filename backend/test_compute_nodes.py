@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compute_nodes import WorkerRegistry
+from compute_nodes import WorkerClient, WorkerRegistry, WorkerRunFailed
 
 
 class FakeWorkerClient:
@@ -91,6 +91,44 @@ class WorkerRegistryTest(unittest.TestCase):
     status = self.registry.node_status(worker_id)
     self.assertEqual(status["activeUploadCount"], 1)
     self.assertEqual(status["activeRunCount"], 0)
+
+  def test_terminal_worker_result_carries_workspace_manifest(self):
+    client = object.__new__(WorkerClient)
+    client.lease_seconds = 30
+    client.timeout = 1
+    client.node = {"id": "worker-1"}
+    manifest = {"result.txt": {"path": "result.txt", "blob": "a" * 64, "checksum": f"sha256:{'a' * 64}", "size": 3}}
+
+    def request(method, path, payload=None, timeout=None):
+      if path == "/v1/runs":
+        return {"container": "run-container"}
+      if path.endswith("/events?after=0&wait=5"):
+        return {"status": "completed", "container": "run-container", "events": [], "resultFiles": manifest}
+      return {}
+
+    client.request = request
+    run = {"id": "run-1"}
+    _, events = client.start(run)
+    self.assertEqual(list(events), [])
+    self.assertEqual(run["resultFiles"], manifest)
+
+  def test_terminal_worker_result_requires_workspace_manifest(self):
+    client = object.__new__(WorkerClient)
+    client.lease_seconds = 30
+    client.timeout = 1
+    client.node = {"id": "worker-1"}
+
+    def request(method, path, payload=None, timeout=None):
+      if path == "/v1/runs":
+        return {"container": "run-container"}
+      if path.endswith("/events?after=0&wait=5"):
+        return {"status": "completed", "container": "run-container", "events": []}
+      return {}
+
+    client.request = request
+    _, events = client.start({"id": "run-1"})
+    with self.assertRaises(WorkerRunFailed):
+      list(events)
 
 
 if __name__ == "__main__":

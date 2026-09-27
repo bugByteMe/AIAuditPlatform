@@ -93,6 +93,12 @@ class WorkerClient:
         remote_status = str(result.get("status") or "")
         if remote_status in terminal:
           run["remoteStatus"] = remote_status
+          result_files = result.get("resultFiles")
+          if isinstance(result_files, dict):
+            run["resultFiles"] = result_files
+          else:
+            detail = str(result.get("error") or "worker terminal response did not include a workspace manifest")
+            raise WorkerRunFailed(f"{detail}; final workspace manifest unavailable")
           if result.get("error"):
             raise WorkerRunFailed(str(result["error"]))
           return

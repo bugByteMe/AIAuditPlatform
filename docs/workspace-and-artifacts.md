@@ -113,6 +113,17 @@ Checkpoint creation should:
 6. Commit the checkpoint, file versions, workspace size, and artifact diff in one SQLite transaction.
 7. Delete displaced blobs only when no current or previous version in any workspace references them.
 
+File checksums are computed with fixed-size streaming reads. Text preview reads are
+limited to the configured preview prefix, so neither operation allocates memory
+proportional to the source file size.
+
+For remote runs, the compute worker performs the final workspace scan and writes
+missing content-addressed blobs beside the shared workspace. Its terminal response
+includes that manifest. The control node validates manifest structure, limits, and
+blob size/existence, then records the checkpoint without reading or rehashing the
+workspace files. A missing final manifest is a checkpoint failure; the control node
+does not fall back to a remote-workspace rescan.
+
 The active workspace directory remains materialized on the shared filesystem for normal browsing and future runs. Previous file versions are retained internally for bounded recovery and are not currently exposed through download or restore APIs. Historical whole-workspace checkpoints are not materializable.
 
 ## Snapshot Diffs
@@ -166,7 +177,11 @@ Every delivery path must pass workspace permission checks.
 
 ### Zip Download
 
-Zip download is the universal fallback and should work in all supported browsers. The backend streams a package that preserves workspace-relative paths:
+Zip download is the universal fallback and should work in all supported browsers.
+The backend builds each package in a temporary file under the bundle directory and
+streams that file to the client, preserving workspace-relative paths. The temporary
+file is deleted after the response completes; startup cleanup removes abandoned
+download bundles older than one hour.
 
 ```text
 artifacts-run-<run_id>/

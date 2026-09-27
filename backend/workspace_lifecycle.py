@@ -205,6 +205,19 @@ class WorkspaceLifecycleMixin:
     metadata["artifacts"][workspace["id"]] = self.diff_snapshots(parent, snapshot)
     return snapshot
 
+  def refresh_workspace_metadata_from_files(
+    self, metadata: dict, workspace: dict, reason: str, actor: str, files: dict,
+  ) -> dict:
+    parent_id = workspace.get("latestSnapshotId")
+    parent = metadata["snapshots"].get(parent_id) if parent_id else None
+    snapshot = self.create_snapshot_from_files(metadata, workspace["id"], reason, actor, parent_id, files)
+    workspace["latestSnapshotId"] = snapshot["id"]
+    workspace["updated"] = snapshot["created"]
+    workspace["fileCount"] = len(snapshot["files"])
+    workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
+    metadata["artifacts"][workspace["id"]] = self.diff_snapshots(parent, snapshot)
+    return snapshot
+
   def commit_prepared_upload(self, user: dict, session: dict, result: dict) -> dict:
     """Commit a worker-prepared manifest while keeping metadata control-plane-owned."""
     with self.lock:
@@ -398,4 +411,3 @@ class WorkspaceLifecycleMixin:
     if not self.user_can_access(user, workspace):
       raise StorageError("forbidden", "workspace access denied")
     return workspace
-

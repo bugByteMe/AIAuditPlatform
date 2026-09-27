@@ -1,17 +1,19 @@
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 import sys
 import tempfile
+import time
 import unittest
 import zipfile
-from io import BytesIO
 from pathlib import Path
 from unittest import mock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+from workspace_common import read_prefix, stream_sha256
 from workspace_store import StorageError, UploadedFile, WorkspaceStore, normalize_relative_path, parse_multipart
 from workspace_database import WorkspaceDatabase
 from server import ascii_download_filename
@@ -393,33 +395,92 @@ class WorkspaceStoreTest(unittest.TestCase):
     (root / "workpapers" / "income.txt").write_text("changed", encoding="utf-8")
     (root / "output.txt").write_text("new", encoding="utf-8")
     self.store.refresh_artifacts(workspace["id"], OWNER)
-    filename, body = self.store.build_download_zip(workspace["id"], OWNER, "changes", ["output.txt"])
+    filename, bundle_path = self.store.build_download_zip(workspace["id"], OWNER, "changes", ["output.txt"])
     self.assertTrue(filename.endswith("-changes.zip"))
-    with zipfile.ZipFile(BytesIO(body)) as archive:
-      names = archive.namelist()
-      self.assertTrue(any(name.endswith("/manifest.json") for name in names))
-      self.assertTrue(any(name.endswith("/files/output.txt") for name in names))
-      self.assertFalse(any(name.endswith("/files/workpapers/income.txt") for name in names))
-      manifest_name = next(name for name in names if name.endswith("/manifest.json"))
-      manifest = json.loads(archive.read(manifest_name).decode("utf-8"))
-      self.assertEqual([item["path"] for item in manifest["included"]], ["output.txt"])
+    try:
+      self.assertEqual(bundle_path.parent, self.store.bundle_dir)
+      with zipfile.ZipFile(bundle_path) as archive:
+        names = archive.namelist()
+        self.assertTrue(any(name.endswith("/manifest.json") for name in names))
+        self.assertTrue(any(name.endswith("/files/output.txt") for name in names))
+        self.assertFalse(any(name.endswith("/files/workpapers/income.txt") for name in names))
+        manifest_name = next(name for name in names if name.endswith("/manifest.json"))
+        manifest = json.loads(archive.read(manifest_name).decode("utf-8"))
+        self.assertEqual([item["path"] for item in manifest["included"]], ["output.txt"])
+    finally:
+      bundle_path.unlink(missing_ok=True)
 
   def test_download_expands_selected_folder_without_duplicate_entries(self) -> None:
     workspace = self.create_workspace()
-    _, body = self.store.build_download_zip(
+    _, bundle_path = self.store.build_download_zip(
       workspace["id"],
       OWNER,
       "full",
       ["workpapers", "workpapers/income.txt"],
     )
-    with zipfile.ZipFile(BytesIO(body)) as archive:
-      income_entries = [name for name in archive.namelist() if name.endswith("/files/workpapers/income.txt")]
-      self.assertEqual(len(income_entries), 1)
+    try:
+      with zipfile.ZipFile(bundle_path) as archive:
+        income_entries = [name for name in archive.namelist() if name.endswith("/files/workpapers/income.txt")]
+        self.assertEqual(len(income_entries), 1)
+    finally:
+      bundle_path.unlink(missing_ok=True)
 
   def test_download_rejects_non_downloadable_path(self) -> None:
     workspace = self.create_workspace()
     with self.assertRaises(StorageError):
       self.store.build_download_zip(workspace["id"], OWNER, "changes", ["../secret.txt"])
+
+  def test_stream_helpers_use_bounded_reads(self) -> None:
+    source = self.store.root / "large.bin"
+    source.write_bytes(b"a" * (2 * 1024 * 1024 + 17))
+    observed = []
+    original_open = Path.open
+
+    class BoundedReader:
+      def __init__(self, wrapped):
+        self.wrapped = wrapped
+
+      def __enter__(self):
+        return self
+
+      def __exit__(self, *args):
+        self.wrapped.close()
+
+      def read(self, size=-1):
+        observed.append(size)
+        if size < 0 or size > 1024 * 1024:
+          raise AssertionError("unbounded file read")
+        return self.wrapped.read(size)
+
+    def bounded_open(path, *args, **kwargs):
+      return BoundedReader(original_open(path, *args, **kwargs))
+
+    with mock.patch.object(Path, "open", bounded_open):
+      self.assertEqual(len(stream_sha256(source)), 64)
+      self.assertEqual(read_prefix(source, 128), b"a" * 128)
+    self.assertTrue(observed)
+
+  def test_worker_manifest_checkpoint_does_not_rescan_workspace(self) -> None:
+    workspace = self.create_workspace()
+    files = self.store.scan_workspace(workspace["id"])
+    metadata = self.store.load_metadata()
+    stored_workspace = metadata["workspaces"][workspace["id"]]
+    with mock.patch.object(self.store, "scan_workspace", side_effect=AssertionError("unexpected control scan")), mock.patch(
+      "workspace_snapshots.stream_sha256", side_effect=AssertionError("unexpected control rehash")
+    ):
+      snapshot = self.store.refresh_workspace_metadata_from_files(metadata, stored_workspace, "completed", "run-1", files)
+    self.assertEqual(snapshot["files"], files)
+
+  def test_store_startup_removes_only_stale_download_bundles(self) -> None:
+    stale = self.store.bundle_dir / "download-stale.zip"
+    fresh = self.store.bundle_dir / "download-fresh.zip"
+    stale.write_bytes(b"stale")
+    fresh.write_bytes(b"fresh")
+    old = time.time() - 7200
+    os.utime(stale, (old, old))
+    WorkspaceStore(self.store.root)
+    self.assertFalse(stale.exists())
+    self.assertTrue(fresh.exists())
 
 
 if __name__ == "__main__":

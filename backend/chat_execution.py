@@ -67,7 +67,7 @@ class ChatExecutionMixin:
           with self.store.lock:
             metadata = self.store.load_metadata()
             self.ensure_chat_metadata(metadata)
-            self.finalize_run(metadata, run, "stopped", None)
+            self.finalize_run(metadata, run, "stopped", None, remote=bool(node_id), checkpoint=False)
             self.store.save_metadata(metadata)
             self.chat_store.save_run(run)
             self.publish_run_finalization(run)
@@ -117,7 +117,14 @@ class ChatExecutionMixin:
         if run:
           remote_status = str(run_for_worker.get("remoteStatus") or "")
           final_status = "stopped" if run_id in self.stop_requested or run["status"] == "stopping" or remote_status == "stopped" else "completed"
-          self.finalize_run(metadata, run, final_status, None)
+          self.finalize_run(
+            metadata,
+            run,
+            final_status,
+            None,
+            result_files=run_for_worker.get("resultFiles") if node_id else None,
+            remote=bool(node_id),
+          )
           self.store.save_metadata(metadata)
           self.chat_store.save_run(run)
           self.publish_run_finalization(run)
@@ -135,7 +142,8 @@ class ChatExecutionMixin:
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
         if run:
-          self.finalize_run(metadata, run, "failed", str(exc))
+          remote_files = run_for_worker.get("resultFiles") if node_id and "run_for_worker" in locals() else None
+          self.finalize_run(metadata, run, "failed", str(exc), result_files=remote_files, remote=bool(node_id))
           self.store.save_metadata(metadata)
           self.chat_store.save_run(run)
           self.publish_run_finalization(run)
@@ -199,15 +207,31 @@ class ChatExecutionMixin:
     session["updated"] = run["updated"]
     self.chat_store.save_session(session)
 
-  def finalize_run(self, metadata: dict, run: dict, status: str, error: str | None) -> None:
+  def finalize_run(
+    self,
+    metadata: dict,
+    run: dict,
+    status: str,
+    error: str | None,
+    *,
+    result_files: dict | None = None,
+    remote: bool = False,
+    checkpoint: bool = True,
+  ) -> None:
     workspace = metadata["workspaces"].get(run["workspaceId"])
     if not workspace:
       return
     if error:
       self.append_event(run["sessionId"], "error", error, run["id"])
     try:
-      snapshot = self.store.refresh_workspace_metadata(metadata, workspace, status, run["id"])
-      run["resultSnapshotId"] = snapshot["id"]
+      if checkpoint:
+        if remote:
+          if result_files is None:
+            raise StorageError("missing_worker_manifest", "worker did not return the final workspace manifest")
+          snapshot = self.store.refresh_workspace_metadata_from_files(metadata, workspace, status, run["id"], result_files)
+        else:
+          snapshot = self.store.refresh_workspace_metadata(metadata, workspace, status, run["id"])
+        run["resultSnapshotId"] = snapshot["id"]
     except Exception as exc:
       self.append_event(run["sessionId"], "error", f"Checkpoint failed: {exc}", run["id"])
       if status == "completed":

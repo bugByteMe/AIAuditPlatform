@@ -18,7 +18,7 @@ from typing import Callable
 from postgres_workspace_database import PostgresWorkspaceDatabase
 from workspace_database import WorkspaceDatabase
 from workspace_common import (
-  BLOCKED_SUFFIXES, MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TEXT_PREVIEW_BYTES, MAX_WORKSPACE_BYTES,
+  BLOCKED_SUFFIXES, BUNDLE_TEMP_TTL_SECONDS, MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TEXT_PREVIEW_BYTES, MAX_WORKSPACE_BYTES,
   OFFICE_SUFFIXES, TEXT_SUFFIXES, StorageError, UploadedFile, ensure_under_root, generated_id, human_size,
   normalize_relative_path, now_string,
 )
@@ -35,6 +35,16 @@ class WorkspaceCoreMixin:
     self.lock = threading.RLock()
     self.database = PostgresWorkspaceDatabase(database_url) if database_url else WorkspaceDatabase(root)
     self.ensure_layout()
+    self.cleanup_stale_bundles()
+
+  def cleanup_stale_bundles(self) -> None:
+    cutoff = time.time() - BUNDLE_TEMP_TTL_SECONDS
+    for bundle in self.bundle_dir.glob("download-*.zip"):
+      try:
+        if bundle.is_file() and bundle.stat().st_mtime < cutoff:
+          bundle.unlink(missing_ok=True)
+      except OSError:
+        continue
 
   def set_chat_session_provider(self, provider: Callable[[dict], list[dict]]) -> None:
     self.chat_session_provider = provider
@@ -232,4 +242,3 @@ class WorkspaceCoreMixin:
 
   def workspace_path(self, workspace_id: str) -> Path:
     return ensure_under_root(self.active_dir, self.active_dir / workspace_id)
-

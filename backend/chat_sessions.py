@@ -29,7 +29,14 @@ class ChatSessionMixin:
         metadata = self.store.load_metadata()
         stored = self.chat_store.get_run(str(run["id"]))
         if stored:
-          self.finalize_run(metadata, stored, "failed", "control plane restarted before the local run completed")
+          self.finalize_run(
+            metadata,
+            stored,
+            "failed",
+            "control plane restarted before the run completed",
+            remote=bool(node_id),
+            checkpoint=not bool(node_id),
+          )
           self.store.save_metadata(metadata)
           self.chat_store.save_run(stored)
           self.publish_run_finalization(stored)
@@ -351,4 +358,3 @@ class ChatSessionMixin:
       else:
         self.runner.stop(run)
     return {"run": run}
-

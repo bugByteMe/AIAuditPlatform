@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import io
 import json
 import mimetypes
 import os
@@ -11,7 +10,6 @@ import tempfile
 import threading
 import time
 import zipfile
-from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
@@ -21,7 +19,7 @@ from workspace_database import WorkspaceDatabase
 from workspace_common import (
   BLOCKED_SUFFIXES, MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TEXT_PREVIEW_BYTES, MAX_WORKSPACE_BYTES,
   OFFICE_SUFFIXES, TEXT_SUFFIXES, StorageError, UploadedFile, ensure_under_root, generated_id, human_size,
-  normalize_relative_path, now_string,
+  normalize_relative_path, now_string, read_prefix, stream_sha256,
 )
 
 class WorkspaceFilesMixin:
@@ -91,19 +89,21 @@ class WorkspaceFilesMixin:
     return file_path
 
   def file_metadata(self, workspace_id: str, raw_path: str) -> dict:
+    metadata = self.file_response_metadata(workspace_id, raw_path)
+    digest = stream_sha256(self.workspace_file_path(workspace_id, raw_path))
+    return {**metadata, "checksum": f"sha256:{digest}", "blob": digest}
+
+  def file_response_metadata(self, workspace_id: str, raw_path: str) -> dict:
     file_path = self.workspace_file_path(workspace_id, raw_path)
     relative = file_path.relative_to(self.workspace_path(workspace_id)).as_posix()
     stat = file_path.stat()
     content_type = mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
-    digest = sha256(file_path.read_bytes()).hexdigest()
     return {
       "path": relative,
       "name": file_path.name,
       "sizeBytes": stat.st_size,
       "size": human_size(stat.st_size),
       "contentType": content_type,
-      "checksum": f"sha256:{digest}",
-      "blob": digest,
       "suffix": file_path.suffix.lower(),
     }
 
@@ -113,7 +113,7 @@ class WorkspaceFilesMixin:
     suffix = metadata["suffix"]
     content_type = metadata["contentType"]
     if suffix in TEXT_SUFFIXES or content_type.startswith("text/"):
-      raw = file_path.read_bytes()[:MAX_TEXT_PREVIEW_BYTES]
+      raw = read_prefix(file_path, MAX_TEXT_PREVIEW_BYTES)
       return {
         **metadata,
         "mode": "text",
@@ -158,7 +158,7 @@ class WorkspaceFilesMixin:
       shutil.copyfile(rendered, cached_pdf)
     return cached_pdf
 
-  def build_download_zip(self, workspace_id: str, user: dict, mode: str, selected_paths: list[str]) -> tuple[str, bytes]:
+  def build_download_zip(self, workspace_id: str, user: dict, mode: str, selected_paths: list[str]) -> tuple[str, Path]:
     self.get_workspace(workspace_id, user)
     metadata = self.load_workspace_metadata(workspace_id)
     workspace = metadata["workspaces"][workspace_id]
@@ -208,12 +208,18 @@ class WorkspaceFilesMixin:
       "created": now_string(),
     }
     root_name = f"workspace-{workspace_id}-{mode}"
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as archive:
-      archive.writestr(f"{root_name}/manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
-      for entry in entries:
-        source_entry = latest["files"].get(entry["path"])
-        if not source_entry:
-          continue
-        archive.write(self.blob_path(source_entry["blob"]), f"{root_name}/files/{entry['path']}")
-    return f"{root_name}.zip", buffer.getvalue()
+    self.bundle_dir.mkdir(parents=True, exist_ok=True)
+    with tempfile.NamedTemporaryFile(prefix="download-", suffix=".zip", dir=self.bundle_dir, delete=False) as handle:
+      bundle_path = Path(handle.name)
+    try:
+      with zipfile.ZipFile(bundle_path, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr(f"{root_name}/manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True))
+        for entry in entries:
+          source_entry = latest["files"].get(entry["path"])
+          if not source_entry:
+            continue
+          archive.write(self.blob_path(source_entry["blob"]), f"{root_name}/files/{entry['path']}")
+      return f"{root_name}.zip", bundle_path
+    except Exception:
+      bundle_path.unlink(missing_ok=True)
+      raise

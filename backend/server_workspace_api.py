@@ -108,7 +108,7 @@ class WorkspaceHandlerMixin:
       params = parse_query(query)
       path = (params.get("path") or [""])[0]
       file_path = WORKSPACE_STORE.workspace_file_path(workspace_id, path)
-      metadata = WORKSPACE_STORE.file_metadata(workspace_id, path)
+      metadata = WORKSPACE_STORE.file_response_metadata(workspace_id, path)
       disposition = "attachment" if (params.get("download") or [""])[0] in {"1", "true", "yes"} else "inline"
       self.write_file(file_path, metadata["contentType"], metadata["name"], disposition)
     elif method == "GET" and action == "files" and subaction == "rendered":
@@ -126,23 +126,14 @@ class WorkspaceHandlerMixin:
       self.write_json({"artifacts": artifacts})
     elif method == "GET" and action == "download":
       params = parse_query(query)
-      filename, body = WORKSPACE_STORE.build_download_zip(
+      filename, bundle_path = WORKSPACE_STORE.build_download_zip(
         workspace_id,
         user,
         (params.get("mode") or ["changes"])[0],
         parse_urlencoded_paths(params.get("paths", [])),
       )
       add_audit(user["username"], "workspace downloaded", f"{workspace_id} {filename}")
-      ascii_filename = ascii_download_filename(filename, "workspace.zip")
-      self.write_binary(
-        body,
-        "application/zip",
-        headers={
-          "Content-Disposition": f"attachment; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(filename)}",
-          "Content-Transfer-Encoding": "binary",
-          "Connection": "close",
-        },
-      )
+      self.write_file(bundle_path, "application/zip", filename, "attachment", delete_after=True)
     else:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
 
@@ -208,4 +199,3 @@ class WorkspaceHandlerMixin:
       self.write_sse(workspace_id, session_id, after, user)
     else:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
-

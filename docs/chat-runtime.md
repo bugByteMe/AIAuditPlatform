@@ -56,7 +56,7 @@ Stopping a chat should be graceful when possible:
 3. Backend sends stop command to the worker.
 4. Worker asks the containerized Codex process to terminate.
 5. Worker captures final events and exit status.
-6. Backend records usage and creates a workspace checkpoint.
+6. Worker returns its final workspace manifest and the backend records the checkpoint without rescanning the shared workspace.
 7. Session becomes `resumable` if checkpointing succeeds.
 
 If graceful stop times out, the worker may force-stop the container and mark the run recoverability based on available transcript and workspace state.
@@ -89,8 +89,8 @@ When a run completes:
 
 1. Worker reports completion.
 2. Backend records final usage.
-3. Backend scans the final workspace state and records a lightweight checkpoint.
-4. Backend compares the pre-run current files with the final scan, records artifacts, and retains at most one previous version per path.
+3. Worker scans the final workspace state with bounded reads, stores missing blobs, and returns the manifest.
+4. Backend validates and records that manifest without rehashing workspace files, compares it with the pre-run current files, records artifacts, and retains at most one previous version per path.
 5. Frontend updates the chat and artifact views.
 
 ## Failure Handling
@@ -99,7 +99,7 @@ Failures should preserve as much recoverable state as possible:
 
 - If the worker reports an error, persist the error event.
 - If the container exits unexpectedly, mark the run failed and checkpoint the workspace if possible.
-- If contact with a worker is lost, stop renewing its run lease, wait for the bounded lease interval, then mark the run failed after attempting a final workspace checkpoint. The run remains resumable when its persisted Codex transcript/checkpoint is usable; it is not automatically retried.
+- If contact with a worker is lost, stop renewing its run lease, wait for the bounded lease interval, then mark the run failed. A worker manifest already received may be checkpointed, but the control node does not rescan the remote workspace as a fallback. The run remains resumable from the last valid checkpoint when its persisted Codex transcript is usable; it is not automatically retried.
 - MicuAPI enforces managed-key exhaustion on model requests. Known quota failures are recorded as budget-related; local `usedTokens` remains reporting-only.
 
 ## V1 Implementation Surface
@@ -119,7 +119,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 
 The implementation uses the statically configured compute-node inventory whenever that inventory is nonempty. The control-plane scheduler polls enabled workers over authenticated HTTPS, reserves the per-run `run_cpus` and `run_memory`, and queues work until a compatible healthy node has capacity. It uses local Docker with `local_run_capacity` only when no compute nodes are configured; configuring every node as disabled intentionally prevents execution rather than falling back locally. It persists the assigned worker, container, event cursor, chat sessions, runs, and events; holds the operational workspace write lock until every active run is terminal; and records a checkpoint/artifact refresh after completion, stop, or failure. Workspace metadata keeps only workspace-level state and lightweight chat session references.
 
-The worker persists its run state and event stream beneath `<workspace_storage_dir>/worker_state/<node_id>/`. Start is idempotent by run ID, and the control plane can reconnect from its last persisted event cursor after restart. A worker restart marks its interrupted work failed rather than launching a duplicate container. The lease watchdog stops orphaned containers when the control plane disappears. After the control plane has checkpointed a terminal run, it acknowledges the result so the worker removes its duplicate run/event record.
+The worker persists its run state, final workspace manifest, and event stream beneath `<workspace_storage_dir>/worker_state/<node_id>/`. Start is idempotent by run ID, and the control plane can reconnect from its last persisted event cursor after restart. A worker restart marks its interrupted work failed rather than launching a duplicate container. The lease watchdog stops orphaned containers when the control plane disappears. After the control plane has checkpointed a terminal run, it acknowledges the result so the worker removes its duplicate run/event record.
 
 Live updates use Server-Sent Events. The server sends named heartbeat events
 with the latest cursor and session status during idle periods. A successful SSE

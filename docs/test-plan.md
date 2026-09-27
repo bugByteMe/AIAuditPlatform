@@ -51,6 +51,10 @@
 
 ## Workspace Lifecycle
 
+- Checksum and text-preview readers request bounded chunks rather than whole-file reads.
+- Workspace download ZIPs are disk-backed, retain manifest/path semantics, and are deleted after response completion or stale-bundle cleanup.
+- A remote worker terminal manifest creates the final checkpoint without invoking a control-node workspace scan; a missing manifest does not trigger scan fallback.
+
 - User can upload files and folders into a new workspace.
 - Large upload limits are enforced.
 - Upload manifests are rejected before byte transfer for unsafe paths, blocked types, count/size limits, permission failures, and quota exhaustion.
