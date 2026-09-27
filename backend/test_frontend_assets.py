@@ -140,12 +140,15 @@ class FrontendAssetTests(unittest.TestCase):
     def test_resumable_upload_uses_chunk_and_processing_phases(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")
+        nginx_source = (PROJECT_ROOT / "docker" / "nginx" / "ai-audit.conf.example").read_text(encoding="utf-8")
         self.assertIn('api("/api/uploads"', app_source)
         self.assertIn("uploadChunkApi", app_source)
-        self.assertIn("function isUploadSessionMissing(error)", app_source)
-        self.assertIn("runResumableUploadAttempt(options)", app_source)
+        self.assertNotIn("function isUploadSessionMissing(error)", app_source)
+        self.assertNotIn("runResumableUploadAttempt(options)", app_source)
         self.assertIn("progress.processingUpload", app_source)
         self.assertIn('xhr.open("PUT"', api_source)
+        self.assertIn('replace(/\\/+$/, "")', api_source)
+        self.assertIn("location ~ ^/api/uploads(?:/|$)", nginx_source)
         self.assertNotIn('uploadApi(\n      "/api/workspaces"', app_source)
 
     def test_user_budget_inline_renaming_and_viewport_chat_layout_are_wired(self) -> None:

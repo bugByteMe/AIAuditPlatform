@@ -7,7 +7,11 @@ function unique(values) {
 }
 
 function currentApiBase() {
-  return window.localStorage.getItem(API_BASE_KEY) || "";
+  return normalizeApiBase(window.localStorage.getItem(API_BASE_KEY) || "");
+}
+
+function normalizeApiBase(base) {
+  return String(base || "").replace(/\/+$/, "");
 }
 
 function backendCandidates() {
@@ -20,12 +24,14 @@ function backendCandidates() {
 
 function buildUrl(path, base = currentApiBase()) {
   if (/^https?:\/\//i.test(path)) return path;
-  if (!base) return path;
-  return `${base}${path.startsWith("/") ? path : `/${path}`}`;
+  const normalizedBase = normalizeApiBase(base);
+  if (!normalizedBase) return path;
+  return `${normalizedBase}/${path.replace(/^\/+/, "")}`;
 }
 
 function rememberApiBase(base) {
-  if (base) window.localStorage.setItem(API_BASE_KEY, base);
+  const normalizedBase = normalizeApiBase(base);
+  if (normalizedBase) window.localStorage.setItem(API_BASE_KEY, normalizedBase);
 }
 
 function rememberSessionToken(path, payload) {

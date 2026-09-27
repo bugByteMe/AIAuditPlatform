@@ -47,7 +47,7 @@ server {
     proxy_set_header X-Request-ID $request_id;
   }
 
-  location /api/uploads/ {
+  location ~ ^/api/uploads(?:/|$) {
     client_max_body_size 0;
     proxy_request_buffering off;
     proxy_pass http://ai_audit_control_plane;

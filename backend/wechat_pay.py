@@ -97,14 +97,23 @@ class WechatPayClient:
   def _load_keys(self) -> None:
     if self._merchant_private_key and self._wechat_public_key and self._merchant_serial:
       return
-    cert = x509.load_pem_x509_certificate(self.merchant_cert_file.read_bytes())
+    try:
+      cert = x509.load_pem_x509_certificate(self.merchant_cert_file.read_bytes())
+    except Exception as exc:
+      raise ValueError("merchant certificate is not a valid PEM certificate") from exc
     now = time.time()
     if cert.not_valid_after_utc.timestamp() <= now:
       raise ValueError("merchant certificate is expired")
-    merchant_private_key = serialization.load_pem_private_key(
-      self.merchant_key_file.read_bytes(), password=None
-    )
-    wechat_public_key = serialization.load_pem_public_key(self.public_key_file.read_bytes())
+    try:
+      merchant_private_key = serialization.load_pem_private_key(
+        self.merchant_key_file.read_bytes(), password=None
+      )
+    except Exception as exc:
+      raise ValueError("merchant private key is not a valid unencrypted PEM private key") from exc
+    try:
+      wechat_public_key = serialization.load_pem_public_key(self.public_key_file.read_bytes())
+    except Exception as exc:
+      raise ValueError("WeChat Pay public key is not a valid PEM public key") from exc
     cert_key = cert.public_key().public_bytes(serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo)
     merchant_key = merchant_private_key.public_key().public_bytes(
       serialization.Encoding.DER, serialization.PublicFormat.SubjectPublicKeyInfo

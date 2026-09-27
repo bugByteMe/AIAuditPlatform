@@ -130,6 +130,12 @@ class WechatPayClientTest(unittest.TestCase):
     self.assertIn("notification URL must use HTTPS", errors)
     self.assertIn("API v3 key must contain 32 bytes", errors)
 
+  def test_configuration_identifies_the_invalid_key_type(self) -> None:
+    self.client.public_key_file.write_text("PUB_KEY_ID_NOT_A_PEM", encoding="utf-8")
+    self.client._wechat_public_key = None
+    errors = self.client.configuration_errors()
+    self.assertTrue(any("WeChat Pay public key is not a valid PEM public key" in error for error in errors))
+
 
 if __name__ == "__main__":
   unittest.main()
