@@ -34,6 +34,11 @@ single Uvicorn worker. It provides:
 
 The backend is the only component trusted to make access-control and budget decisions.
 
+The Python control plane is divided into focused transport, domain, execution,
+and persistence modules behind stable compatibility façades. See
+[backend-modules.md](backend-modules.md) for module ownership and dependency
+rules.
+
 The current deployment keeps one API/scheduler process because login sessions
 and scheduler ownership remain process-local. Chat sessions, runs, and events
 use normalized row storage: SQLite is the zero-configuration development
