@@ -27,7 +27,7 @@ _PATCH_TARGETS = {
   "WECHAT_PAY": (server_state, server_recharge, server_recharge_api),
   "CHAT_RUNTIME": (server_state, server_admin, server_asgi, server_transport, server_workspace_api),
   "UPLOAD_MANAGER": (server_state, server_asgi, server_workspace_api),
-  "SESSIONS": (server_state, server_identity),
+  "SESSIONS": (server_state, server_admin, server_identity),
   "SETTINGS": (server_state, server_asgi, server_transport),
   "add_audit": (server_state, server_admin, server_identity, server_recharge, server_recharge_api, server_workspace_api),
   "provision_micu": (server_state, server_identity),

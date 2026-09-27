@@ -20,6 +20,18 @@ from server_state import CHAT_RUNTIME, FRONTEND_DIR, UPLOAD_MANAGER, WECHAT_RECO
 from server_recharge import reconcile_wechat_orders
 from server_transport import RequestStopped, SSE_BROKER
 from server_utils import ascii_download_filename, static_content_type
+from workspace_store import StorageError, parse_query
+
+
+def cors_headers(request: Request) -> dict[str, str]:
+  origin = request.headers.get("origin")
+  if not origin:
+    return {}
+  return {
+    "Access-Control-Allow-Origin": origin,
+    "Access-Control-Allow-Credentials": "true",
+    "Vary": "Origin",
+  }
 
 
 class AsgiHandler(Handler):

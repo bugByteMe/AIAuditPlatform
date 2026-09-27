@@ -59,6 +59,7 @@ class RechargeHandlerMixin:
       summary[record["status"]] = summary.get(record["status"], 0) + 1
     return {**parsed, "records": classified, "summary": summary}
 
+  @staticmethod
   def public_recharge_import(result: dict) -> dict:
     records = []
     for source in result["records"]:
@@ -248,4 +249,3 @@ class RechargeHandlerMixin:
       raise WechatPayError("unknown_wechat_order", "recharge order was not found")
     apply_wechat_transaction(order, transaction)
     self.write_binary(b"", "application/json; charset=utf-8", HTTPStatus.NO_CONTENT, no_store=True)
-

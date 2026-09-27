@@ -3,6 +3,7 @@ from __future__ import annotations
 import threading
 import time
 import secrets
+import hmac
 from decimal import Decimal
 from pathlib import Path
 
