@@ -4,26 +4,18 @@ import json
 import os
 import secrets
 import threading
-import time
 from copy import deepcopy
 from pathlib import Path
 
+from account_common import new_id, timestamp
+from account_recharge import AccountRechargeMixin
 from config import SETTINGS
-
 
 SCHEMA_VERSION = 7
 DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
-def _new_id(prefix: str) -> str:
-  return f"{prefix}_{secrets.token_urlsafe(12)}"
-
-
-def _timestamp() -> str:
-  return time.strftime("%Y-%m-%d %H:%M:%S")
-
-
-class AccountStore:
+class AccountStore(AccountRechargeMixin):
   def __init__(self, path: Path, seed_users: dict[str, dict]):
     self.path = path
     self.seed_users = deepcopy(seed_users)
@@ -57,7 +49,7 @@ class AccountStore:
     migrated_users: dict[str, dict] = {}
     groups: dict[str, dict] = {}
     group_ids_by_name: dict[str, str] = {}
-    now = _timestamp()
+    now = timestamp()
     for storage_key, source in (users or {}).items():
       user = deepcopy(source)
       username = str(user.get("username") or storage_key)
@@ -67,7 +59,7 @@ class AccountStore:
         normalized = group_name.casefold()
         group_id = group_ids_by_name.get(normalized, "")
         if not group_id:
-          group_id = _new_id("grp")
+          group_id = new_id("grp")
           group_ids_by_name[normalized] = group_id
           groups[group_id] = {
             "id": group_id,
@@ -78,7 +70,7 @@ class AccountStore:
           }
       user.update(
         {
-          "id": str(user.get("id") or _new_id("usr")),
+          "id": str(user.get("id") or new_id("usr")),
           "username": username,
           "groupId": str(user.get("groupId") or group_id),
           "group": group_name,
@@ -177,11 +169,11 @@ class AccountStore:
       raise ValueError("group name is required")
     if self.group_by_name(name):
       raise ValueError("group name already exists")
-    group_id = _new_id("grp")
+    group_id = new_id("grp")
     group = {
       "id": group_id,
       "name": name,
-      "createdAt": _timestamp(),
+      "createdAt": timestamp(),
       "diskLimitBytes": None,
       "liveRunLimit": DEFAULT_GROUP_LIVE_RUN_LIMIT,
     }
@@ -222,11 +214,11 @@ class AccountStore:
     if new_group_name:
       if self.group_by_name(new_group_name):
         raise ValueError("group name already exists")
-      group_id = _new_id("grp")
+      group_id = new_id("grp")
       new_group = {
         "id": group_id,
         "name": new_group_name,
-        "createdAt": _timestamp(),
+        "createdAt": timestamp(),
         "diskLimitBytes": None,
         "liveRunLimit": DEFAULT_GROUP_LIVE_RUN_LIMIT,
       }
@@ -237,13 +229,13 @@ class AccountStore:
         raise ValueError("group not found")
 
     created = []
-    now = _timestamp()
+    now = timestamp()
     used_ids = {str(user.get("id") or "") for user in self.users.values()} | set(self.pending_accounts)
     used_tokens = {str(account.get("inviteToken") or "") for account in self.pending_accounts.values()}
     for _ in range(count):
-      user_id = _new_id("usr")
+      user_id = new_id("usr")
       while user_id in used_ids:
-        user_id = _new_id("usr")
+        user_id = new_id("usr")
       used_ids.add(user_id)
       token = secrets.token_urlsafe(32)
       while token in used_tokens:
@@ -330,7 +322,7 @@ class AccountStore:
         "displayName": username,
         "passwordHash": password_hash,
         "status": "active",
-        "activatedAt": _timestamp(),
+        "activatedAt": timestamp(),
         "providerMode": provider_mode,
         "micu": deepcopy(micu or {}),
         "customCodex": deepcopy(codex or {}),
@@ -360,7 +352,7 @@ class AccountStore:
       raise ValueError("invite is not pending")
     account["status"] = "revoked"
     account["inviteToken"] = ""
-    account["revokedAt"] = _timestamp()
+    account["revokedAt"] = timestamp()
     self.save()
     return account
 
@@ -401,142 +393,6 @@ class AccountStore:
     if user:
       return user
     return next((item for item in self.users.values() if item.get("id") == identifier), None)
-
-  def recharge_payment(self, key: str) -> dict | None:
-    with self.lock:
-      payment = self.recharge_payments.get(key)
-      return deepcopy(payment) if payment else None
-
-  def create_recharge_order(self, order: dict) -> dict:
-    with self.lock:
-      order_id = str(order.get("id") or "")
-      out_trade_no = str(order.get("outTradeNo") or "")
-      if not order_id or not out_trade_no:
-        raise ValueError("recharge order id and merchant order number are required")
-      if order_id in self.recharge_orders or any(item.get("outTradeNo") == out_trade_no for item in self.recharge_orders.values()):
-        raise ValueError("recharge order already exists")
-      self.recharge_orders[order_id] = deepcopy(order)
-      try:
-        self.save()
-      except Exception:
-        self.recharge_orders.pop(order_id, None)
-        raise
-      return deepcopy(self.recharge_orders[order_id])
-
-  def recharge_order(self, identifier: str) -> dict | None:
-    with self.lock:
-      order = self.recharge_orders.get(identifier)
-      if not order:
-        order = next((item for item in self.recharge_orders.values() if item.get("outTradeNo") == identifier), None)
-      return deepcopy(order) if order else None
-
-  def update_recharge_order(self, order_id: str, **updates) -> dict:
-    with self.lock:
-      order = self.recharge_orders.get(order_id)
-      if not order:
-        raise ValueError("recharge order was not found")
-      previous = deepcopy(order)
-      order.update(deepcopy(updates))
-      try:
-        self.save()
-      except Exception:
-        self.recharge_orders[order_id] = previous
-        raise
-      return deepcopy(order)
-
-  def transition_recharge_order(self, order_id: str, allowed_statuses: set[str], **updates) -> dict:
-    with self.lock:
-      order = self.recharge_orders.get(order_id)
-      if not order:
-        raise ValueError("recharge order was not found")
-      if str(order.get("status") or "") not in allowed_statuses:
-        return deepcopy(order)
-      previous = deepcopy(order)
-      order.update(deepcopy(updates))
-      try:
-        self.save()
-      except Exception:
-        self.recharge_orders[order_id] = previous
-        raise
-      return deepcopy(order)
-
-  def pending_recharge_orders(self) -> list[dict]:
-    with self.lock:
-      return [
-        deepcopy(order)
-        for order in self.recharge_orders.values()
-        if order.get("status") in {"creating", "pending", "paid"}
-      ]
-
-  def reserve_recharge_payment(self, key: str, payment: dict) -> tuple[bool, dict]:
-    with self.lock:
-      existing = self.recharge_payments.get(key)
-      if existing:
-        return False, deepcopy(existing)
-      reserved = {**deepcopy(payment), "id": f"rch_{key[:16]}", "status": "processing", "reason": ""}
-      self.recharge_payments[key] = reserved
-      try:
-        self.save()
-      except Exception:
-        self.recharge_payments.pop(key, None)
-        raise
-      return True, deepcopy(reserved)
-
-  def finish_recharge_payment(self, key: str, *, status: str, reason: str = "", binding_updates: dict | None = None) -> dict:
-    with self.lock:
-      payment = self.recharge_payments.get(key)
-      if not payment:
-        raise ValueError("recharge payment reservation was not found")
-      previous_payment = deepcopy(payment)
-      user = self.user_by_identifier(str(payment.get("userId") or ""))
-      previous_binding = deepcopy((user or {}).get("micu") or {})
-      payment.update({"status": status, "reason": reason, "completedAt": _timestamp()})
-      if binding_updates:
-        if not user:
-          raise ValueError("recharge account was not found")
-        user.setdefault("micu", {}).update(deepcopy(binding_updates))
-      try:
-        self.save()
-      except Exception:
-        self.recharge_payments[key] = previous_payment
-        if user is not None:
-          user["micu"] = previous_binding
-        raise
-      return deepcopy(payment)
-
-  def recharge_history(self, user_id: str) -> list[dict]:
-    with self.lock:
-      rows = [
-        {
-          "id": payment["id"],
-          "paidAt": payment["paidAt"],
-          "amountCny": payment["amountCny"],
-          "importedAt": payment.get("importedAt") or payment.get("recordedAt") or payment.get("completedAt") or "",
-        }
-        for payment in self.recharge_payments.values()
-        if payment.get("status") == "applied" and str(payment.get("userId") or "") == user_id
-      ]
-      return sorted(rows, key=lambda item: (item["paidAt"], item["importedAt"], item["id"]), reverse=True)
-
-  def _tombstone_recharge_payments(self, user_ids: set[str]) -> None:
-    for payment in self.recharge_payments.values():
-      if str(payment.get("userId") or "") not in user_ids:
-        continue
-      payment.clear()
-      payment.update({"id": f"rch_deleted_{secrets.token_hex(6)}", "status": "used", "deletedAt": _timestamp()})
-
-  def _tombstone_recharge_orders(self, user_ids: set[str]) -> None:
-    for order in self.recharge_orders.values():
-      if str(order.get("userId") or "") not in user_ids:
-        continue
-      retained = {
-        "id": order.get("id"),
-        "outTradeNo": order.get("outTradeNo"),
-        "status": "deleted",
-        "deletedAt": _timestamp(),
-      }
-      order.clear()
-      order.update(retained)
 
   def remove_accounts(self, user_ids: set[str]) -> tuple[list[dict], list[dict]]:
     with self.lock:

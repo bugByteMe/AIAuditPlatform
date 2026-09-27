@@ -55,7 +55,7 @@ class WorkspaceStoreTest(unittest.TestCase):
       ],
     )
 
-  @mock.patch("workspace_store.PostgresWorkspaceDatabase")
+  @mock.patch("workspace_core.PostgresWorkspaceDatabase")
   def test_database_url_selects_postgres_workspace_metadata(self, postgres_database) -> None:
     root = Path(self.tempdir.name) / "postgres_workspace_storage"
     store = WorkspaceStore(root, "postgresql+psycopg://database.example/audit")
