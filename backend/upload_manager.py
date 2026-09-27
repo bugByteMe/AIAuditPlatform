@@ -11,6 +11,8 @@ from config import SETTINGS
 from worker_upload import TrackedReader, WorkerUploadStore, _atomic_json
 from workspace_store import StorageError, generated_id, normalize_relative_path
 
+ACTIVE_UPLOAD_STATES = {"uploading", "processing", "committing"}
+
 class UploadManager:
   def __init__(self, workspace_store, worker_registry=None, settings=SETTINGS, audit_callback=None):
     self.store = workspace_store

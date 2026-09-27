@@ -217,6 +217,16 @@ class UploadManagerTest(unittest.TestCase):
     result = self.wait_for_commit(upload["id"])
     self.assertEqual((self.store.workspace_path(result["workspaceId"]) / "resume.txt").read_bytes(), b"abcdef")
 
+  def test_remote_manager_recovery_recognizes_persisted_active_upload(self):
+    upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "resume.txt", "size": 6}]})
+    registry = SingleUploadRegistry()
+
+    restarted = UploadManager(self.store, worker_registry=registry, settings=settings())
+
+    session = restarted.load()["sessions"][upload["id"]]
+    self.assertEqual(session["status"], "uploading")
+    self.assertFalse(session["reservationHeld"])
+
   def test_append_commit_replaces_file_and_releases_lock(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
     upload = self.manager.create(USER, {"mode": "append", "workspaceId": workspace["id"], "files": [{"path": "a.txt", "size": 3}]})
