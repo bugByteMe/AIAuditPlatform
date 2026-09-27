@@ -228,6 +228,7 @@ async def app_lifespan(_app: FastAPI):
 app = FastAPI(lifespan=app_lifespan)
 
 
+@app.options("/{request_path:path}")
 async def options_route(request: Request, request_path: str) -> Response:
   return Response(
     status_code=HTTPStatus.NO_CONTENT,
@@ -240,6 +241,7 @@ async def options_route(request: Request, request_path: str) -> Response:
   )
 
 
+@app.api_route("/{request_path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
 async def application_route(request: Request, request_path: str) -> Response:
   path = "/" + request_path
   if request.method == "GET" and path.startswith("/api/workspaces/") and path.endswith("/chat/stream"):

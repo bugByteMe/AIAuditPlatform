@@ -9,7 +9,7 @@ import time
 from compute_nodes import WorkerUnavailable
 from config import SETTINGS
 from worker_upload import TrackedReader, WorkerUploadStore, _atomic_json
-from workspace_store import StorageError
+from workspace_store import StorageError, normalize_relative_path
 
 class UploadManager:
   def __init__(self, workspace_store, worker_registry=None, settings=SETTINGS, audit_callback=None):

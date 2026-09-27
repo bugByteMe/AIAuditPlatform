@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import hmac
 import json
 import secrets
 import time
@@ -172,4 +173,3 @@ class IdentityHandlerMixin:
     if not base_url.startswith(("http://", "https://")):
       raise ValueError("codex base URL must start with http:// or https://")
     return {"baseUrl": base_url.rstrip("/"), "apiKey": api_key}
-

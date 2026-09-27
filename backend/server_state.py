@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import threading
 import time
+import secrets
 from decimal import Decimal
 from pathlib import Path
 
@@ -328,4 +329,3 @@ def create_user_session(user: dict, audit_event: str, registration_digest: str =
 
   add_audit(username, audit_event)
   return token, None
-

@@ -8,10 +8,10 @@ from workspace_core import WorkspaceCoreMixin
 from workspace_files import WorkspaceFilesMixin
 from workspace_lifecycle import WorkspaceLifecycleMixin
 from workspace_snapshots import WorkspaceSnapshotMixin
+from postgres_workspace_database import PostgresWorkspaceDatabase
 
 
 class WorkspaceStore(WorkspaceCoreMixin, WorkspaceLifecycleMixin, WorkspaceSnapshotMixin, WorkspaceFilesMixin):
   """Facade preserving the workspace store API across focused services."""
 
   pass
-
