@@ -78,6 +78,9 @@ class WorkspaceDatabase:
           PRIMARY KEY (workspace_id, session_id)
         );
 
+        CREATE INDEX IF NOT EXISTS workspaces_shared_group
+          ON workspaces(shared, group_name);
+
         CREATE TABLE IF NOT EXISTS snapshots (
           id TEXT PRIMARY KEY,
           workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -140,6 +143,71 @@ class WorkspaceDatabase:
       "mtime": int(row["mtime"]),
       "mode": int(row["mode"]),
     }
+
+  @staticmethod
+  def _workspace_entry(row: sqlite3.Row) -> dict:
+    workspace = {
+      "id": row["id"], "name": row["name"], "owner": row["owner"], "group": row["group_name"],
+      "shared": bool(row["shared"]), "locked": bool(row["locked"]),
+      "runLockEnabled": bool(row["run_lock_enabled"]), "created": row["created"], "updated": row["updated"],
+      "fileCount": int(row["file_count"]), "sizeBytes": int(row["size_bytes"]),
+      "latestSnapshotId": row["latest_snapshot_id"], "initialSnapshotId": row["initial_snapshot_id"],
+      "sourceWorkspaceId": row["source_workspace_id"], "sourceSnapshotId": row["source_snapshot_id"],
+      "sessions": [],
+    }
+    if row["active_run_id"]:
+      workspace["activeRunId"] = row["active_run_id"]
+    if row["active_upload_id"]:
+      workspace["activeUploadId"] = row["active_upload_id"]
+    return workspace
+
+  def get_workspace_header(self, workspace_id: str) -> dict | None:
+    with closing(self.connect()) as connection:
+      row = connection.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+      return self._workspace_entry(row) if row else None
+
+  def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool) -> list[dict]:
+    with closing(self.connect()) as connection:
+      if system_admin:
+        rows = connection.execute("SELECT * FROM workspaces ORDER BY updated DESC")
+      else:
+        rows = connection.execute(
+          "SELECT * FROM workspaces WHERE owner = ? OR (shared = 1 AND group_name <> '' AND group_name = ?) ORDER BY updated DESC",
+          (username, group_name),
+        )
+      return [self._workspace_entry(row) for row in rows]
+
+  def load_workspace(self, workspace_id: str) -> dict | None:
+    """Load the compatibility metadata view for one workspace only."""
+    with closing(self.connect()) as connection:
+      row = connection.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+      if not row:
+        return None
+      workspace = self._workspace_entry(row)
+      workspace["sessions"] = [
+        {"id": item["session_id"]}
+        for item in connection.execute(
+          "SELECT session_id FROM workspace_sessions WHERE workspace_id = ? ORDER BY ordinal", (workspace_id,)
+        )
+      ]
+      snapshots = {
+        item["id"]: {
+          "id": item["id"], "workspaceId": item["workspace_id"], "parentSnapshotId": item["parent_snapshot_id"],
+          "reason": item["reason"], "actor": item["actor"], "created": item["created"], "manifestPath": None, "files": {},
+        }
+        for item in connection.execute("SELECT * FROM snapshots WHERE workspace_id = ?", (workspace_id,))
+      }
+      latest = snapshots.get(workspace.get("latestSnapshotId"))
+      if latest is not None:
+        for item in connection.execute(
+          "SELECT * FROM workspace_file_versions WHERE workspace_id = ? AND slot = 'current' ORDER BY path", (workspace_id,)
+        ):
+          latest["files"][item["path"]] = self._file_entry(item)
+      artifacts = [{
+        "path": item["path"], "status": item["status"], "sizeBytes": int(item["size_bytes"]),
+        "size": item["size_label"], "checksum": item["checksum"], "blob": item["blob"], "timestamp": item["timestamp"],
+      } for item in connection.execute("SELECT * FROM artifacts WHERE workspace_id = ? ORDER BY path", (workspace_id,))]
+      return {"workspaces": {workspace_id: workspace}, "snapshots": snapshots, "artifacts": {workspace_id: artifacts}}
 
   def load(self) -> dict:
     with closing(self.connect()) as connection, connection:

@@ -30,6 +30,11 @@ import { isEventStreamNearTop } from "./js/scrollPosition.js";
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 let activeChatStream = null;
 let activePollTimer = null;
+let activeStreamWatchdog = null;
+let activeReconnectTimer = null;
+let activeStreamLastActivity = 0;
+let activeReconnectAttempts = 0;
+let fallbackPollingActive = false;
 let activeStreamGeneration = 0;
 let workerStatusLoading = false;
 let registrationSubmitting = false;
@@ -77,6 +82,13 @@ function stopChatStream() {
   activeChatStream = null;
   if (activePollTimer) window.clearTimeout(activePollTimer);
   activePollTimer = null;
+  if (activeStreamWatchdog) window.clearInterval(activeStreamWatchdog);
+  activeStreamWatchdog = null;
+  if (activeReconnectTimer) window.clearTimeout(activeReconnectTimer);
+  activeReconnectTimer = null;
+  activeStreamLastActivity = 0;
+  activeReconnectAttempts = 0;
+  fallbackPollingActive = false;
 }
 
 function sortTreeFiles(items) {
@@ -272,14 +284,16 @@ function clearOperationProgress() {
 }
 
 async function refreshWorkspaceById(workspaceId) {
-  if (!workspaceId) return;
+  if (!workspaceId) return null;
   try {
     const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
     initializeEventCursors([result.workspace], state.chatLastEventIds);
     replaceWorkspace(result.workspace);
     renderDynamic();
+    return result.workspace;
   } catch (error) {
     showToast(error.message || t("toast.workspaceLoadFailed"));
+    return null;
   }
 }
 
@@ -293,14 +307,14 @@ function chatPollInterval() {
 }
 
 function scheduleChatPoll(workspaceId, sessionId, generation, delay = chatPollInterval()) {
-  if (generation !== activeStreamGeneration || activePollTimer) return;
+  if (generation !== activeStreamGeneration || !fallbackPollingActive || activePollTimer) return;
   activePollTimer = window.setTimeout(() => {
     activePollTimer = null;
     pollChatEvents(workspaceId, sessionId, generation);
   }, delay);
 }
 
-async function pollChatEvents(workspaceId, sessionId, generation) {
+async function pollChatEvents(workspaceId, sessionId, generation, reschedule = true) {
   if (generation !== activeStreamGeneration) return;
   const after = state.chatLastEventIds[sessionId] || 0;
   try {
@@ -329,18 +343,53 @@ async function pollChatEvents(workspaceId, sessionId, generation) {
   } catch (error) {
     console.warn("Chat event reconciliation failed", error);
   }
-  scheduleChatPoll(workspaceId, sessionId, generation);
+  if (reschedule) scheduleChatPoll(workspaceId, sessionId, generation);
 }
 
-function startChatStreamForSession(workspaceId, sessionId) {
-  if (!workspaceId || !sessionId) return;
-  stopChatStream();
-  const generation = activeStreamGeneration;
+function markStreamHealthy(workspaceId, sessionId, generation) {
+  if (generation !== activeStreamGeneration) return;
+  activeStreamLastActivity = Date.now();
+  activeReconnectAttempts = 0;
+  fallbackPollingActive = false;
+  if (activePollTimer) window.clearTimeout(activePollTimer);
+  activePollTimer = null;
+  if (activeReconnectTimer) window.clearTimeout(activeReconnectTimer);
+  activeReconnectTimer = null;
+}
+
+function scheduleStreamReconnect(workspaceId, sessionId, generation) {
+  if (generation !== activeStreamGeneration || activeReconnectTimer || activeChatStream) return;
+  const base = Math.max(500, Number(state.runtimeConfig.sseRetryMs) || 2_000);
+  const delay = Math.min(30_000, base * (2 ** Math.min(activeReconnectAttempts, 4)));
+  activeReconnectAttempts += 1;
+  activeReconnectTimer = window.setTimeout(() => {
+    activeReconnectTimer = null;
+    openChatStream(workspaceId, sessionId, generation);
+  }, delay);
+}
+
+function activatePollingFallback(workspaceId, sessionId, generation) {
+  if (generation !== activeStreamGeneration) return;
+  fallbackPollingActive = true;
+  if (activeChatStream) activeChatStream.close();
+  activeChatStream = null;
+  scheduleChatPoll(workspaceId, sessionId, generation, 0);
+  scheduleStreamReconnect(workspaceId, sessionId, generation);
+}
+
+function openChatStream(workspaceId, sessionId, generation) {
+  if (generation !== activeStreamGeneration || activeChatStream) return;
   const after = state.chatLastEventIds[sessionId] || 0;
   const url = authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/stream?${new URLSearchParams({ sessionId, after }).toString()}`);
   activeChatStream = new EventSource(url, { withCredentials: true });
+  activeChatStream.onopen = () => {
+    if (generation !== activeStreamGeneration) return;
+    markStreamHealthy(workspaceId, sessionId, generation);
+    pollChatEvents(workspaceId, sessionId, generation, false);
+  };
   const handleEvent = (event) => {
     if (generation !== activeStreamGeneration) return;
+    markStreamHealthy(workspaceId, sessionId, generation);
     let payload;
     try {
       payload = JSON.parse(event.data);
@@ -360,15 +409,43 @@ function startChatStreamForSession(workspaceId, sessionId) {
   ["user", "queued", "starting", "running", "stopping", "assistant", "command", "websearch", "tool", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
     activeChatStream.addEventListener(type, handleEvent);
   });
+  activeChatStream.addEventListener("heartbeat", (event) => {
+    if (generation !== activeStreamGeneration) return;
+    markStreamHealthy(workspaceId, sessionId, generation);
+    try {
+      const heartbeat = JSON.parse(event.data);
+      const session = findSessionById(state.workspaces, workspaceId, sessionId);
+      if (session && heartbeat.sessionStatus && session.status !== heartbeat.sessionStatus) {
+        session.status = heartbeat.sessionStatus;
+        renderDynamic();
+      }
+      if (TERMINAL_CHAT_STATES.has(heartbeat.sessionStatus)) {
+        stopChatStream();
+        refreshWorkspaceById(workspaceId);
+        refreshCurrentUser();
+      }
+    } catch (error) {
+      console.warn("Invalid chat heartbeat payload", error);
+    }
+  });
   activeChatStream.onerror = () => {
     if (generation !== activeStreamGeneration) return;
-    if (activeChatStream) activeChatStream.close();
-    activeChatStream = null;
-    if (activePollTimer) window.clearTimeout(activePollTimer);
-    activePollTimer = null;
-    scheduleChatPoll(workspaceId, sessionId, generation, 0);
+    activatePollingFallback(workspaceId, sessionId, generation);
   };
-  scheduleChatPoll(workspaceId, sessionId, generation);
+}
+
+function startChatStreamForSession(workspaceId, sessionId) {
+  if (!workspaceId || !sessionId) return;
+  stopChatStream();
+  const generation = activeStreamGeneration;
+  activeStreamLastActivity = Date.now();
+  openChatStream(workspaceId, sessionId, generation);
+  activeStreamWatchdog = window.setInterval(() => {
+    if (generation !== activeStreamGeneration) return;
+    if (!fallbackPollingActive && Date.now() - activeStreamLastActivity > 15_000) {
+      activatePollingFallback(workspaceId, sessionId, generation);
+    }
+  }, 5_000);
 }
 
 async function loadLatestSessionHistory(workspaceId, session) {
@@ -443,8 +520,9 @@ async function loadWorkspaces() {
     state.workspacesLoaded = true;
     state.selectedWorkspace = Math.min(state.selectedWorkspace, Math.max(state.workspaces.length - 1, 0));
     state.selectedSession = 0;
-    const workspace = safeCurrentWorkspace();
-    resetFileTreeState(workspace);
+    const workspaceId = safeCurrentWorkspace()?.id;
+    if (workspaceId) await refreshWorkspaceById(workspaceId);
+    resetFileTreeState(safeCurrentWorkspace());
   } catch (error) {
     console.error("Failed to load workspaces", error);
     state.workspaces = [];
@@ -920,11 +998,15 @@ async function deleteAdminGroup(groupId) {
   }
 }
 
-function selectWorkspace(index) {
+async function selectWorkspace(index) {
   state.selectedWorkspace = Number(index);
   state.selectedSession = 0;
-  const workspace = safeCurrentWorkspace();
-  resetFileTreeState(workspace);
+  stopChatStream();
+  const workspaceId = safeCurrentWorkspace()?.id;
+  renderDynamic();
+  if (workspaceId && !safeCurrentWorkspace()?.detailLoaded) await refreshWorkspaceById(workspaceId);
+  if (safeCurrentWorkspace()?.id !== workspaceId) return;
+  resetFileTreeState(safeCurrentWorkspace());
   renderDynamic();
   maybeStartChatStream();
 }

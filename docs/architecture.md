@@ -45,6 +45,13 @@ coordination is scoped by workspace, group, session, or run. Production stores
 both chat and workspace metadata in PostgreSQL. Large workspace files and
 content-addressed blobs remain on shared storage.
 
+Read APIs avoid reconstructing the global workspace catalog. Workspace lists
+query only accessible workspace headers, a selected workspace loads only its
+own session references/current snapshot/artifacts, and chat event authorization
+uses a single workspace-header lookup. The compatibility catalog loader remains
+for staged mutation paths that still commit a complete metadata view; it is not
+used by list, detail, session-list, event-poll, or SSE hot paths.
+
 ### Metadata Database
 
 The database stores product metadata, not large workspace file payloads:

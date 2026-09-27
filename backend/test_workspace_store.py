@@ -290,6 +290,20 @@ class WorkspaceStoreTest(unittest.TestCase):
     with self.assertRaises(StorageError):
       self.store.get_workspace(private["id"], SAME_GROUP)
 
+  def test_workspace_list_is_summary_only_and_detail_is_loaded_by_id(self) -> None:
+    workspace = self.create_workspace(shared=True)
+    with mock.patch.object(self.store, "load_metadata", side_effect=AssertionError("catalog load")):
+      summaries = self.store.list_workspaces(OWNER)
+      header = self.store.get_workspace(workspace["id"], OWNER)
+      detail = self.store.public_workspace(header)
+    summary = next(item for item in summaries if item["id"] == workspace["id"])
+    self.assertFalse(summary["detailLoaded"])
+    self.assertEqual(summary["sessions"], [])
+    self.assertEqual(summary["artifacts"], [])
+    self.assertEqual(summary["files"], [])
+    self.assertTrue(detail["detailLoaded"])
+    self.assertTrue(detail["files"])
+
   def test_delete_workspace_requires_owner_or_admin_and_removes_active_files(self) -> None:
     workspace = self.create_workspace(shared=True)
     blobs = {

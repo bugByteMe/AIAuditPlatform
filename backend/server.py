@@ -1616,13 +1616,19 @@ class Handler(BaseHTTPRequestHandler):
     while idle_rounds < SETTINGS.sse_max_idle_rounds:
       events = CHAT_RUNTIME.wait_events(workspace_id, session_id, last_id, user, timeout=SETTINGS.sse_wait_timeout_seconds)
       if not events:
-        if CHAT_RUNTIME.public_session(session_id).get("status") in {"completed", "stopped", "failed"}:
-          return
+        public_session = CHAT_RUNTIME.public_session(session_id, include_events=False)
+        heartbeat = {
+          "sessionId": session_id,
+          "latestEventId": last_id,
+          "sessionStatus": public_session.get("status"),
+        }
         idle_rounds += 1
         try:
-          self.wfile.write(b": keepalive\n\n")
+          self.wfile.write(f"event: heartbeat\ndata: {json.dumps(heartbeat, ensure_ascii=False)}\n\n".encode("utf-8"))
           self.wfile.flush()
         except (BrokenPipeError, ConnectionResetError, ConnectionAbortedError):
+          return
+        if public_session.get("status") in {"completed", "stopped", "failed"}:
           return
         continue
       idle_rounds = 0
@@ -1934,7 +1940,14 @@ async def sse_response(request: Request) -> Response:
           await asyncio.wait_for(signal.wait(), timeout=SETTINGS.sse_wait_timeout_seconds)
           continue
         except asyncio.TimeoutError:
-          if (await run_in_threadpool(CHAT_RUNTIME.public_session, session_id)).get("status") in {"completed", "stopped", "failed"}:
+          public_session = await run_in_threadpool(CHAT_RUNTIME.public_session, session_id, False)
+          heartbeat = {
+            "sessionId": session_id,
+            "latestEventId": last_id,
+            "sessionStatus": public_session.get("status"),
+          }
+          yield f"event: heartbeat\ndata: {json.dumps(heartbeat, ensure_ascii=False)}\n\n".encode("utf-8")
+          if public_session.get("status") in {"completed", "stopped", "failed"}:
             return
           idle_rounds += 1
           yield b": keepalive\n\n"

@@ -528,9 +528,10 @@ class ChatRuntime:
       workspace.setdefault("sessions", [])
 
   def list_sessions(self, workspace_id: str, user: dict) -> list[dict]:
-    metadata = self.store.load_metadata()
+    self.store.get_workspace(workspace_id, user)
+    metadata = self.store.load_workspace_metadata(workspace_id)
     self.ensure_chat_metadata(metadata)
-    workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+    workspace = metadata["workspaces"][workspace_id]
     return [self.public_session(session["id"], include_events=False) for session in workspace.get("sessions", []) if self.chat_store.get_session(session["id"])]
 
   def create_session(self, workspace_id: str, user: dict, title: str | None = None) -> dict:
@@ -846,9 +847,7 @@ class ChatRuntime:
   ) -> list[dict]:
     # Reads are independent and indexed. They must not queue behind run
     # lifecycle changes or terminal workspace scans.
-    metadata = self.store.load_metadata()
-    self.ensure_chat_metadata(metadata)
-    self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+    self.store.get_workspace(workspace_id, user)
     session = self.chat_store.get_session(session_id)
     if not session or session["workspaceId"] != workspace_id:
       raise StorageError("not_found", "chat session not found")

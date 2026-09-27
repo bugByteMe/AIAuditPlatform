@@ -73,7 +73,10 @@ class FrontendAssetTests(unittest.TestCase):
     def test_chat_realtime_reconciliation_is_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         chat_events_source = (FRONTEND_ROOT / "js" / "chatEvents.js").read_text(encoding="utf-8")
-        self.assertIn("scheduleChatPoll(workspaceId, sessionId, generation)", app_source)
+        self.assertIn("fallbackPollingActive", app_source)
+        self.assertIn('addEventListener("heartbeat"', app_source)
+        self.assertIn("pollChatEvents(workspaceId, sessionId, generation, false)", app_source)
+        self.assertIn("activatePollingFallback(workspaceId, sessionId, generation)", app_source)
         self.assertIn("findSessionById(state.workspaces, workspaceId, sessionId)", app_source)
         self.assertIn("initializeEventCursors(state.workspaces", app_source)
         self.assertIn('before,\n      limit: "200"', app_source)
@@ -81,6 +84,11 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("mergeHistoricalEvents(current, events)", app_source)
         self.assertIn("export function mergeHistoricalEvents", chat_events_source)
         self.assertIn("sessionEventCursor", chat_events_source)
+
+    def test_workspace_catalog_uses_summary_then_lazy_detail(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        self.assertIn("if (workspaceId) await refreshWorkspaceById(workspaceId)", app_source)
+        self.assertIn("!safeCurrentWorkspace()?.detailLoaded", app_source)
 
     def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

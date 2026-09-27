@@ -69,7 +69,8 @@
 - Fresh storage initializes SQLite metadata, while populated legacy `metadata.json` storage fails safely with no mutation.
 - A worker failure during a streamed upload releases its compute reservation immediately, preserves resumable offsets, and returns a retryable service-unavailable response after consuming the request body.
 - Concurrent chunks for different files can stream into one upload without blocking behind a process-wide worker upload lock.
-- Workspace list and detail responses include no more than the first three file-tree levels.
+- Workspace listing is permission-filtered in the database, returns summary-only rows, and does not invoke the compatibility full-catalog loader.
+- Selecting a workspace lazily fetches its scoped detail; detail responses include no more than the first three file-tree levels.
 - Third-level folders identify unloaded children, and expanding a folder returns only its direct children after permission and path-containment checks.
 - Chat and workspace-management trees reuse loaded descendants, preserve independent collapse state, and invalidate deeper nodes after a snapshot change.
 - Folder selections download or delete the complete server-resolved subtree without transferring the subtree listing first.
@@ -83,6 +84,9 @@
 - Stop transitions through `stopping` and creates a resumable checkpoint.
 - Resume creates a new run from the latest checkpoint.
 - Completion creates a final snapshot and artifact records.
+- Chat event reads authorize with a targeted workspace lookup and never invoke the compatibility full-catalog loader.
+- Healthy SSE uses named heartbeats plus one connection-time cursor reconciliation without a parallel polling loop.
+- A stalled or failed SSE connection activates cursor polling while reconnecting, then disables polling after SSE becomes healthy.
 - Container failure records an error and preserves recoverable state when possible.
 
 ## Real-Time Streaming

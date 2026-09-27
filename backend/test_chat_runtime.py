@@ -87,7 +87,9 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual(runtime.chat_store.get_run(result["run"]["id"])["status"], "completed")
     self.assertEqual(self.users["li.review"]["usedTokens"], 10)
     self.assertTrue(any(event[0] == "assistant" for event in session["events"]))
-    reloaded_workspace = self.store.list_workspaces(self.users["li.review"])[0]
+    reloaded_workspace = self.store.public_workspace(
+      self.store.get_workspace(workspace["id"], self.users["li.review"])
+    )
     reloaded_session = next(item for item in reloaded_workspace["sessions"] if item["id"] == result["session"]["id"])
     self.assertEqual(reloaded_session["events"], [])
 
@@ -613,6 +615,15 @@ class ChatRuntimeTest(unittest.TestCase):
     self.assertEqual([event["id"] for event in latest], [10, 11, 12])
     older = runtime.events(workspace["id"], session["id"], 0, self.users["li.review"], before=10, limit=3)
     self.assertEqual([event["id"] for event in older], [7, 8, 9])
+
+  def test_event_cursor_reads_do_not_load_the_workspace_catalog(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"])
+    runtime.append_event(session["id"], "progress", "indexed event", None)
+    with patch.object(self.store, "load_metadata", side_effect=AssertionError("catalog load on event read")):
+      events = runtime.events(workspace["id"], session["id"], 0, self.users["li.review"])
+    self.assertEqual([event["message"] for event in events], ["indexed event"])
 
   def test_default_model_is_gpt_56_sol(self) -> None:
     workspace = self.create_workspace()

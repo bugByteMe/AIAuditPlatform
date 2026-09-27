@@ -6,7 +6,16 @@ A workspace is a managed directory on the shared filesystem. It contains the fil
 
 ## File Tree Loading
 
-Workspace list and detail responses include only the first three levels of the file tree. Folders on the third level report whether they contain children but do not include those children. The chat file explorer and workspace-management tree render these three levels by default and request only the direct children of a deeper folder when the user expands it.
+The workspace list response contains summary rows only: identity, ownership,
+sharing/lock state, current size/count, update time, and latest snapshot ID. It
+does not include session references, artifacts, or file-tree nodes. After a
+workspace is selected, the browser requests that workspace's detail by ID; the
+backend loads only its current metadata and returns the first three levels of
+the file tree. Switching to another summary lazily loads that workspace's
+detail. Folders on the third level report whether they contain children but do
+not include those children. The chat file explorer and workspace-management
+tree render these three levels by default and request only the direct children
+of a deeper folder when the user expands it.
 
 File-tree nodes expose their workspace-relative path, absolute display level, type, and whether folder children exist and are already present in the response. The authenticated file-tree endpoint accepts a normalized folder path and a bounded depth; current browser expansion requests use a depth of one. Backend traversal stops at the requested depth and applies the same workspace permission and path-containment checks as file access.
 

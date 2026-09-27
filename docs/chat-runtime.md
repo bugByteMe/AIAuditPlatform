@@ -121,7 +121,17 @@ The implementation uses the statically configured compute-node inventory wheneve
 
 The worker persists its run state and event stream beneath `<workspace_storage_dir>/worker_state/<node_id>/`. Start is idempotent by run ID, and the control plane can reconnect from its last persisted event cursor after restart. A worker restart marks its interrupted work failed rather than launching a duplicate container. The lease watchdog stops orphaned containers when the control plane disappears. After the control plane has checkpointed a terminal run, it acknowledges the result so the worker removes its duplicate run/event record.
 
-Live updates use Server-Sent Events. A lightweight event-list reconciliation poll runs alongside SSE so proxy buffering, silent connection stalls, or reconnect races cannot leave the visible history stale. Both paths merge by persisted event ID into the session they were opened for, and terminal status is returned even when no new event payload is available. Event rendering follows new output only when the reader is already near the bottom; otherwise it preserves the visible event anchor across refreshes.
+Live updates use Server-Sent Events. The server sends named heartbeat events
+with the latest cursor and session status during idle periods. A successful SSE
+open performs one cursor-based reconciliation request; continuous polling is
+disabled while heartbeats or events are arriving. If the stream errors or the
+browser sees no activity for 15 seconds, bounded cursor polling starts as a
+fallback while SSE reconnects with exponential backoff, and stops as soon as
+the stream is healthy again. Both paths merge by persisted event ID into the
+session they were opened for, and terminal status is returned even when no new
+event payload is available. Event rendering follows new output only when the
+reader is already near the bottom; otherwise it preserves the visible event
+anchor across refreshes.
 
 Workspace responses contain chat-session summaries rather than embedded
 transcripts. The browser fetches the latest selected-session page separately.
@@ -130,6 +140,11 @@ are bounded to at most 500 rows. Production chat metadata is stored in
 PostgreSQL; development and isolated tests use the same normalized schema in
 SQLite. Legacy JSON and JSONL records are imported once into empty normalized
 tables and retained for rollback.
+
+Every event read authorizes against a targeted workspace-header query and then
+reads the requested session/event rows. It does not load snapshots, file
+versions, artifacts, unrelated workspaces, or unrelated session references.
+The session-list endpoint loads only the selected workspace's references.
 
 When the reader scrolls to the top of the selected chat, the browser requests
 the next older page with the smallest raw event ID as the `before` cursor. It

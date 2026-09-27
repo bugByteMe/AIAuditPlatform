@@ -65,6 +65,16 @@ class ServerStreamingTest(unittest.TestCase):
     self.assertIn("retry:", response.text)
     self.assertIn("id: 1\nevent: completed\n", response.text)
 
+  def test_fastapi_sse_emits_terminal_heartbeat_without_polling(self) -> None:
+    with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch(
+      "server.CHAT_RUNTIME", FakeChatRuntime()
+    ), patch("server.SETTINGS.sse_wait_timeout_seconds", 0.01):
+      response = client.get("/api/workspaces/workspace-1/chat/stream?sessionId=chat-1&after=9")
+    self.assertEqual(response.status_code, 200)
+    self.assertIn("event: heartbeat\n", response.text)
+    self.assertIn('"latestEventId": 9', response.text)
+    self.assertIn('"sessionStatus": "completed"', response.text)
+
   def test_fastapi_upload_chunk_uses_stream_reader(self) -> None:
     manager = FakeUploadManager()
     with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch(

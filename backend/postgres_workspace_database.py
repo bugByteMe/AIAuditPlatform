@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, create_engine, delete, insert, select, update
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, and_, create_engine, delete, insert, or_, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
@@ -51,6 +51,7 @@ class PostgresWorkspaceDatabase:
       Column("checksum", String(128), nullable=False), Column("blob", Text), Column("timestamp", String(32), nullable=False),
     )
     Index("workspace_sessions_order", self.workspace_sessions.c.workspace_id, self.workspace_sessions.c.ordinal)
+    Index("workspaces_shared_group", self.workspaces.c.shared, self.workspaces.c.group_name)
     self.metadata.create_all(self.engine)
 
   @staticmethod
@@ -74,6 +75,72 @@ class PostgresWorkspaceDatabase:
       "source_workspace_id": workspace.get("sourceWorkspaceId"), "source_snapshot_id": workspace.get("sourceSnapshotId"),
       "active_run_id": workspace.get("activeRunId"), "active_upload_id": workspace.get("activeUploadId"),
     }
+
+  @staticmethod
+  def _workspace_entry(row) -> dict:
+    item = {
+      "id": row["id"], "name": row["name"], "owner": row["owner"], "group": row["group_name"],
+      "shared": bool(row["shared"]), "locked": bool(row["locked"]), "runLockEnabled": bool(row["run_lock_enabled"]),
+      "created": row["created"], "updated": row["updated"], "fileCount": int(row["file_count"]),
+      "sizeBytes": int(row["size_bytes"]), "latestSnapshotId": row["latest_snapshot_id"],
+      "initialSnapshotId": row["initial_snapshot_id"], "sourceWorkspaceId": row["source_workspace_id"],
+      "sourceSnapshotId": row["source_snapshot_id"], "sessions": [],
+    }
+    if row["active_run_id"]:
+      item["activeRunId"] = row["active_run_id"]
+    if row["active_upload_id"]:
+      item["activeUploadId"] = row["active_upload_id"]
+    return item
+
+  def get_workspace_header(self, workspace_id: str) -> dict | None:
+    with self.engine.connect() as connection:
+      row = connection.execute(select(self.workspaces).where(self.workspaces.c.id == workspace_id)).mappings().first()
+      return self._workspace_entry(row) if row else None
+
+  def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool) -> list[dict]:
+    statement = select(self.workspaces)
+    if not system_admin:
+      statement = statement.where(or_(
+        self.workspaces.c.owner == username,
+        and_(self.workspaces.c.shared.is_(True), self.workspaces.c.group_name != "", self.workspaces.c.group_name == group_name),
+      ))
+    statement = statement.order_by(self.workspaces.c.updated.desc())
+    with self.engine.connect() as connection:
+      return [self._workspace_entry(row) for row in connection.execute(statement).mappings()]
+
+  def load_workspace(self, workspace_id: str) -> dict | None:
+    """Load the compatibility metadata view for one workspace only."""
+    with self.engine.connect() as connection:
+      row = connection.execute(select(self.workspaces).where(self.workspaces.c.id == workspace_id)).mappings().first()
+      if not row:
+        return None
+      workspace = self._workspace_entry(row)
+      workspace["sessions"] = [
+        {"id": item["session_id"]}
+        for item in connection.execute(
+          select(self.workspace_sessions).where(self.workspace_sessions.c.workspace_id == workspace_id).order_by(self.workspace_sessions.c.ordinal)
+        ).mappings()
+      ]
+      snapshots = {
+        item["id"]: {
+          "id": item["id"], "workspaceId": item["workspace_id"], "parentSnapshotId": item["parent_snapshot_id"],
+          "reason": item["reason"], "actor": item["actor"], "created": item["created"], "manifestPath": None, "files": {},
+        }
+        for item in connection.execute(select(self.snapshots).where(self.snapshots.c.workspace_id == workspace_id)).mappings()
+      }
+      latest = snapshots.get(workspace.get("latestSnapshotId"))
+      if latest is not None:
+        for item in connection.execute(select(self.file_version_rows).where(
+          self.file_version_rows.c.workspace_id == workspace_id, self.file_version_rows.c.slot == "current",
+        ).order_by(self.file_version_rows.c.path)).mappings():
+          latest["files"][item["path"]] = self._entry(item)
+      artifacts = [{
+        "path": item["path"], "status": item["status"], "sizeBytes": int(item["size_bytes"]),
+        "size": item["size_label"], "checksum": item["checksum"], "blob": item["blob"], "timestamp": item["timestamp"],
+      } for item in connection.execute(
+        select(self.artifacts).where(self.artifacts.c.workspace_id == workspace_id).order_by(self.artifacts.c.path)
+      ).mappings()]
+      return {"workspaces": {workspace_id: workspace}, "snapshots": snapshots, "artifacts": {workspace_id: artifacts}}
 
   def load(self) -> dict:
     with self.engine.connect() as connection:

@@ -189,6 +189,15 @@ class WorkspaceStore:
     except (sqlite3.DatabaseError, RuntimeError) as exc:
       raise StorageError("metadata_corrupt", "workspace metadata database is corrupt or unsupported") from exc
 
+  def load_workspace_metadata(self, workspace_id: str) -> dict:
+    try:
+      metadata = self.database.load_workspace(workspace_id)
+    except (sqlite3.DatabaseError, RuntimeError) as exc:
+      raise StorageError("metadata_corrupt", "workspace metadata database is corrupt or unsupported") from exc
+    if metadata is None:
+      raise StorageError("not_found", "workspace not found")
+    return metadata
+
   def save_metadata(self, metadata: dict) -> None:
     candidates = self.database.save(metadata)
     for digest in candidates:
@@ -219,24 +228,37 @@ class WorkspaceStore:
     return bool(workspace.get("shared")) and workspace.get("group") and workspace.get("group") == user.get("group")
 
   def list_workspaces(self, user: dict) -> list[dict]:
-    metadata = self.load_metadata()
-    items = []
-    for workspace in metadata["workspaces"].values():
-      if self.user_can_access(user, workspace):
-        items.append(self.public_workspace(workspace, metadata))
-    return sorted(items, key=lambda item: item["updated"], reverse=True)
+    workspaces = self.database.list_workspace_headers(
+      username=str(user.get("username") or ""),
+      group_name=str(user.get("group") or ""),
+      system_admin=user.get("role") == "system_admin",
+    )
+    return [self.public_workspace_summary(workspace) for workspace in workspaces]
 
   def get_workspace(self, workspace_id: str, user: dict) -> dict:
-    metadata = self.load_metadata()
-    workspace = metadata["workspaces"].get(workspace_id)
+    workspace = self.database.get_workspace_header(workspace_id)
     if not workspace:
       raise StorageError("not_found", "workspace not found")
     if not self.user_can_access(user, workspace):
       raise StorageError("forbidden", "workspace access denied")
     return workspace
 
+  def public_workspace_summary(self, workspace: dict) -> dict:
+    return {
+      "id": workspace["id"], "name": workspace["name"], "owner": workspace["owner"],
+      "group": workspace.get("group", ""), "fileCount": workspace.get("fileCount", 0),
+      "sizeBytes": workspace.get("sizeBytes", 0), "size": human_size(workspace.get("sizeBytes", 0)),
+      "updated": workspace["updated"], "shared": bool(workspace.get("shared")),
+      "locked": bool(workspace.get("locked")), "runLockEnabled": bool(workspace.get("runLockEnabled")),
+      "activeRunCount": 1 if workspace.get("activeRunId") else 0,
+      "latestSnapshotId": workspace.get("latestSnapshotId"),
+      "sessions": [], "artifacts": [], "files": [], "detailLoaded": False,
+    }
+
   def public_workspace(self, workspace: dict, metadata: dict | None = None) -> dict:
-    metadata = metadata or self.load_metadata()
+    if metadata is None:
+      metadata = self.load_workspace_metadata(workspace["id"])
+      workspace = metadata["workspaces"][workspace["id"]]
     workspace_id = workspace["id"]
     sessions = self.public_workspace_sessions(workspace, metadata)
     active_run_count = sum(1 for session in sessions if session.get("status") in {"queued", "starting", "running", "stopping"})
@@ -257,6 +279,7 @@ class WorkspaceStore:
       "sessions": sessions,
       "artifacts": self.workspace_artifacts(workspace_id, metadata),
       "files": self.file_tree(workspace_id),
+      "detailLoaded": True,
     }
 
   def public_workspace_sessions(self, workspace: dict, metadata: dict) -> list[dict]:
@@ -784,7 +807,7 @@ class WorkspaceStore:
       return changes
 
   def workspace_artifacts(self, workspace_id: str, metadata: dict | None = None) -> list[dict]:
-    metadata = metadata or self.load_metadata()
+    metadata = metadata or self.load_workspace_metadata(workspace_id)
     if workspace_id in metadata.get("artifacts", {}):
       return metadata["artifacts"][workspace_id]
     workspace = metadata["workspaces"].get(workspace_id)
@@ -917,8 +940,9 @@ class WorkspaceStore:
     return cached_pdf
 
   def build_download_zip(self, workspace_id: str, user: dict, mode: str, selected_paths: list[str]) -> tuple[str, bytes]:
-    metadata = self.load_metadata()
-    workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+    self.get_workspace(workspace_id, user)
+    metadata = self.load_workspace_metadata(workspace_id)
+    workspace = metadata["workspaces"][workspace_id]
     mode = mode or "changes"
     if mode not in {"changes", "full"}:
       raise StorageError("bad_request", "mode must be changes or full")
