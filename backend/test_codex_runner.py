@@ -1,4 +1,6 @@
 from chat_runtime_test_support import *
+from sqlalchemy import event as sqlalchemy_event
+from unittest.mock import Mock
 
 
 class CodexRunnerTest(ChatRuntimeTestBase):
@@ -116,6 +118,100 @@ class CodexRunnerTest(ChatRuntimeTestBase):
     self.assertEqual(self.users["li.review"]["usedTokens"], 125)
     self.assertEqual(run["tokens"], 125)
     self.assertEqual(run["cachedInputTokens"], 80)
+
+  def test_remote_runner_event_is_committed_once_with_cursor_and_usage(self) -> None:
+    workspace = self.create_workspace()
+    save_users = Mock()
+    usage = {
+      "type": "usage", "message": "usage", "tokens": 125,
+      "inputTokens": 100, "cachedInputTokens": 80, "outputTokens": 25,
+      "_workerEventId": 7,
+    }
+    runtime = ChatRuntime(self.store, self.users, FakeRunner([usage, usage]), save_users=save_users)
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Count remote usage"})
+    self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "completed")
+
+    run = runtime.chat_store.get_run(result["run"]["id"])
+    events = runtime.chat_store.events(result["session"]["id"])
+    usage_events = [event for event in events if event["type"] == "usage"]
+    self.assertEqual(len(usage_events), 1)
+    self.assertEqual(run["workerEventCursor"], 7)
+    self.assertEqual(run["tokens"], 125)
+    self.assertEqual(self.users["li.review"]["usedTokens"], 125)
+    self.assertNotIn("tokens", usage_events[0])
+    save_users.assert_not_called()
+
+  def test_runner_event_transaction_rolls_back_as_one_unit(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Atomic event")
+    run = {
+      "id": "run_atomic", "workspaceId": workspace["id"], "sessionId": session["id"],
+      "user": "li.review", "groupId": "", "status": "running", "updated": "before",
+      "workerEventCursor": 0, "tokens": 0,
+    }
+    runtime.chat_store.save_run(run)
+
+    with patch.object(runtime.chat_store, "_update_session", side_effect=RuntimeError("forced rollback")):
+      with self.assertRaisesRegex(RuntimeError, "forced rollback"):
+        runtime.record_runner_event(
+          run["id"], {"type": "usage", "message": "usage", "tokens": 10, "_workerEventId": 1}
+        )
+
+    self.assertEqual(runtime.chat_store.events(session["id"]), [])
+    self.assertEqual(runtime.chat_store.get_run(run["id"])["workerEventCursor"], 0)
+    self.assertEqual(runtime.chat_store.ensure_user_usage("li.review"), 0)
+
+  def test_runner_event_uses_one_transaction_and_notifies_after_commit(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "One transaction")
+    run = {
+      "id": "run_transaction", "workspaceId": workspace["id"], "sessionId": session["id"],
+      "user": "li.review", "groupId": "", "status": "running", "updated": "before",
+      "workerEventCursor": 0, "tokens": 0,
+    }
+    runtime.chat_store.save_run(run)
+    transactions = {"begin": 0, "commit": 0, "rollback": 0}
+    notified = []
+
+    def count_begin(_connection):
+      transactions["begin"] += 1
+
+    def count_commit(_connection):
+      transactions["commit"] += 1
+
+    def count_rollback(_connection):
+      transactions["rollback"] += 1
+
+    engine = runtime.chat_store.engine
+    sqlalchemy_event.listen(engine, "begin", count_begin)
+    sqlalchemy_event.listen(engine, "commit", count_commit)
+    sqlalchemy_event.listen(engine, "rollback", count_rollback)
+    runtime.set_event_callback(lambda _session_id, _event: notified.append(transactions["commit"]))
+    try:
+      runtime.record_runner_event(
+        run["id"], {"type": "assistant", "message": "done", "_workerEventId": 1}
+      )
+    finally:
+      sqlalchemy_event.remove(engine, "begin", count_begin)
+      sqlalchemy_event.remove(engine, "commit", count_commit)
+      sqlalchemy_event.remove(engine, "rollback", count_rollback)
+
+    self.assertEqual(transactions, {"begin": 1, "commit": 1, "rollback": 0})
+    self.assertEqual(notified, [1])
+
+  def test_database_usage_total_hydrates_users_after_restart(self) -> None:
+    workspace = self.create_workspace()
+    first_runtime = ChatRuntime(self.store, self.users, FakeRunner([
+      {"type": "usage", "message": "usage", "tokens": 25},
+    ]))
+    result = first_runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Persist usage"})
+    self.wait_for_status(first_runtime, workspace["id"], result["session"]["id"], "completed")
+
+    reloaded_users = {"li.review": {**deepcopy(OWNER), "usedTokens": 0}}
+    ChatRuntime(self.store, reloaded_users, FakeRunner())
+    self.assertEqual(reloaded_users["li.review"]["usedTokens"], 25)
 
   def test_run_is_rejected_when_group_disk_limit_is_reached(self) -> None:
     user = self.users["li.review"]
@@ -240,4 +336,3 @@ class CodexRunnerTest(ChatRuntimeTestBase):
     self.assertIsNone(runtime.chat_store.get_session(result["session"]["id"]))
     self.assertIsNone(runtime.chat_store.get_run(result["run"]["id"]))
     self.assertFalse((codex_root / "li.review").exists())
-

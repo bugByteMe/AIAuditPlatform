@@ -32,6 +32,8 @@ class ChatRuntime(ChatSessionMixin, ChatExecutionMixin):
     self.groups = groups if groups is not None else {}
     self.runner = runner or DockerCodexRunner()
     self.chat_store = chat_store or ChatStore(store.root / "chat", SETTINGS.database_url)
+    for username, user in self.users.items():
+      user["usedTokens"] = self.chat_store.ensure_user_usage(username, int(user.get("usedTokens") or 0))
     self.save_users = save_users
     self.budget_checker = budget_checker
     self.capacity = max(1, capacity)

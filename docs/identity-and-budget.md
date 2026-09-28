@@ -55,7 +55,7 @@ Token usage should be recorded by:
 - Model.
 - Time range.
 
-The current runtime persists the input, cached-input, output, and total token counts reported by Codex's terminal `turn.completed` event. Total reported usage is input plus output tokens because cached-input tokens are already included in the input count. Run totals roll up into the chat session and the owning user's cumulative `usedTokens`. This counter is reporting-only and is never used to authorize a run.
+The current runtime persists the input, cached-input, output, and total token counts reported by Codex's terminal `turn.completed` event. Total reported usage is input plus output tokens because cached-input tokens are already included in the input count. Run totals roll up atomically into the chat session and the owning user's database-backed cumulative `usedTokens`; existing account totals seed that table once and are hydrated from it after restart. Duplicate worker deliveries add no usage. This counter is reporting-only and is never used to authorize a run.
 
 ## Enforcement
 
