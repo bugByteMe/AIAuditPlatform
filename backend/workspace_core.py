@@ -53,7 +53,6 @@ class WorkspaceCoreMixin:
     self.account_provider = provider
 
   def usage_summaries(self, metadata: dict | None = None) -> tuple[dict[str, dict], dict[str, dict]]:
-    metadata = metadata or self.load_metadata()
     users, groups = self.account_provider() if self.account_provider else ({}, {})
     user_usage = {
       str(user.get("id") or username): {"diskUsageBytes": 0, "workspaceCount": 0}
@@ -68,7 +67,12 @@ class WorkspaceCoreMixin:
       group_id = str(user.get("groupId") or "")
       if group_id in group_usage:
         group_usage[group_id]["userCount"] += 1
-    for workspace in metadata.get("workspaces", {}).values():
+    workspaces = (
+      metadata.get("workspaces", {}).values()
+      if metadata is not None
+      else self.database.list_workspace_headers(username="", group_name="", system_admin=True)
+    )
+    for workspace in workspaces:
       owner = users_by_name.get(str(workspace.get("owner") or ""))
       if not owner:
         continue
@@ -96,7 +100,9 @@ class WorkspaceCoreMixin:
       return
     if not require_available and int(added_bytes) <= 0:
       return
-    _, group_usage = self.usage_summaries(metadata)
+    # Quota admission must use every workspace summary. A scoped mutation view
+    # intentionally contains only one workspace and would undercount the group.
+    _, group_usage = self.usage_summaries()
     used = int(group_usage.get(group_id, {}).get("diskUsageBytes") or 0)
     projected = used + max(0, int(added_bytes))
     if projected > int(limit) or (require_available and projected >= int(limit)):
@@ -113,6 +119,7 @@ class WorkspaceCoreMixin:
       path.mkdir(parents=True, exist_ok=True)
 
   def load_metadata(self) -> dict:
+    """Read-only compatibility catalog for diagnostics and migration tests."""
     self.ensure_layout()
     try:
       return self.database.load()
@@ -128,14 +135,43 @@ class WorkspaceCoreMixin:
       raise StorageError("not_found", "workspace not found")
     return metadata
 
-  def save_metadata(self, metadata: dict) -> None:
-    candidates = self.database.save(metadata)
+  def save_workspace_metadata(self, workspace_id: str, metadata: dict) -> None:
+    workspace = metadata.get("workspaces", {}).get(workspace_id)
+    if workspace is None:
+      raise StorageError("not_found", "workspace not found")
+    try:
+      candidates = self.database.save_workspace_state(
+        workspace,
+        {
+          snapshot_id: snapshot
+          for snapshot_id, snapshot in metadata.get("snapshots", {}).items()
+          if snapshot.get("workspaceId") == workspace_id
+        },
+        list(metadata.get("artifacts", {}).get(workspace_id, [])),
+      )
+    except RuntimeError as exc:
+      if str(exc) == "workspace_changed":
+        raise StorageError("workspace_changed", "workspace changed during metadata commit") from exc
+      raise
+    self.cleanup_unreferenced_blobs(candidates)
+
+  def delete_workspace_metadata(self, workspace_id: str) -> dict | None:
+    workspace, candidates = self.database.delete_workspace_state(workspace_id)
+    self.cleanup_unreferenced_blobs(candidates)
+    return workspace
+
+  def cleanup_unreferenced_blobs(self, candidates: set[str]) -> None:
+    candidates -= self.database.referenced_blobs(candidates) if candidates else set()
     for digest in candidates:
       blob = self.blob_path(digest)
       if blob.exists():
         blob.unlink()
     self.prune_preview_blobs(candidates)
     self.remove_empty_blob_directories()
+
+  @staticmethod
+  def empty_metadata() -> dict:
+    return {"workspaces": {}, "snapshots": {}, "artifacts": {}}
 
   def save_workspace_lifecycle(self, workspace: dict) -> None:
     with self.lock:

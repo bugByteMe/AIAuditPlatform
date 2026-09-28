@@ -57,7 +57,7 @@ class WorkspaceLifecycleMixin:
       shutil.rmtree(workspace_path, ignore_errors=True)
       raise
 
-    metadata = self.load_metadata()
+    metadata = self.empty_metadata()
     timestamp = now_string()
     workspace = {
       "id": workspace_id,
@@ -84,12 +84,12 @@ class WorkspaceLifecycleMixin:
     workspace["fileCount"] = len(snapshot["files"])
     workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
     workspace["sessions"] = []
-    self.save_metadata(metadata)
+    self.save_workspace_metadata(workspace_id, metadata)
     return self.public_workspace(workspace, metadata)
 
   def update_workspace(self, workspace_id: str, user: dict, payload: dict) -> dict:
     with self.lock:
-      metadata = self.load_metadata()
+      metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if workspace["owner"] != user["username"] and user["role"] != "system_admin":
         raise StorageError("forbidden", "only the owner or system admin can update workspace settings")
@@ -109,7 +109,7 @@ class WorkspaceLifecycleMixin:
             raise StorageError("workspace_locked", "exclusive run lock cannot change while workspace jobs are active")
           workspace["runLockEnabled"] = requested
       workspace["updated"] = now_string()
-      self.save_metadata(metadata)
+      self.save_workspace_metadata(workspace_id, metadata)
       return self.public_workspace(workspace, metadata)
 
   def user_can_mutate_workspace(self, user: dict, workspace: dict) -> bool:
@@ -117,7 +117,7 @@ class WorkspaceLifecycleMixin:
 
   def add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
     with self.lock:
-      metadata = self.load_metadata()
+      metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       workspace_path = self.workspace_path(workspace_id)
       sizes = {
@@ -135,7 +135,7 @@ class WorkspaceLifecycleMixin:
   def _add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
     if not files:
       raise StorageError("empty_upload", "at least one uploaded file is required")
-    metadata = self.load_metadata()
+    metadata = self.load_workspace_metadata(workspace_id)
     workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
     if not self.user_can_mutate_workspace(user, workspace):
       raise StorageError("forbidden", "only the owner or system admin can add files")
@@ -168,12 +168,12 @@ class WorkspaceLifecycleMixin:
       destination.write_bytes(item.content)
 
     self.refresh_workspace_metadata(metadata, workspace, "file_upload", user["username"])
-    self.save_metadata(metadata)
+    self.save_workspace_metadata(workspace_id, metadata)
     return self.public_workspace(workspace, metadata)
 
   def delete_workspace_path(self, workspace_id: str, user: dict, raw_path: str) -> dict:
     with self.lock:
-      metadata = self.load_metadata()
+      metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if not self.user_can_mutate_workspace(user, workspace):
         raise StorageError("forbidden", "only the owner or system admin can delete files")
@@ -191,7 +191,7 @@ class WorkspaceLifecycleMixin:
         target.unlink()
 
       self.refresh_workspace_metadata(metadata, workspace, "file_delete", user["username"])
-      self.save_metadata(metadata)
+      self.save_workspace_metadata(workspace_id, metadata)
       return self.public_workspace(workspace, metadata)
 
   def refresh_workspace_metadata(self, metadata: dict, workspace: dict, reason: str, actor: str) -> dict:
@@ -221,17 +221,20 @@ class WorkspaceLifecycleMixin:
   def commit_prepared_upload(self, user: dict, session: dict, result: dict) -> dict:
     """Commit a worker-prepared manifest while keeping metadata control-plane-owned."""
     with self.lock:
-      metadata = self.load_metadata()
       workspace_id = str(session["workspaceId"])
+      if session["mode"] == "create":
+        existing = self.database.get_workspace_header(workspace_id)
+        if existing:
+          return self.public_workspace(existing)
+        metadata = self.empty_metadata()
+      else:
+        metadata = self.load_workspace_metadata(workspace_id)
       snapshot_id = str(result.get("snapshotId") or session["snapshotId"])
       files = result.get("files") or {}
       if len(files) > MAX_FILE_COUNT or sum(int(entry.get("size") or 0) for entry in files.values()) > MAX_WORKSPACE_BYTES:
         raise StorageError("workspace_too_large", "prepared upload exceeds workspace limits")
       timestamp = now_string()
       if session["mode"] == "create":
-        workspace = metadata["workspaces"].get(workspace_id)
-        if workspace:
-          return self.public_workspace(workspace, metadata)
         workspace = {
           "id": workspace_id,
           "name": str(session.get("name") or "Untitled workspace"),
@@ -284,12 +287,12 @@ class WorkspaceLifecycleMixin:
         metadata["artifacts"][workspace_id] = []
       else:
         metadata["artifacts"][workspace_id] = self.diff_snapshots(parent, snapshot)
-      self.save_metadata(metadata)
+      self.save_workspace_metadata(workspace_id, metadata)
       return self.public_workspace(workspace, metadata)
 
   def fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
     with self.lock:
-      metadata = self.load_metadata()
+      metadata = self.load_workspace_metadata(workspace_id)
       source = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if source.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
@@ -297,12 +300,12 @@ class WorkspaceLifecycleMixin:
       return self._fork_workspace(workspace_id, user, name)
 
   def _fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
-    metadata = self.load_metadata()
-    source = self.get_workspace_from_metadata(metadata, workspace_id, user)
+    source_metadata = self.load_workspace_metadata(workspace_id)
+    source = self.get_workspace_from_metadata(source_metadata, workspace_id, user)
     source_snapshot_id = source.get("latestSnapshotId")
     if not source_snapshot_id:
       raise StorageError("bad_request", "source workspace has no snapshot")
-    source_snapshot = metadata["snapshots"][source_snapshot_id]
+    source_snapshot = source_metadata["snapshots"][source_snapshot_id]
     fork_id = generated_id("ws")
     fork_path = self.workspace_path(fork_id)
     fork_path.mkdir(parents=True, exist_ok=False)
@@ -326,6 +329,7 @@ class WorkspaceLifecycleMixin:
       "sourceSnapshotId": source_snapshot_id,
       "sessions": [],
     }
+    metadata = self.empty_metadata()
     metadata["workspaces"][fork_id] = fork
     snapshot = self.create_snapshot(metadata, fork_id, "fork", user["username"], None)
     fork["initialSnapshotId"] = snapshot["id"]
@@ -333,12 +337,12 @@ class WorkspaceLifecycleMixin:
     fork["fileCount"] = len(snapshot["files"])
     fork["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
     fork["sessions"] = []
-    self.save_metadata(metadata)
+    self.save_workspace_metadata(fork_id, metadata)
     return self.public_workspace(fork, metadata)
 
   def delete_workspace(self, workspace_id: str, user: dict) -> dict:
     with self.lock:
-      metadata = self.load_metadata()
+      metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if workspace["owner"] != user["username"] and user["role"] != "system_admin":
         raise StorageError("forbidden", "only the owner or system admin can delete a workspace")
@@ -351,12 +355,7 @@ class WorkspaceLifecycleMixin:
         "owner": workspace["owner"],
         "deleted": now_string(),
       }
-      metadata["workspaces"].pop(workspace_id, None)
-      metadata.get("artifacts", {}).pop(workspace_id, None)
-      for snapshot_id, snapshot in list(metadata.get("snapshots", {}).items()):
-        if snapshot.get("workspaceId") == workspace_id:
-          metadata["snapshots"].pop(snapshot_id, None)
-      self.save_metadata(metadata)
+      self.delete_workspace_metadata(workspace_id)
       shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
       shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
       self.garbage_collect_blobs()
@@ -364,21 +363,21 @@ class WorkspaceLifecycleMixin:
 
   def delete_owned_workspaces(self, usernames: set[str]) -> list[dict]:
     with self.lock:
-      metadata = self.load_metadata()
-      targets = [workspace_id for workspace_id, workspace in metadata.get("workspaces", {}).items() if workspace.get("owner") in usernames]
+      targets = [
+        workspace["id"]
+        for workspace in self.database.list_workspace_headers(username="", group_name="", system_admin=True)
+        if workspace.get("owner") in usernames
+      ]
       deleted = []
       for workspace_id in targets:
-        workspace = metadata["workspaces"].pop(workspace_id)
+        workspace = self.database.get_workspace_header(workspace_id)
+        if not workspace:
+          continue
         deleted.append({"id": workspace_id, "name": workspace.get("name", ""), "owner": workspace.get("owner", "")})
-        metadata.get("artifacts", {}).pop(workspace_id, None)
-        for snapshot_id, snapshot in list(metadata.get("snapshots", {}).items()):
-          if snapshot.get("workspaceId") != workspace_id:
-            continue
-          metadata["snapshots"].pop(snapshot_id, None)
+        self.delete_workspace_metadata(workspace_id)
         shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
         shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
-      self.save_metadata(metadata)
-      self.garbage_collect_blobs(metadata)
+      self.garbage_collect_blobs()
       return deleted
 
   def garbage_collect_blobs(self, metadata: dict | None = None) -> int:

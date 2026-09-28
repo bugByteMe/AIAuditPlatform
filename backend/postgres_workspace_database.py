@@ -198,24 +198,29 @@ class PostgresWorkspaceDatabase:
     if rows:
       connection.execute(insert(self.workspace_sessions), rows)
 
-  def save(self, metadata: dict) -> set[str]:
+  def save_workspace_state(self, workspace: dict, snapshots: dict, artifacts: list[dict]) -> set[str]:
+    """Persist one workspace without reading or rewriting unrelated rows."""
+    workspace_id = str(workspace["id"])
     with self.engine.begin() as connection:
-      old_references = set(connection.execute(select(self.file_version_rows.c.blob).distinct()).scalars())
-      existing = set(connection.execute(select(self.workspaces.c.id)).scalars())
-      incoming = set(metadata.get("workspaces", {}))
-      if existing - incoming:
-        connection.execute(delete(self.workspaces).where(self.workspaces.c.id.in_(existing - incoming)))
-      for workspace in metadata.get("workspaces", {}).values():
-        values = self._workspace_values(workspace)
-        statement = pg_insert(self.workspaces).values(**values)
-        connection.execute(statement.on_conflict_do_update(index_elements=[self.workspaces.c.id], set_={key: value for key, value in values.items() if key != "id"}))
-        self._replace_sessions(connection, workspace)
-      existing_snapshots = set(connection.execute(select(self.snapshots.c.id)).scalars())
-      incoming_snapshots = set(metadata.get("snapshots", {}))
-      if existing_snapshots - incoming_snapshots:
-        connection.execute(delete(self.snapshots).where(self.snapshots.c.id.in_(existing_snapshots - incoming_snapshots)))
-      for snapshot in metadata.get("snapshots", {}).values():
-        if snapshot.get("workspaceId") not in incoming:
+      existing = connection.execute(
+        select(self.workspaces.c.latest_snapshot_id).where(self.workspaces.c.id == workspace_id).with_for_update()
+      ).first()
+      latest_id = workspace.get("latestSnapshotId")
+      if existing and latest_id != existing.latest_snapshot_id:
+        expected_parent = (snapshots.get(latest_id) or {}).get("parentSnapshotId")
+        if expected_parent != existing.latest_snapshot_id:
+          raise RuntimeError("workspace_changed")
+      old_references = set(connection.execute(
+        select(self.file_version_rows.c.blob).where(self.file_version_rows.c.workspace_id == workspace_id).distinct()
+      ).scalars())
+      values = self._workspace_values(workspace)
+      statement = pg_insert(self.workspaces).values(**values)
+      connection.execute(statement.on_conflict_do_update(
+        index_elements=[self.workspaces.c.id], set_={key: value for key, value in values.items() if key != "id"},
+      ))
+      self._replace_sessions(connection, workspace)
+      for snapshot in snapshots.values():
+        if snapshot.get("workspaceId") != workspace_id:
           continue
         values = {
           "id": snapshot["id"], "workspace_id": snapshot["workspaceId"], "parent_snapshot_id": snapshot.get("parentSnapshotId"),
@@ -224,49 +229,60 @@ class PostgresWorkspaceDatabase:
         }
         statement = pg_insert(self.snapshots).values(**values)
         connection.execute(statement.on_conflict_do_update(index_elements=[self.snapshots.c.id], set_={key: value for key, value in values.items() if key != "id"}))
-      for workspace_id, workspace in metadata.get("workspaces", {}).items():
-        rows = list(connection.execute(select(self.file_version_rows).where(self.file_version_rows.c.workspace_id == workspace_id)).mappings())
-        current = {row["path"]: row for row in rows if row["slot"] == "current"}
-        previous = {row["path"]: row for row in rows if row["slot"] == "previous"}
-        latest_id = workspace.get("latestSnapshotId")
-        if latest_id and latest_id not in metadata.get("snapshots", {}):
-          raise ValueError(f"workspace {workspace_id} references a missing latest checkpoint")
-        latest_snapshot = metadata.get("snapshots", {}).get(latest_id) or {"files": {}}
-        incoming_files = latest_snapshot.get("files") or {}
-        next_rows = []
-        for path in set(current) | set(previous) | set(incoming_files):
-          old_current, old_previous, new_current = current.get(path), previous.get(path), incoming_files.get(path)
-          retained = None
-          if new_current is not None:
-            next_rows.append(self._file_values(workspace_id, path, "current", new_current, latest_id))
-            if old_current and old_current["blob"] == new_current.get("blob"):
-              retained = old_previous
-            elif old_current:
-              retained = old_current
-            elif old_previous and old_previous["blob"] != new_current.get("blob"):
-              retained = old_previous
-          else:
-            retained = old_current or old_previous
-          if retained is not None:
-            next_rows.append(self._file_values(workspace_id, path, "previous", retained, retained.get("snapshot_id")))
-        connection.execute(delete(self.file_version_rows).where(self.file_version_rows.c.workspace_id == workspace_id))
-        if next_rows:
-          connection.execute(insert(self.file_version_rows), next_rows)
-      connection.execute(delete(self.artifacts))
-      artifact_rows = []
-      for workspace_id, items in metadata.get("artifacts", {}).items():
-        if workspace_id not in incoming:
-          continue
-        for item in items:
-          artifact_rows.append({
-            "workspace_id": workspace_id, "path": str(item["path"]), "status": str(item["status"]),
-            "size_bytes": int(item.get("sizeBytes") or 0), "size_label": str(item.get("size") or "0 B"),
-            "checksum": str(item.get("checksum") or ""), "blob": item.get("blob"), "timestamp": str(item.get("timestamp") or ""),
-          })
+      rows = list(connection.execute(
+        select(self.file_version_rows).where(self.file_version_rows.c.workspace_id == workspace_id)
+      ).mappings())
+      current = {row["path"]: row for row in rows if row["slot"] == "current"}
+      previous = {row["path"]: row for row in rows if row["slot"] == "previous"}
+      if latest_id and latest_id not in snapshots:
+        raise ValueError(f"workspace {workspace_id} references a missing latest checkpoint")
+      latest_snapshot = snapshots.get(latest_id) or {"files": {}}
+      incoming_files = latest_snapshot.get("files") or {}
+      next_rows = []
+      for path in set(current) | set(previous) | set(incoming_files):
+        old_current, old_previous, new_current = current.get(path), previous.get(path), incoming_files.get(path)
+        retained = None
+        if new_current is not None:
+          next_rows.append(self._file_values(workspace_id, path, "current", new_current, latest_id))
+          if old_current and old_current["blob"] == new_current.get("blob"):
+            retained = old_previous
+          elif old_current:
+            retained = old_current
+          elif old_previous and old_previous["blob"] != new_current.get("blob"):
+            retained = old_previous
+        else:
+          retained = old_current or old_previous
+        if retained is not None:
+          next_rows.append(self._file_values(workspace_id, path, "previous", retained, retained.get("snapshot_id")))
+      connection.execute(delete(self.file_version_rows).where(self.file_version_rows.c.workspace_id == workspace_id))
+      if next_rows:
+        connection.execute(insert(self.file_version_rows), next_rows)
+      connection.execute(delete(self.artifacts).where(self.artifacts.c.workspace_id == workspace_id))
+      artifact_rows = [{
+        "workspace_id": workspace_id, "path": str(item["path"]), "status": str(item["status"]),
+        "size_bytes": int(item.get("sizeBytes") or 0), "size_label": str(item.get("size") or "0 B"),
+        "checksum": str(item.get("checksum") or ""), "blob": item.get("blob"),
+        "timestamp": str(item.get("timestamp") or ""),
+      } for item in artifacts]
       if artifact_rows:
         connection.execute(insert(self.artifacts), artifact_rows)
-      new_references = set(connection.execute(select(self.file_version_rows.c.blob).distinct()).scalars())
+      new_references = set(connection.execute(
+        select(self.file_version_rows.c.blob).where(self.file_version_rows.c.workspace_id == workspace_id).distinct()
+      ).scalars())
       return old_references - new_references
+
+  def delete_workspace_state(self, workspace_id: str) -> tuple[dict | None, set[str]]:
+    with self.engine.begin() as connection:
+      row = connection.execute(
+        select(self.workspaces).where(self.workspaces.c.id == workspace_id).with_for_update()
+      ).mappings().first()
+      if not row:
+        return None, set()
+      candidates = set(connection.execute(
+        select(self.file_version_rows.c.blob).where(self.file_version_rows.c.workspace_id == workspace_id).distinct()
+      ).scalars())
+      connection.execute(delete(self.workspaces).where(self.workspaces.c.id == workspace_id))
+      return self._workspace_entry(row), candidates
 
   @staticmethod
   def _file_values(workspace_id: str, path: str, slot: str, entry, snapshot_id: str | None) -> dict:
@@ -276,9 +292,14 @@ class PostgresWorkspaceDatabase:
       "mode": int(entry.get("mode") or 0o644), "snapshot_id": snapshot_id,
     }
 
-  def referenced_blobs(self) -> set[str]:
+  def referenced_blobs(self, candidates: set[str] | None = None) -> set[str]:
     with self.engine.connect() as connection:
-      return set(connection.execute(select(self.file_version_rows.c.blob).distinct()).scalars())
+      statement = select(self.file_version_rows.c.blob).distinct()
+      if candidates is not None:
+        if not candidates:
+          return set()
+        statement = statement.where(self.file_version_rows.c.blob.in_(candidates))
+      return set(connection.execute(statement).scalars())
 
   def file_versions_for_path(self, workspace_id: str, path: str) -> dict[str, dict]:
     with self.engine.connect() as connection:

@@ -49,13 +49,20 @@ Groups are unlimited unless an administrator sets `diskLimitBytes`. Workspace cr
 
 Agent writes are not continuously metered inside the running container. A run that starts below the limit may finish above it; the final snapshot refreshes usage, and subsequent growth or runs are blocked until usage is reduced or the limit is raised. Snapshots, blobs, previews, bundles, chat files, and Codex homes are excluded from quota accounting.
 
-Workspace history uses content-addressed storage backed by normalized SQLite metadata:
+Workspace history uses content-addressed storage backed by normalized PostgreSQL
+metadata in production. SQLite implements the same scoped contract only for
+isolated development tests and legacy migration:
 
 - File content is stored as immutable blobs keyed by checksum, for example `blobs/sha256/ab/cd/<hash>`.
 - Identical file content is stored once, even if referenced by many workspaces or file versions.
 - Each workspace path retains its current content and at most one immediately previous distinct content version.
 - Deleted paths retain their last content as the previous version until the path changes again or the workspace is deleted.
-- SQLite stores workspaces, lightweight checkpoint records, current/previous file versions, session links, and the latest artifact diff. Full file maps are not duplicated into checkpoint JSON manifests.
+- The metadata database stores workspaces, lightweight checkpoint records,
+  current/previous file versions, session links, and the latest artifact diff.
+  Full file maps are not duplicated into checkpoint JSON manifests.
+- Online commits update only one workspace and use its prior latest snapshot as
+  an optimistic concurrency boundary. Unrelated workspace and artifact rows are
+  never rewritten.
 
 This model gives content deduplication without unbounded binary history or dependence on Git semantics for user-uploaded folders. Retention is bounded per normalized path; a workspace that continually creates and deletes new path names can still accumulate one retained version for every deleted path.
 

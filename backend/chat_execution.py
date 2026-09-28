@@ -65,10 +65,10 @@ class ChatExecutionMixin:
           return
         if run_id in self.stop_requested:
           with self.store.lock:
-            metadata = self.store.load_metadata()
+            metadata = self.store.load_workspace_metadata(str(run["workspaceId"]))
             self.ensure_chat_metadata(metadata)
             self.finalize_run(metadata, run, "stopped", None, remote=bool(node_id), checkpoint=False)
-            self.store.save_metadata(metadata)
+            self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
             self.chat_store.save_run(run)
             self.publish_run_finalization(run)
           with self.condition:
@@ -111,7 +111,10 @@ class ChatExecutionMixin:
           with self.condition:
             self.condition.notify_all()
       with self.store.lock:
-        metadata = self.store.load_metadata()
+        stored_run = self.chat_store.get_run(run_id)
+        if not stored_run:
+          return
+        metadata = self.store.load_workspace_metadata(str(stored_run["workspaceId"]))
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
         if run:
@@ -125,7 +128,7 @@ class ChatExecutionMixin:
             result_files=run_for_worker.get("resultFiles") if node_id else None,
             remote=bool(node_id),
           )
-          self.store.save_metadata(metadata)
+          self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
           self.chat_store.save_run(run)
           self.publish_run_finalization(run)
           with self.condition:
@@ -138,13 +141,16 @@ class ChatExecutionMixin:
       if node_id and self.worker_registry and isinstance(exc, WorkerUnavailable):
         time.sleep(max(0.0, SETTINGS.worker_run_lease_seconds))
       with self.store.lock:
-        metadata = self.store.load_metadata()
+        stored_run = self.chat_store.get_run(run_id)
+        if not stored_run:
+          return
+        metadata = self.store.load_workspace_metadata(str(stored_run["workspaceId"]))
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
         if run:
           remote_files = run_for_worker.get("resultFiles") if node_id and "run_for_worker" in locals() else None
           self.finalize_run(metadata, run, "failed", str(exc), result_files=remote_files, remote=bool(node_id))
-          self.store.save_metadata(metadata)
+          self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
           self.chat_store.save_run(run)
           self.publish_run_finalization(run)
           with self.condition:
@@ -386,10 +392,9 @@ class ChatExecutionMixin:
 
   def delete_user_resources(self, usernames: set[str]) -> dict:
     with self.store.lock:
-      metadata = self.store.load_metadata()
       workspace_ids = {
-        workspace_id
-        for workspace_id, workspace in metadata.get("workspaces", {}).items()
+        workspace["id"]
+        for workspace in self.store.database.list_workspace_headers(username="", group_name="", system_admin=True)
         if workspace.get("owner") in usernames
       }
       chat_deleted = self.chat_store.delete_workspaces(workspace_ids)

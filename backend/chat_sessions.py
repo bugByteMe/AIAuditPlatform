@@ -26,7 +26,7 @@ class ChatSessionMixin:
         threading.Thread(target=self.execute_run, args=(str(run["id"]), node_id), name=f"ai-audit-recover-{run['id']}", daemon=True).start()
         continue
       with self.store.lock:
-        metadata = self.store.load_metadata()
+        metadata = self.store.load_workspace_metadata(str(run["workspaceId"]))
         stored = self.chat_store.get_run(str(run["id"]))
         if stored:
           self.finalize_run(
@@ -37,7 +37,7 @@ class ChatSessionMixin:
             remote=bool(node_id),
             checkpoint=not bool(node_id),
           )
-          self.store.save_metadata(metadata)
+          self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
           self.chat_store.save_run(stored)
           self.publish_run_finalization(stored)
 
@@ -54,7 +54,7 @@ class ChatSessionMixin:
 
   def create_session(self, workspace_id: str, user: dict, title: str | None = None) -> dict:
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}"):
-      metadata = self.store.load_metadata()
+      metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       timestamp = now_string()
@@ -78,7 +78,7 @@ class ChatSessionMixin:
 
   def fork_session(self, workspace_id: str, session_id: str, user: dict, title: str | None = None) -> dict:
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"session:{session_id}"):
-      metadata = self.store.load_metadata()
+      metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       session_refs = workspace.get("sessions", [])
@@ -149,7 +149,7 @@ class ChatSessionMixin:
 
   def update_session(self, workspace_id: str, session_id: str, user: dict, title: str) -> dict:
     with self.lifecycle_locks.hold(f"session:{session_id}"):
-      metadata = self.store.load_metadata()
+      metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       if not any(str(item.get("id") or "") == session_id for item in workspace.get("sessions", [])):
@@ -167,7 +167,7 @@ class ChatSessionMixin:
 
   def delete_session(self, workspace_id: str, session_id: str, user: dict) -> dict:
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"session:{session_id}"):
-      metadata = self.store.load_metadata()
+      metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       if workspace.get("owner") != user.get("username") and user.get("role") != "system_admin":
@@ -222,7 +222,7 @@ class ChatSessionMixin:
       raise StorageError("no_compatible_worker", "no configured compute node can satisfy the run resources")
     group_id = str(user.get("groupId") or "")
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"group:{group_id}"):
-      metadata = self.store.load_metadata()
+      metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       quota_owner = self.store.workspace_quota_owner(workspace, user)
@@ -331,7 +331,7 @@ class ChatSessionMixin:
 
   def stop_run(self, workspace_id: str, run_id: str, user: dict) -> dict:
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"run:{run_id}"):
-      metadata = self.store.load_metadata()
+      metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       self.store.get_workspace_from_metadata(metadata, workspace_id, user)
       run = self.chat_store.get_run(run_id)
@@ -347,7 +347,7 @@ class ChatSessionMixin:
       self.chat_store.save_run(run)
       if was_queued:
         self.finalize_run(metadata, run, "stopped", None)
-        self.store.save_metadata(metadata)
+        self.store.save_workspace_metadata(workspace_id, metadata)
         self.chat_store.save_run(run)
         self.publish_run_finalization(run)
       with self.condition:
