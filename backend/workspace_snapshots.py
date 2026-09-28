@@ -177,7 +177,7 @@ class WorkspaceSnapshotMixin:
 
   def refresh_artifacts(self, workspace_id: str, user: dict) -> list[dict]:
     with self.lock:
-      metadata = self.load_metadata()
+      metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       parent_id = workspace.get("latestSnapshotId")
       parent = metadata["snapshots"].get(parent_id) if parent_id else None
@@ -188,5 +188,5 @@ class WorkspaceSnapshotMixin:
       workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
       changes = self.diff_snapshots(parent, snapshot)
       metadata["artifacts"][workspace_id] = changes
-      self.save_metadata(metadata)
+      self.save_workspace_metadata(workspace_id, metadata)
       return changes

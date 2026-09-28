@@ -292,68 +292,57 @@ class WorkspaceDatabase:
       snapshot_id,
     )
 
-  def save(self, metadata: dict) -> set[str]:
-    """Persist a compatibility metadata view and return blobs made unreferenced."""
+  def save_workspace_state(self, workspace: dict, snapshots: dict, artifacts: list[dict]) -> set[str]:
+    """Persist one workspace while retaining the SQLite test adapter semantics."""
+    workspace_id = str(workspace["id"])
     with closing(self.connect()) as connection, connection:
       connection.execute("BEGIN IMMEDIATE")
-      old_references = {row[0] for row in connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")}
-      existing_workspaces = {row[0] for row in connection.execute("SELECT id FROM workspaces")}
-      incoming_workspaces = set(metadata.get("workspaces", {}))
+      existing = connection.execute(
+        "SELECT latest_snapshot_id FROM workspaces WHERE id = ?", (workspace_id,)
+      ).fetchone()
+      latest_id = workspace.get("latestSnapshotId")
+      if existing and latest_id != existing["latest_snapshot_id"]:
+        expected_parent = (snapshots.get(latest_id) or {}).get("parentSnapshotId")
+        if expected_parent != existing["latest_snapshot_id"]:
+          raise RuntimeError("workspace_changed")
+      old_references = {row[0] for row in connection.execute(
+        "SELECT DISTINCT blob FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)
+      )}
+      connection.execute(
+        """
+        INSERT INTO workspaces(
+          id, name, owner, group_name, shared, locked, run_lock_enabled, created, updated, file_count, size_bytes,
+          latest_snapshot_id, initial_snapshot_id, source_workspace_id, source_snapshot_id,
+          active_run_id, active_upload_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(id) DO UPDATE SET
+          name=excluded.name, owner=excluded.owner, group_name=excluded.group_name,
+          shared=excluded.shared, locked=excluded.locked, run_lock_enabled=excluded.run_lock_enabled, created=excluded.created,
+          updated=excluded.updated, file_count=excluded.file_count, size_bytes=excluded.size_bytes,
+          latest_snapshot_id=excluded.latest_snapshot_id, initial_snapshot_id=excluded.initial_snapshot_id,
+          source_workspace_id=excluded.source_workspace_id, source_snapshot_id=excluded.source_snapshot_id,
+          active_run_id=excluded.active_run_id, active_upload_id=excluded.active_upload_id
+        """,
+        (
+          workspace_id, str(workspace.get("name") or "Untitled workspace"), str(workspace.get("owner") or ""),
+          str(workspace.get("group") or ""), int(bool(workspace.get("shared"))), int(bool(workspace.get("locked"))),
+          int(bool(workspace.get("runLockEnabled"))), str(workspace.get("created") or workspace.get("updated") or ""),
+          str(workspace.get("updated") or workspace.get("created") or ""), int(workspace.get("fileCount") or 0),
+          int(workspace.get("sizeBytes") or 0), workspace.get("latestSnapshotId"), workspace.get("initialSnapshotId"),
+          workspace.get("sourceWorkspaceId"), workspace.get("sourceSnapshotId"), workspace.get("activeRunId"),
+          workspace.get("activeUploadId"),
+        ),
+      )
+      connection.execute("DELETE FROM workspace_sessions WHERE workspace_id = ?", (workspace_id,))
+      for ordinal, session in enumerate(workspace.get("sessions", [])):
+        if session.get("id"):
+          connection.execute(
+            "INSERT INTO workspace_sessions(workspace_id, session_id, ordinal) VALUES (?, ?, ?)",
+            (workspace_id, str(session["id"]), ordinal),
+          )
 
-      for workspace_id in existing_workspaces - incoming_workspaces:
-        connection.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
-
-      for workspace_id, workspace in metadata.get("workspaces", {}).items():
-        connection.execute(
-          """
-          INSERT INTO workspaces(
-            id, name, owner, group_name, shared, locked, run_lock_enabled, created, updated, file_count, size_bytes,
-            latest_snapshot_id, initial_snapshot_id, source_workspace_id, source_snapshot_id,
-            active_run_id, active_upload_id
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-          ON CONFLICT(id) DO UPDATE SET
-            name=excluded.name, owner=excluded.owner, group_name=excluded.group_name,
-            shared=excluded.shared, locked=excluded.locked, run_lock_enabled=excluded.run_lock_enabled, created=excluded.created,
-            updated=excluded.updated, file_count=excluded.file_count, size_bytes=excluded.size_bytes,
-            latest_snapshot_id=excluded.latest_snapshot_id, initial_snapshot_id=excluded.initial_snapshot_id,
-            source_workspace_id=excluded.source_workspace_id, source_snapshot_id=excluded.source_snapshot_id,
-            active_run_id=excluded.active_run_id, active_upload_id=excluded.active_upload_id
-          """,
-          (
-            workspace_id,
-            str(workspace.get("name") or "Untitled workspace"),
-            str(workspace.get("owner") or ""),
-            str(workspace.get("group") or ""),
-            int(bool(workspace.get("shared"))),
-            int(bool(workspace.get("locked"))),
-            int(bool(workspace.get("runLockEnabled"))),
-            str(workspace.get("created") or workspace.get("updated") or ""),
-            str(workspace.get("updated") or workspace.get("created") or ""),
-            int(workspace.get("fileCount") or 0),
-            int(workspace.get("sizeBytes") or 0),
-            workspace.get("latestSnapshotId"),
-            workspace.get("initialSnapshotId"),
-            workspace.get("sourceWorkspaceId"),
-            workspace.get("sourceSnapshotId"),
-            workspace.get("activeRunId"),
-            workspace.get("activeUploadId"),
-          ),
-        )
-        connection.execute("DELETE FROM workspace_sessions WHERE workspace_id = ?", (workspace_id,))
-        for ordinal, session in enumerate(workspace.get("sessions", [])):
-          session_id = str(session.get("id") or "")
-          if session_id:
-            connection.execute(
-              "INSERT INTO workspace_sessions(workspace_id, session_id, ordinal) VALUES (?, ?, ?)",
-              (workspace_id, session_id, ordinal),
-            )
-
-      existing_snapshots = {row[0] for row in connection.execute("SELECT id FROM snapshots")}
-      incoming_snapshots = set(metadata.get("snapshots", {}))
-      for snapshot_id in existing_snapshots - incoming_snapshots:
-        connection.execute("DELETE FROM snapshots WHERE id = ?", (snapshot_id,))
-      for snapshot_id, snapshot in metadata.get("snapshots", {}).items():
-        if snapshot.get("workspaceId") not in incoming_workspaces:
+      for snapshot_id, snapshot in snapshots.items():
+        if snapshot.get("workspaceId") != workspace_id:
           continue
         connection.execute(
           """
@@ -373,77 +362,70 @@ class WorkspaceDatabase:
           ),
         )
 
-      for workspace_id, workspace in metadata.get("workspaces", {}).items():
-        rows = list(connection.execute("SELECT * FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)))
-        current_rows = {row["path"]: row for row in rows if row["slot"] == "current"}
-        previous_rows = {row["path"]: row for row in rows if row["slot"] == "previous"}
-        current = {path: self._file_entry(row) for path, row in current_rows.items()}
-        previous = {path: self._file_entry(row) for path, row in previous_rows.items()}
-        latest_id = workspace.get("latestSnapshotId")
-        if latest_id and latest_id not in metadata.get("snapshots", {}):
-          raise ValueError(f"workspace {workspace_id} references a missing latest checkpoint")
-        latest = metadata.get("snapshots", {}).get(latest_id) or {"files": {}}
-        incoming = latest.get("files") or {}
-        next_current: dict[str, tuple[dict, str | None]] = {}
-        next_previous: dict[str, tuple[dict, str | None]] = {}
-
-        for path in set(current) | set(previous) | set(incoming):
-          old_current = current.get(path)
-          old_previous = previous.get(path)
-          new_current = incoming.get(path)
-          if new_current is not None and old_current is not None and new_current.get("blob") == old_current.get("blob"):
-            next_current[path] = (new_current, latest_id)
-            if old_previous is not None and old_previous.get("blob") != new_current.get("blob"):
-              next_previous[path] = (old_previous, previous_rows[path]["snapshot_id"])
-          elif new_current is not None:
-            next_current[path] = (new_current, latest_id)
-            retained = old_current or old_previous
-            if retained is not None and retained.get("blob") != new_current.get("blob"):
-              retained_slot = "current" if old_current is not None else "previous"
-              retained_row = current_rows[path] if retained_slot == "current" else previous_rows[path]
-              next_previous[path] = (retained, retained_row["snapshot_id"])
-          elif old_current is not None:
-            next_previous[path] = (old_current, current_rows[path]["snapshot_id"])
-          elif old_previous is not None:
+      rows = list(connection.execute("SELECT * FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)))
+      current_rows = {row["path"]: row for row in rows if row["slot"] == "current"}
+      previous_rows = {row["path"]: row for row in rows if row["slot"] == "previous"}
+      current = {path: self._file_entry(row) for path, row in current_rows.items()}
+      previous = {path: self._file_entry(row) for path, row in previous_rows.items()}
+      if latest_id and latest_id not in snapshots:
+        raise ValueError(f"workspace {workspace_id} references a missing latest checkpoint")
+      incoming = (snapshots.get(latest_id) or {"files": {}}).get("files") or {}
+      next_current: dict[str, tuple[dict, str | None]] = {}
+      next_previous: dict[str, tuple[dict, str | None]] = {}
+      for path in set(current) | set(previous) | set(incoming):
+        old_current, old_previous, new_current = current.get(path), previous.get(path), incoming.get(path)
+        if new_current is not None and old_current is not None and new_current.get("blob") == old_current.get("blob"):
+          next_current[path] = (new_current, latest_id)
+          if old_previous is not None and old_previous.get("blob") != new_current.get("blob"):
             next_previous[path] = (old_previous, previous_rows[path]["snapshot_id"])
+        elif new_current is not None:
+          next_current[path] = (new_current, latest_id)
+          retained = old_current or old_previous
+          if retained is not None and retained.get("blob") != new_current.get("blob"):
+            retained_row = current_rows[path] if old_current is not None else previous_rows[path]
+            next_previous[path] = (retained, retained_row["snapshot_id"])
+        elif old_current is not None:
+          next_previous[path] = (old_current, current_rows[path]["snapshot_id"])
+        elif old_previous is not None:
+          next_previous[path] = (old_previous, previous_rows[path]["snapshot_id"])
+      connection.execute("DELETE FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,))
+      for path, (entry, snapshot_id) in next_current.items():
+        connection.execute(
+          "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          self._entry_tuple(workspace_id, path, "current", entry, snapshot_id),
+        )
+      for path, (entry, snapshot_id) in next_previous.items():
+        connection.execute(
+          "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          self._entry_tuple(workspace_id, path, "previous", entry, snapshot_id),
+        )
 
-        connection.execute("DELETE FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,))
-        for path, (entry, snapshot_id) in next_current.items():
-          connection.execute(
-            "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            self._entry_tuple(workspace_id, path, "current", entry, snapshot_id),
-          )
-        for path, (entry, snapshot_id) in next_previous.items():
-          connection.execute(
-            "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
-            self._entry_tuple(workspace_id, path, "previous", entry, snapshot_id),
-          )
-
-      connection.execute("DELETE FROM artifacts")
-      for workspace_id, artifacts in metadata.get("artifacts", {}).items():
-        if workspace_id not in incoming_workspaces:
-          continue
-        for artifact in artifacts:
-          connection.execute(
-            """
-            INSERT INTO artifacts(workspace_id, path, status, size_bytes, size_label, checksum, blob, timestamp)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-              workspace_id,
-              str(artifact["path"]),
-              str(artifact["status"]),
-              int(artifact.get("sizeBytes") or 0),
-              str(artifact.get("size") or "0 B"),
-              str(artifact.get("checksum") or ""),
-              artifact.get("blob"),
-              str(artifact.get("timestamp") or ""),
-            ),
-          )
-
-      new_references = {row[0] for row in connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")}
-      connection.commit()
+      connection.execute("DELETE FROM artifacts WHERE workspace_id = ?", (workspace_id,))
+      for artifact in artifacts:
+        connection.execute(
+          "INSERT INTO artifacts VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+          (
+            workspace_id, str(artifact["path"]), str(artifact["status"]), int(artifact.get("sizeBytes") or 0),
+            str(artifact.get("size") or "0 B"), str(artifact.get("checksum") or ""), artifact.get("blob"),
+            str(artifact.get("timestamp") or ""),
+          ),
+        )
+      new_references = {row[0] for row in connection.execute(
+        "SELECT DISTINCT blob FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)
+      )}
       return old_references - new_references
+
+  def delete_workspace_state(self, workspace_id: str) -> tuple[dict | None, set[str]]:
+    with closing(self.connect()) as connection, connection:
+      connection.execute("BEGIN IMMEDIATE")
+      row = connection.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
+      if not row:
+        return None, set()
+      candidates = {item[0] for item in connection.execute(
+        "SELECT DISTINCT blob FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)
+      )}
+      connection.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
+      return self._workspace_entry(row), candidates
 
   def save_workspace_lifecycle(self, workspace: dict) -> None:
     """Persist only lifecycle/session-reference fields for one workspace.
@@ -473,9 +455,18 @@ class WorkspaceDatabase:
             (workspace["id"], session_id, ordinal),
           )
 
-  def referenced_blobs(self) -> set[str]:
+  def referenced_blobs(self, candidates: set[str] | None = None) -> set[str]:
     with closing(self.connect()) as connection, connection:
-      return {row[0] for row in connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")}
+      if candidates is None:
+        rows = connection.execute("SELECT DISTINCT blob FROM workspace_file_versions")
+      elif not candidates:
+        return set()
+      else:
+        placeholders = ",".join("?" for _ in candidates)
+        rows = connection.execute(
+          f"SELECT DISTINCT blob FROM workspace_file_versions WHERE blob IN ({placeholders})", tuple(candidates)
+        )
+      return {row[0] for row in rows}
 
   def file_versions(self, workspace_id: str, path: str) -> dict[str, dict]:
     with closing(self.connect()) as connection, connection:

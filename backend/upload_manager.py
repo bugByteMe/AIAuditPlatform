@@ -40,17 +40,13 @@ class UploadManager:
       for session in persisted.get("sessions", {}).values():
         if session.get("status") == "uploading":
           self._schedule_expiry(session["id"])
-      metadata = self.store.load_metadata()
-      changed_metadata = False
-      for workspace in metadata.get("workspaces", {}).values():
+      for workspace in self.store.database.list_workspace_headers(username="", group_name="", system_admin=True):
         upload_id = workspace.get("activeUploadId")
         session = persisted.get("sessions", {}).get(upload_id) if upload_id else None
         if upload_id and (not session or session.get("status") not in ACTIVE_UPLOAD_STATES):
           workspace["locked"] = False
           workspace.pop("activeUploadId", None)
-          changed_metadata = True
-      if changed_metadata:
-        self.store.save_metadata(metadata)
+          self.store.save_workspace_lifecycle(workspace)
 
   def load(self) -> dict:
     return json.loads(self.path.read_text(encoding="utf-8"))
@@ -84,12 +80,13 @@ class UploadManager:
         files.append({"path": path, "size": size, "lastModified": int(source.get("lastModified") or 0)})
       upload_id = generated_id("upload")
       snapshot_id = generated_id("snap")
-      metadata = self.store.load_metadata()
+      metadata = self.store.empty_metadata()
       parent_files, workspace_id, reserved = {}, generated_id("ws"), total
       workspace = None
       quota_user = user
       if mode == "append":
         workspace_id = str(payload.get("workspaceId") or "")
+        metadata = self.store.load_workspace_metadata(workspace_id)
         workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
         if not self.store.user_can_mutate_workspace(user, workspace):
           raise StorageError("forbidden", "only the owner or system admin can add files")
@@ -128,7 +125,7 @@ class UploadManager:
       if workspace:
         workspace["locked"] = True
         workspace["activeUploadId"] = upload_id
-        self.store.save_metadata(metadata)
+        self.store.save_workspace_lifecycle(workspace)
       data["sessions"][upload_id] = session
       self.save(data)
       try:
@@ -141,7 +138,7 @@ class UploadManager:
         if workspace:
           workspace["locked"] = False
           workspace.pop("activeUploadId", None)
-          self.store.save_metadata(metadata)
+          self.store.save_workspace_lifecycle(workspace)
         if self.worker_registry:
           self.worker_registry.release(node_id, upload_id)
         raise
@@ -325,12 +322,11 @@ class UploadManager:
       else:
         self.local_worker.cancel(upload_id)
       if session["mode"] == "append":
-        metadata = self.store.load_metadata()
-        workspace = metadata.get("workspaces", {}).get(session["workspaceId"])
+        workspace = self.store.database.get_workspace_header(session["workspaceId"])
         if workspace and workspace.get("activeUploadId") == upload_id:
           workspace["locked"] = False
           workspace.pop("activeUploadId", None)
-          self.store.save_metadata(metadata)
+          self.store.save_workspace_lifecycle(workspace)
       session["status"] = "cancelled"
       self.save(data)
       return {"id": upload_id, "status": "cancelled"}
@@ -346,12 +342,11 @@ class UploadManager:
         if self.worker_registry:
           self.worker_registry.release(session.get("workerId"), session["id"])
         if session.get("mode") == "append":
-          metadata = self.store.load_metadata()
-          workspace = metadata.get("workspaces", {}).get(session.get("workspaceId"))
+          workspace = self.store.database.get_workspace_header(session.get("workspaceId"))
           if workspace and workspace.get("activeUploadId") == session["id"]:
             workspace["locked"] = False
             workspace.pop("activeUploadId", None)
-            self.store.save_metadata(metadata)
+            self.store.save_workspace_lifecycle(workspace)
     return changed
 
   def public(self, session: dict, worker_status: dict) -> dict:

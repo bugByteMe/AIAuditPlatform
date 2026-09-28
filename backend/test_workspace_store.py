@@ -94,9 +94,9 @@ class WorkspaceStoreTest(unittest.TestCase):
       self.store.update_workspace(workspace["id"], ADMIN, {"runLockEnabled": False})
     self.assertEqual(context.exception.code, "forbidden")
 
-    metadata = self.store.load_metadata()
+    metadata = self.store.load_workspace_metadata(workspace["id"])
     metadata["workspaces"][workspace["id"]]["locked"] = True
-    self.store.save_metadata(metadata)
+    self.store.save_workspace_metadata(workspace["id"], metadata)
     with self.assertRaises(StorageError) as context:
       self.store.update_workspace(workspace["id"], OWNER, {"runLockEnabled": False})
     self.assertEqual(context.exception.code, "workspace_locked")
@@ -305,6 +305,17 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual(summary["files"], [])
     self.assertTrue(detail["detailLoaded"])
     self.assertTrue(detail["files"])
+
+  def test_workspace_mutation_does_not_load_or_rewrite_unrelated_catalog(self) -> None:
+    changed = self.create_workspace(shared=True)
+    untouched = self.create_workspace(shared=True)
+    untouched_before = self.store.load_workspace_metadata(untouched["id"])
+    with mock.patch.object(self.store, "load_metadata", side_effect=AssertionError("catalog load")):
+      self.store.add_files_to_workspace(
+        changed["id"], OWNER, [UploadedFile("reports/new.txt", b"scoped")]
+      )
+    untouched_after = self.store.load_workspace_metadata(untouched["id"])
+    self.assertEqual(untouched_after, untouched_before)
 
   def test_delete_workspace_requires_owner_or_admin_and_removes_active_files(self) -> None:
     workspace = self.create_workspace(shared=True)
