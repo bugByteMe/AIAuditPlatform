@@ -87,9 +87,10 @@ class WorkerClient:
         )
         run["container"] = str(result.get("container") or run.get("container") or "")
         for event in result.get("events") or []:
-          cursor = max(cursor, int(event.get("id") or 0))
+          source_event_id = int(event.get("id") or 0)
+          cursor = max(cursor, source_event_id)
           run["workerEventCursor"] = cursor
-          yield {key: value for key, value in event.items() if key != "id"}
+          yield {**{key: value for key, value in event.items() if key != "id"}, "_workerEventId": source_event_id}
         remote_status = str(result.get("status") or "")
         if remote_status in terminal:
           run["remoteStatus"] = remote_status

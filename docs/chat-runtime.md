@@ -121,6 +121,13 @@ The implementation uses the statically configured compute-node inventory wheneve
 
 The worker persists its run state, final workspace manifest, and event stream beneath `<workspace_storage_dir>/worker_state/<node_id>/`. Start is idempotent by run ID, and the control plane can reconnect from its last persisted event cursor after restart. A worker restart marks its interrupted work failed rather than launching a duplicate container. The lease watchdog stops orphaned containers when the control plane disappears. After the control plane has checkpointed a terminal run, it acknowledges the result so the worker removes its duplicate run/event record.
 
+Each runner event is committed in one database transaction with its application
+event row, worker cursor, run state, session summary, and any positive usage
+delta. Remote worker event IDs are retained in an internal receipt table so a
+replayed delivery returns the original application event without duplicating
+history or usage. The SSE broker is notified only after that transaction
+commits; failed transactions expose no partial event or cursor advancement.
+
 Live updates use Server-Sent Events. The server sends named heartbeat events
 with the latest cursor and session status during idle periods. A successful SSE
 open performs one cursor-based reconciliation request; continuous polling is

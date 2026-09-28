@@ -96,18 +96,14 @@ class ChatExecutionMixin:
         event_stream = self.runner.start(run_for_worker, workspace_path)
       for event in event_stream:
         with self.lifecycle_locks.hold(f"run:{run_id}"):
-          stored_run = self.chat_store.get_run(run_id)
-          if not stored_run:
-            return
           if run_id in self.stop_requested:
+            stored_run = self.chat_store.get_run(run_id)
+            if not stored_run:
+              return
             stored_run["status"] = "stopping"
             self.chat_store.save_run(stored_run)
             break
-          stored_run["status"] = "running"
-          stored_run["container"] = run_for_worker.get("container", stored_run.get("container", ""))
-          stored_run["workerEventCursor"] = int(run_for_worker.get("workerEventCursor") or stored_run.get("workerEventCursor") or 0)
-          self.record_runner_event(stored_run, event)
-          self.chat_store.save_run(stored_run)
+          self.record_runner_event(run_id, event, container=str(run_for_worker.get("container") or ""))
           with self.condition:
             self.condition.notify_all()
       with self.store.lock:
@@ -168,50 +164,35 @@ class ChatExecutionMixin:
       self.active_runs.discard(run_id)
       self.stop_requested.discard(run_id)
 
-  def record_runner_event(self, run: dict, event: dict) -> None:
+  def record_runner_event(self, run_id: str, event: dict, *, container: str = "") -> dict:
+    source_event_id = event.get("_workerEventId")
     event_type = str(event.get("type") or "progress")
     message = str(event.get("message") or event_type)
-    if "tokens" in event:
-      delta = max(0, int(event.get("tokens") or 0) - int(run.get("tokens") or 0))
-      run["tokens"] = max(int(run.get("tokens") or 0), int(event.get("tokens") or 0))
-      session = self.chat_store.get_session(run["sessionId"])
-      session["totalTokens"] = int(session.get("totalTokens") or 0) + delta
-      session["tokens"] = f"{session['totalTokens']:,}"
-      self.chat_store.save_session(session)
-      user = self.users.get(run["user"])
-      if user:
-        user["usedTokens"] = int(user.get("usedTokens") or 0) + delta
-        if self.save_users:
-          self.save_users()
-      for event_key, run_key in [
-        ("inputTokens", "inputTokens"),
-        ("cachedInputTokens", "cachedInputTokens"),
-        ("outputTokens", "outputTokens"),
-      ]:
-        if event_key in event:
-          run[run_key] = max(int(run.get(run_key) or 0), int(event.get(event_key) or 0))
-    if event.get("codexSessionId"):
-      session = self.chat_store.get_session(run["sessionId"])
-      session["codexSessionId"] = event["codexSessionId"]
-      session["codexNativeResumable"] = True
-      session["codexForkPending"] = False
-      session["codexForkSourceId"] = None
-      session["codexHomeUser"] = run["user"]
-      run["codexSessionId"] = event["codexSessionId"]
-      self.chat_store.save_session(session)
-    self.append_event(
-      run["sessionId"],
-      event_type,
-      message,
-      run["id"],
-      raw=event.get("raw"),
-      status=event.get("status"),
-      tool_call_id=event.get("toolCallId"),
+    stored_event = {"type": event_type, "message": message}
+    for source_key, target_key in [
+      ("raw", "raw"), ("status", "status"), ("toolCallId", "toolCallId"),
+      ("tokens", "tokens"), ("inputTokens", "inputTokens"),
+      ("cachedInputTokens", "cachedInputTokens"), ("outputTokens", "outputTokens"),
+      ("codexSessionId", "codexSessionId"),
+    ]:
+      if source_key in event and event[source_key] is not None:
+        stored_event[target_key] = event[source_key]
+    result = self.chat_store.commit_runner_event(
+      run_id,
+      stored_event,
+      container=container,
+      source_event_id=int(source_event_id) if source_event_id is not None else None,
     )
-    run["updated"] = now_string()
-    session = self.chat_store.get_session(run["sessionId"])
-    session["updated"] = run["updated"]
-    self.chat_store.save_session(session)
+    committed_run = result.get("run") or {}
+    username = str(committed_run.get("user") or "")
+    if username in self.users and result.get("userTotal") is not None:
+      self.users[username]["usedTokens"] = int(result["userTotal"])
+    if result["inserted"] and self.event_callback:
+      try:
+        self.event_callback(str((result.get("session") or {}).get("id") or ""), result["event"])
+      except Exception:
+        pass
+    return result
 
   def finalize_run(
     self,
@@ -399,6 +380,7 @@ class ChatExecutionMixin:
       }
       chat_deleted = self.chat_store.delete_workspaces(workspace_ids)
       workspaces = self.store.delete_owned_workspaces(usernames)
+      self.chat_store.delete_user_usage(usernames)
       for username in usernames:
         shutil.rmtree(SETTINGS.codex_home_root / safe_segment(username), ignore_errors=True)
       return {"workspaces": workspaces, **chat_deleted}
