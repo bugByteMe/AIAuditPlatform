@@ -1,4 +1,5 @@
 from chat_runtime_test_support import *
+from sqlalchemy import event as sqlalchemy_event
 from unittest.mock import Mock
 
 
@@ -160,6 +161,45 @@ class CodexRunnerTest(ChatRuntimeTestBase):
     self.assertEqual(runtime.chat_store.events(session["id"]), [])
     self.assertEqual(runtime.chat_store.get_run(run["id"])["workerEventCursor"], 0)
     self.assertEqual(runtime.chat_store.ensure_user_usage("li.review"), 0)
+
+  def test_runner_event_uses_one_transaction_and_notifies_after_commit(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "One transaction")
+    run = {
+      "id": "run_transaction", "workspaceId": workspace["id"], "sessionId": session["id"],
+      "user": "li.review", "groupId": "", "status": "running", "updated": "before",
+      "workerEventCursor": 0, "tokens": 0,
+    }
+    runtime.chat_store.save_run(run)
+    transactions = {"begin": 0, "commit": 0, "rollback": 0}
+    notified = []
+
+    def count_begin(_connection):
+      transactions["begin"] += 1
+
+    def count_commit(_connection):
+      transactions["commit"] += 1
+
+    def count_rollback(_connection):
+      transactions["rollback"] += 1
+
+    engine = runtime.chat_store.engine
+    sqlalchemy_event.listen(engine, "begin", count_begin)
+    sqlalchemy_event.listen(engine, "commit", count_commit)
+    sqlalchemy_event.listen(engine, "rollback", count_rollback)
+    runtime.set_event_callback(lambda _session_id, _event: notified.append(transactions["commit"]))
+    try:
+      runtime.record_runner_event(
+        run["id"], {"type": "assistant", "message": "done", "_workerEventId": 1}
+      )
+    finally:
+      sqlalchemy_event.remove(engine, "begin", count_begin)
+      sqlalchemy_event.remove(engine, "commit", count_commit)
+      sqlalchemy_event.remove(engine, "rollback", count_rollback)
+
+    self.assertEqual(transactions, {"begin": 1, "commit": 1, "rollback": 0})
+    self.assertEqual(notified, [1])
 
   def test_database_usage_total_hydrates_users_after_restart(self) -> None:
     workspace = self.create_workspace()
