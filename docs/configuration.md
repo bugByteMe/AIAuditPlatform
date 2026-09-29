@@ -33,6 +33,10 @@ that proxy.
 - `upload_session_ttl_seconds` controls abandoned-session retention, `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
 - `upload_gc_interval_seconds` controls the control-plane and worker staging sweeps, `upload_terminal_retention_seconds` retains terminal coordination records for reconnect diagnostics, `upload_gc_batch_size` bounds each control-plane collection pass, and `upload_worker_orphan_ttl_seconds` controls worker staging cleanup.
 - `upload_reservation_cpus` and `upload_reservation_memory` reserve worker capacity during active upload sessions. Each compute node may set `upload_slots` (default `1`).
+- `file_work_workers` and `file_work_queue` bound ZIP creation, file hashing, Office conversion, artifact refresh, forks, and filesystem-heavy deletion. The production default is one worker so file work cannot consume both CPUs on the current control node.
+- `upload_request_workers` and `upload_request_queue` isolate upload forwarding and upload-session worker calls from ordinary HTTP and SSE work.
+- `external_request_workers` and `external_request_queue` isolate synchronous MicuAPI, WeChat Pay, and related provider-facing request paths.
+- When a dedicated executor and its queue are full, the control plane returns `503 server_busy` with `Retry-After: 2`; clients should retry with backoff.
 
 ## Chat Streaming
 

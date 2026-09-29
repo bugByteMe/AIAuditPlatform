@@ -52,6 +52,13 @@ PostgreSQL. Account and upload mutations update scoped rows instead of
 serializing a process-wide JSON document. Large workspace files and
 content-addressed blobs remain on shared storage.
 
+Synchronous control-plane work is separated by cost. Short database and SSE
+reads use Starlette's normal request pool, while file generation, upload
+forwarding, and external-provider operations use dedicated bounded executors.
+Each executor has a fixed worker and queue limit; overload fails quickly with a
+retryable `503` instead of allowing ZIP creation, Office conversion, or a slow
+provider to consume every ordinary request thread.
+
 Online reads and mutations avoid reconstructing the global workspace catalog.
 Workspace lists query only accessible headers, a selected workspace loads only
 its own session references/current snapshot/artifacts, and chat authorization

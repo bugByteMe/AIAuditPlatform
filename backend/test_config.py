@@ -26,6 +26,10 @@ class ConfigurationTest(unittest.TestCase):
       "container_uid",
       "docker_stop_grace_seconds",
       "docker_stop_timeout_seconds",
+      "external_request_queue",
+      "external_request_workers",
+      "file_work_queue",
+      "file_work_workers",
       "max_file_bytes",
       "max_file_count",
       "max_text_preview_bytes",
@@ -56,6 +60,8 @@ class ConfigurationTest(unittest.TestCase):
       "upload_worker_orphan_ttl_seconds",
       "upload_reservation_idle_seconds",
       "upload_max_concurrent_streams",
+      "upload_request_queue",
+      "upload_request_workers",
       "upload_reservation_cpus",
       "upload_reservation_memory",
       "wechat_pay_enabled",
@@ -80,6 +86,12 @@ class ConfigurationTest(unittest.TestCase):
     self.assertTrue(SETTINGS.blocked_upload_suffixes)
     self.assertGreater(SETTINGS.upload_chunk_bytes, SETTINGS.upload_stream_buffer_bytes)
     self.assertGreater(SETTINGS.upload_chunk_timeout_seconds, 0)
+    self.assertGreater(SETTINGS.file_work_workers, 0)
+    self.assertGreaterEqual(SETTINGS.file_work_queue, 0)
+    self.assertGreater(SETTINGS.upload_request_workers, 0)
+    self.assertGreaterEqual(SETTINGS.upload_request_queue, 0)
+    self.assertGreater(SETTINGS.external_request_workers, 0)
+    self.assertGreaterEqual(SETTINGS.external_request_queue, 0)
 
   def test_compute_node_configuration_is_normalized(self) -> None:
     nodes = normalize_compute_nodes(

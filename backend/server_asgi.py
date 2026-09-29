@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import io
 import json
+import logging
 import threading
 from contextlib import asynccontextmanager
 from http import HTTPStatus
@@ -21,7 +22,19 @@ from server_state import CHAT_RUNTIME, FRONTEND_DIR, UPLOAD_MANAGER, WECHAT_RECO
 from server_recharge import reconcile_wechat_orders
 from server_transport import RequestStopped, SSE_BROKER
 from server_utils import ascii_download_filename, static_content_type
+from server_workloads import WorkloadBusy, WorkloadPools, classify_request
 from workspace_store import StorageError, parse_query
+
+
+LOGGER = logging.getLogger("ai_audit.workloads")
+WORKLOAD_POOLS: WorkloadPools | None = None
+
+
+def workload_pools() -> WorkloadPools:
+  global WORKLOAD_POOLS
+  if WORKLOAD_POOLS is None:
+    WORKLOAD_POOLS = WorkloadPools(SETTINGS)
+  return WORKLOAD_POOLS
 
 
 def cors_headers(request: Request) -> dict[str, str]:
@@ -135,7 +148,7 @@ def dispatch_request(request: Request, body) -> Response:
 async def dispatch_streaming_upload(request: Request) -> Response:
   loop = asyncio.get_running_loop()
   reader = AsyncRequestReader(loop)
-  dispatch_task = asyncio.create_task(run_in_threadpool(dispatch_request, request, reader))
+  dispatch_task = asyncio.create_task(workload_pools().upload.run(dispatch_request, request, reader))
 
   async def pump() -> None:
     try:
@@ -228,6 +241,8 @@ async def sse_response(request: Request) -> Response:
 
 
 async def app_lifespan(_app: FastAPI):
+  global WORKLOAD_POOLS
+  WORKLOAD_POOLS = WorkloadPools(SETTINGS)
   SSE_BROKER.bind(asyncio.get_running_loop())
   CHAT_RUNTIME.set_event_callback(SSE_BROKER.persisted)
   threading.Thread(target=reconcile_micu_accounts, name="micu-account-reconciler", daemon=True).start()
@@ -238,6 +253,9 @@ async def app_lifespan(_app: FastAPI):
   finally:
     WECHAT_RECONCILE_STOP.set()
     UPLOAD_MANAGER.shutdown()
+    pools, WORKLOAD_POOLS = WORKLOAD_POOLS, None
+    if pools is not None:
+      pools.shutdown()
     CHAT_RUNTIME.set_event_callback(None)
     SSE_BROKER.unbind()
 
@@ -263,10 +281,20 @@ async def application_route(request: Request, request_path: str) -> Response:
   path = "/" + request_path
   if request.method == "GET" and path.startswith("/api/workspaces/") and path.endswith("/chat/stream"):
     return await sse_response(request)
-  if is_chunk_upload(request.method, path):
-    try:
+  workload, route_label = classify_request(request.method, path)
+  try:
+    if is_chunk_upload(request.method, path):
       return await dispatch_streaming_upload(request)
-    except ClientDisconnect:
-      return Response(status_code=499)
-  body = await request.body()
-  return await run_in_threadpool(dispatch_request, request, io.BytesIO(body))
+    body = await request.body()
+    if workload:
+      return await workload_pools().pool(workload).run(dispatch_request, request, io.BytesIO(body))
+    return await run_in_threadpool(dispatch_request, request, io.BytesIO(body))
+  except ClientDisconnect:
+    return Response(status_code=499)
+  except WorkloadBusy as exc:
+    LOGGER.warning("workload_rejected workload=%s route=%s", exc.workload, route_label)
+    return Response(
+      content=json.dumps({"error": "server_busy", "message": "server is busy; retry shortly"}),
+      status_code=HTTPStatus.SERVICE_UNAVAILABLE,
+      headers={**cors_headers(request), "Content-Type": "application/json; charset=utf-8", "Retry-After": "2", "Cache-Control": "no-store"},
+    )

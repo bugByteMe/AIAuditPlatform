@@ -200,6 +200,18 @@ class Settings:
       [".exe", ".dll", ".so", ".dylib", ".bat", ".cmd", ".ps1", ".sh"],
     )
     self.office_preview_timeout_seconds = _int("office_preview_timeout_seconds", "AI_AUDIT_OFFICE_PREVIEW_TIMEOUT_SECONDS", 45)
+    self.file_work_workers = _int("file_work_workers", "AI_AUDIT_FILE_WORK_WORKERS", 1)
+    self.file_work_queue = _int("file_work_queue", "AI_AUDIT_FILE_WORK_QUEUE", 4)
+    self.upload_request_workers = _int("upload_request_workers", "AI_AUDIT_UPLOAD_REQUEST_WORKERS", 8)
+    self.upload_request_queue = _int("upload_request_queue", "AI_AUDIT_UPLOAD_REQUEST_QUEUE", 8)
+    self.external_request_workers = _int("external_request_workers", "AI_AUDIT_EXTERNAL_REQUEST_WORKERS", 8)
+    self.external_request_queue = _int("external_request_queue", "AI_AUDIT_EXTERNAL_REQUEST_QUEUE", 16)
+    for name in ["file_work_workers", "upload_request_workers", "external_request_workers"]:
+      if getattr(self, name) <= 0:
+        raise ValueError(f"{name} must be positive")
+    for name in ["file_work_queue", "upload_request_queue", "external_request_queue"]:
+      if getattr(self, name) < 0:
+        raise ValueError(f"{name} must be non-negative")
     self.sse_wait_timeout_seconds = _float("sse_wait_timeout_seconds", "AI_AUDIT_SSE_WAIT_TIMEOUT_SECONDS", 5)
     self.sse_max_idle_rounds = _int("sse_max_idle_rounds", "AI_AUDIT_SSE_MAX_IDLE_ROUNDS", 24)
     self.sse_retry_ms = _int("sse_retry_ms", "AI_AUDIT_SSE_RETRY_MS", 2_000)

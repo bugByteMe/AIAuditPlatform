@@ -12,6 +12,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import server
 from server import Handler, app
+from server_workloads import WorkloadBusy
 
 
 class FakeChatRuntime:
@@ -44,6 +45,16 @@ class FakeUploadManager:
     return {"id": upload_id, "offsets": [length], "status": "uploading"}
 
 
+class BusyPool:
+  async def run(self, *_args):
+    raise WorkloadBusy("file")
+
+
+class BusyPools:
+  def pool(self, _workload):
+    return BusyPool()
+
+
 class ServerStreamingTest(unittest.TestCase):
   def test_server_entrypoint_uses_configured_host_and_port(self) -> None:
     with patch.object(sys, "argv", ["server.py"]), patch("uvicorn.run") as run:
@@ -51,7 +62,7 @@ class ServerStreamingTest(unittest.TestCase):
     run.assert_called_once_with(app, host=server.SETTINGS.host, port=server.SETTINGS.port)
 
   def test_fastapi_health_and_options_preserve_transport_contract(self) -> None:
-    with TestClient(app) as client:
+    with TestClient(app) as client, patch("server_asgi.workload_pools", side_effect=AssertionError("default route used dedicated pool")):
       response = client.get("/api/health", headers={"Origin": "https://audit.example"})
       self.assertEqual(response.status_code, 200)
       self.assertEqual(response.json(), {"ok": True})
@@ -60,6 +71,18 @@ class ServerStreamingTest(unittest.TestCase):
       options = client.options("/api/health", headers={"Origin": "https://audit.example"})
       self.assertEqual(options.status_code, 204)
       self.assertEqual(options.headers["access-control-allow-credentials"], "true")
+
+  def test_dedicated_pool_overload_returns_retryable_service_unavailable(self) -> None:
+    with TestClient(app) as client, patch("server_asgi.workload_pools", return_value=BusyPools()):
+      response = client.get(
+        "/api/workspaces/workspace-1/download?mode=full",
+        headers={"Origin": "https://audit.example"},
+      )
+    self.assertEqual(response.status_code, 503)
+    self.assertEqual(response.json(), {"error": "server_busy", "message": "server is busy; retry shortly"})
+    self.assertEqual(response.headers["retry-after"], "2")
+    self.assertEqual(response.headers["cache-control"], "no-store")
+    self.assertEqual(response.headers["access-control-allow-origin"], "https://audit.example")
 
   def test_fastapi_sse_preserves_event_framing(self) -> None:
     with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch(
