@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import tempfile
 import time
 import unittest
@@ -96,6 +97,9 @@ class RemoteUploadClient:
   def cancel_upload(self, upload_id):
     return self.worker.cancel(upload_id)
 
+  def purge_upload(self, upload_id):
+    return self.worker.purge(upload_id)
+
 
 class RemoteUploadRegistry:
   def __init__(self, root: Path):
@@ -126,6 +130,7 @@ class UploadManagerTest(unittest.TestCase):
     self.manager = UploadManager(self.store, settings=settings())
 
   def tearDown(self):
+    self.manager.shutdown()
     self.temp.cleanup()
 
   def wait_for_commit(self, upload_id: str) -> dict:
@@ -259,6 +264,44 @@ class UploadManagerTest(unittest.TestCase):
     manager = UploadManager(self.store, settings=settings(max_file_bytes=2))
     with self.assertRaisesRegex(StorageError, "per-file limit"):
       manager.create(USER, {"mode": "create", "files": [{"path": "large.bin", "size": 3}]})
+
+  def test_upload_coordination_is_sql_backed(self):
+    upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
+    self.assertFalse((self.store.root / "upload_sessions.json").exists())
+    self.assertTrue((self.store.root / "upload.sqlite3").is_file())
+    self.assertEqual(self.manager.database.get(upload["id"])["owner"], USER["username"])
+
+  def test_gc_expires_stale_upload_and_collects_terminal_row(self):
+    manager = UploadManager(self.store, settings=settings(upload_session_ttl_seconds=1, upload_terminal_retention_seconds=1))
+    upload = manager.create(USER, {"mode": "create", "files": [{"path": "stale.txt", "size": 3}]})
+    session = manager.database.get(upload["id"])
+    session["updatedAt"] = time.time() - 10
+    manager.database.save(session)
+    result = manager.collect_garbage()
+    self.assertEqual(result["expired"], 1)
+    expired = manager.database.get(upload["id"])
+    self.assertEqual(expired["status"], "expired")
+    expired["terminalAt"] = time.time() - 10
+    manager.database.save(expired)
+    self.assertEqual(manager.collect_garbage()["deleted"], 1)
+    self.assertIsNone(manager.database.get(upload["id"]))
+    manager.shutdown()
+
+  def test_worker_orphan_gc_never_removes_workspace_or_blob_data(self):
+    worker = WorkerUploadStore(self.store.root)
+    upload = worker.initialize({"id": "upload_orphan", "workspaceId": "ws_keep", "mode": "create", "files": [], "parentFiles": {}, "snapshotId": "snap_1"})
+    state = worker.load(upload["id"])
+    state["updatedAt"] = time.time() - 100
+    worker.state_path(upload["id"]).write_text(json.dumps(state), encoding="utf-8")
+    workspace_file = self.store.active_dir / "ws_keep" / "keep.txt"
+    workspace_file.parent.mkdir(parents=True, exist_ok=True)
+    workspace_file.write_text("keep", encoding="utf-8")
+    blob_file = self.store.blob_dir / "aa" / "bb" / "aabb"
+    blob_file.parent.mkdir(parents=True, exist_ok=True)
+    blob_file.write_text("keep", encoding="utf-8")
+    self.assertEqual(worker.collect_garbage(time.time() - 10), 1)
+    self.assertTrue(workspace_file.is_file())
+    self.assertTrue(blob_file.is_file())
 
 
 if __name__ == "__main__":

@@ -28,6 +28,10 @@ Startup reconciliation also verifies existing bindings. A stale local `tokenName
 
 Named groups are persisted independently from accounts. Each group may have a nullable logical workspace disk limit; `null` means unlimited. Each group also has a non-negative concurrent live-run limit, defaulting to one for new and migrated groups; zero pauses admission of new runs for the group. Group-level token budget enforcement is not part of the current implementation; each invited account receives the per-user token budget selected for its batch.
 
+Account, group, invitation, recharge-payment, and recharge-order records are
+stored as independently addressable SQL rows. Routine balance, provider, and
+administrative updates no longer rewrite a shared `accounts.json` file.
+
 The initial design does not require SSO, device binding, or multi-factor authentication.
 
 ## Account Sharing Controls

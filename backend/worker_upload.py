@@ -274,6 +274,38 @@ class WorkerUploadStore:
           self.file_locks.pop(key, None)
     return {"id": upload_id, "status": "cancelled"}
 
+  def purge(self, upload_id: str) -> dict:
+    """Idempotently remove staging without touching active workspaces or blobs."""
+    with self.lock:
+      if upload_id in self.finalizing:
+        raise StorageError("upload_commit_started", "upload processing is still active")
+      shutil.rmtree(self.directory(upload_id), ignore_errors=True)
+      for key in [key for key in self.file_locks if key[0] == upload_id]:
+        self.file_locks.pop(key, None)
+    return {"id": upload_id, "status": "purged"}
+
+  def collect_garbage(self, cutoff: float) -> int:
+    removed = 0
+    for directory in list(self.upload_root.glob("upload_*")):
+      if not directory.is_dir():
+        continue
+      upload_id = directory.name
+      with self.lock:
+        if upload_id in self.finalizing:
+          continue
+        try:
+          state = self.load(upload_id)
+          updated = float(state.get("updatedAt") or directory.stat().st_mtime)
+        except Exception:
+          updated = directory.stat().st_mtime
+        if updated >= cutoff:
+          continue
+        shutil.rmtree(directory, ignore_errors=True)
+        for key in [key for key in self.file_locks if key[0] == upload_id]:
+          self.file_locks.pop(key, None)
+        removed += 1
+    return removed
+
   def public(self, state: dict) -> dict:
     return {
       "id": state["id"], "status": state["status"], "error": state.get("error", ""),

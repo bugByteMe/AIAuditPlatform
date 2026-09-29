@@ -1,17 +1,18 @@
 from __future__ import annotations
 
-import hashlib
 import json
-import shutil
 import threading
 import time
 
+from chat_common import KeyedLockPool
 from compute_nodes import WorkerUnavailable
 from config import SETTINGS
-from worker_upload import TrackedReader, WorkerUploadStore, _atomic_json
+from upload_database import TERMINAL_UPLOAD_STATES, UploadDatabase
+from worker_upload import TrackedReader, WorkerUploadStore
 from workspace_store import StorageError, generated_id, normalize_relative_path
 
 ACTIVE_UPLOAD_STATES = {"uploading", "processing", "committing"}
+
 
 class UploadManager:
   def __init__(self, workspace_store, worker_registry=None, settings=SETTINGS, audit_callback=None):
@@ -19,46 +20,50 @@ class UploadManager:
     self.worker_registry = worker_registry
     self.settings = settings
     self.audit_callback = audit_callback
-    self.path = workspace_store.root / "upload_sessions.json"
+    self.database = UploadDatabase(workspace_store.root, getattr(settings, "database_url", ""))
+    legacy_path = workspace_store.root / "upload_sessions.json"
+    if not self.database.all() and legacy_path.is_file():
+      legacy_sessions = (json.loads(legacy_path.read_text(encoding="utf-8")) or {}).get("sessions") or {}
+      if legacy_sessions and getattr(settings, "database_url", ""):
+        raise RuntimeError("upload_sessions.json requires offline migration before SQL upload coordination can start")
+      if legacy_sessions:
+        self.database.import_sessions(legacy_sessions)
     self.local_worker = WorkerUploadStore(workspace_store.root, settings.upload_stream_buffer_bytes)
-    self.lock = threading.RLock()
+    self.create_lock = threading.RLock()
+    self.session_locks = KeyedLockPool()
     self.stream_slots = threading.BoundedSemaphore(max(1, settings.upload_max_concurrent_streams))
-    if not self.path.exists():
-      _atomic_json(self.path, {"sessions": {}})
-    elif self.worker_registry:
-      recovered = self.load()
-      for session in recovered.get("sessions", {}).values():
-        if session.get("status") in ACTIVE_UPLOAD_STATES:
-          # Reservations are process-local leases. Reclaim one lazily on the
-          # first resumed request instead of blocking capacity after restart.
-          session["reservationHeld"] = False
-      self.save(recovered)
-    with self.lock, self.store.lock:
-      persisted = self.load()
-      if self._expire(persisted):
-        self.save(persisted)
-      for session in persisted.get("sessions", {}).values():
-        if session.get("status") == "uploading":
-          self._schedule_expiry(session["id"])
-      for workspace in self.store.database.list_workspace_headers(username="", group_name="", system_admin=True):
-        upload_id = workspace.get("activeUploadId")
-        session = persisted.get("sessions", {}).get(upload_id) if upload_id else None
-        if upload_id and (not session or session.get("status") not in ACTIVE_UPLOAD_STATES):
-          workspace["locked"] = False
-          workspace.pop("activeUploadId", None)
-          self.store.save_workspace_lifecycle(workspace)
+    self.gc_stop = threading.Event()
+    for session in self.database.all().values():
+      if session.get("status") in ACTIVE_UPLOAD_STATES and session.get("reservationHeld"):
+        session["reservationHeld"] = False
+        self.database.save(session)
+    self._repair_workspace_leases()
+    self.gc_thread = threading.Thread(target=self._gc_loop, name="ai-audit-upload-gc", daemon=True)
+    self.gc_thread.start()
 
   def load(self) -> dict:
-    return json.loads(self.path.read_text(encoding="utf-8"))
+    """Compatibility/testing view; runtime mutations are row-scoped."""
+    return {"sessions": self.database.all()}
 
   def save(self, payload: dict) -> None:
-    _atomic_json(self.path, payload)
+    for session in payload.get("sessions", {}).values():
+      self.database.save(session)
+
+  def shutdown(self) -> None:
+    self.gc_stop.set()
+
+  def _repair_workspace_leases(self) -> None:
+    sessions = self.database.all()
+    for workspace in self.store.database.list_workspace_headers(username="", group_name="", system_admin=True):
+      upload_id = workspace.get("activeUploadId")
+      session = sessions.get(upload_id) if upload_id else None
+      if upload_id and (not session or session.get("status") not in ACTIVE_UPLOAD_STATES):
+        workspace["locked"] = False
+        workspace.pop("activeUploadId", None)
+        self.store.save_workspace_lifecycle(workspace)
 
   def create(self, user: dict, payload: dict) -> dict:
-    with self.lock, self.store.lock:
-      data = self.load()
-      if self._expire(data):
-        self.save(data)
+    with self.create_lock, self.store.lock:
       mode = str(payload.get("mode") or "create")
       if mode not in {"create", "append"}:
         raise StorageError("bad_request", "upload mode must be create or append")
@@ -78,12 +83,10 @@ class UploadManager:
           raise StorageError("file_too_large", f"{path} exceeds the per-file limit")
         total += size
         files.append({"path": path, "size": size, "lastModified": int(source.get("lastModified") or 0)})
-      upload_id = generated_id("upload")
-      snapshot_id = generated_id("snap")
+      upload_id, snapshot_id = generated_id("upload"), generated_id("snap")
       metadata = self.store.empty_metadata()
       parent_files, workspace_id, reserved = {}, generated_id("ws"), total
-      workspace = None
-      quota_user = user
+      workspace, quota_user = None, user
       if mode == "append":
         workspace_id = str(payload.get("workspaceId") or "")
         metadata = self.store.load_workspace_metadata(workspace_id)
@@ -94,9 +97,8 @@ class UploadManager:
           raise StorageError("workspace_locked", "workspace has an active write lock")
         parent = metadata.get("snapshots", {}).get(workspace.get("latestSnapshotId")) or {"files": {}}
         parent_files = parent.get("files") or {}
-        projected = dict((path, int(entry["size"])) for path, entry in parent_files.items())
-        for item in files:
-          projected[item["path"]] = item["size"]
+        projected = {path: int(entry["size"]) for path, entry in parent_files.items()}
+        projected.update({item["path"]: item["size"] for item in files})
         if len(projected) > self.settings.max_file_count:
           raise StorageError("too_many_files", "workspace exceeds file count limit")
         projected_size = sum(projected.values())
@@ -107,38 +109,31 @@ class UploadManager:
       elif total > self.settings.max_workspace_bytes:
         raise StorageError("workspace_too_large", "workspace exceeds the total size limit")
       group_id = str(quota_user.get("groupId") or "")
-      pending = sum(int(item.get("reservedBytes") or 0) for item in data["sessions"].values() if item.get("groupId") == group_id and item.get("status") in ACTIVE_UPLOAD_STATES)
+      pending = self.database.active_reserved_bytes(group_id, ACTIVE_UPLOAD_STATES)
       self.store.assert_group_quota(quota_user, reserved + pending, metadata)
       node_id = None
       if self.worker_registry:
         node_id = self.worker_registry.claim_upload(upload_id, self.settings.upload_reservation_cpus, self.settings.upload_reservation_memory_bytes)
         if not node_id:
           raise StorageError("no_upload_worker", "no compute worker has upload capacity")
+      now = time.time()
       session = {
-        "id": upload_id, "owner": user["username"], "group": user.get("group", ""), "groupId": group_id, "mode": mode,
-        "workspaceId": workspace_id, "name": str(payload.get("name") or "").strip() or "Untitled workspace",
+        "id": upload_id, "owner": user["username"], "group": user.get("group", ""), "groupId": group_id,
+        "mode": mode, "workspaceId": workspace_id, "name": str(payload.get("name") or "").strip() or "Untitled workspace",
         "shared": bool(payload.get("shared")), "files": files, "parentFiles": parent_files,
-        "parentSnapshotId": workspace.get("latestSnapshotId") if workspace else None,
-        "snapshotId": snapshot_id, "reservedBytes": reserved, "workerId": node_id,
-        "reservationHeld": bool(node_id), "status": "uploading", "createdAt": time.time(), "updatedAt": time.time(),
+        "parentSnapshotId": workspace.get("latestSnapshotId") if workspace else None, "snapshotId": snapshot_id,
+        "reservedBytes": reserved, "workerId": node_id, "reservationHeld": bool(node_id),
+        "status": "uploading", "createdAt": now, "updatedAt": now,
       }
       if workspace:
-        workspace["locked"] = True
-        workspace["activeUploadId"] = upload_id
+        workspace["locked"], workspace["activeUploadId"] = True, upload_id
         self.store.save_workspace_lifecycle(workspace)
-      data["sessions"][upload_id] = session
-      self.save(data)
+      self.database.save(session)
       try:
         self._initialize_worker(session)
-        self._schedule_idle_release(session)
-        self._schedule_expiry(session["id"])
       except Exception:
-        data["sessions"].pop(upload_id, None)
-        self.save(data)
-        if workspace:
-          workspace["locked"] = False
-          workspace.pop("activeUploadId", None)
-          self.store.save_workspace_lifecycle(workspace)
+        self.database.delete(upload_id)
+        self._release_workspace(session)
         if self.worker_registry:
           self.worker_registry.release(node_id, upload_id)
         raise
@@ -150,16 +145,15 @@ class UploadManager:
       return self.worker_registry.client(session["workerId"]).initialize_upload(payload)
     return self.local_worker.initialize(payload)
 
-  def _session(self, upload_id: str, user: dict) -> tuple[dict, dict]:
-    data = self.load()
-    session = data.get("sessions", {}).get(upload_id)
+  def _session(self, upload_id: str, user: dict) -> dict:
+    session = self.database.get(upload_id)
     if not session:
       raise StorageError("not_found", "upload session not found")
     if session["owner"] != user["username"] and user.get("role") != "system_admin":
       raise StorageError("forbidden", "upload session access denied")
-    return data, session
+    return session
 
-  def _ensure_worker(self, data: dict, session: dict):
+  def _ensure_worker(self, session: dict):
     if not self.worker_registry:
       return None
     node_id = session.get("workerId")
@@ -168,82 +162,35 @@ class UploadManager:
       return self.worker_registry.client(node_id)
     self.worker_registry.release(node_id, session["id"])
     session["reservationHeld"] = False
-    self.save(data)
     replacement = self.worker_registry.claim_upload(session["id"], self.settings.upload_reservation_cpus, self.settings.upload_reservation_memory_bytes)
     if not replacement:
+      self.database.save(session)
       raise StorageError("no_upload_worker", "no compute worker has upload capacity")
-    session["workerId"] = replacement
-    session["reservationHeld"] = True
-    session["updatedAt"] = time.time()
-    self.save(data)
+    session.update({"workerId": replacement, "reservationHeld": True, "updatedAt": time.time()})
+    self.database.save(session)
     client = self.worker_registry.client(replacement)
-    payload = {key: session[key] for key in ["id", "workspaceId", "mode", "files", "parentFiles", "snapshotId"]}
     try:
-      client.initialize_upload(payload)
+      client.initialize_upload({key: session[key] for key in ["id", "workspaceId", "mode", "files", "parentFiles", "snapshotId"]})
     except WorkerUnavailable as exc:
-      self._release_failed_reservation(data, session, exc)
+      self._release_failed_reservation(session, exc)
       raise StorageError("upload_worker_unavailable", str(exc)) from exc
     return client
 
-  def _release_failed_reservation(self, data: dict, session: dict, error: Exception) -> None:
+  def _release_failed_reservation(self, session: dict, error: Exception) -> None:
     if self.worker_registry:
       self.worker_registry.release(session.get("workerId"), session["id"])
-    session["reservationHeld"] = False
-    session["updatedAt"] = time.time()
-    session["error"] = str(error)
-    self.save(data)
-
-  def _schedule_idle_release(self, session: dict) -> None:
-    if not self.worker_registry or not session.get("reservationHeld"):
-      return
-    expected = float(session.get("updatedAt") or 0)
-    timer = threading.Timer(max(1, self.settings.upload_reservation_idle_seconds), self._release_if_idle, args=(session["id"], expected))
-    timer.daemon = True
-    timer.start()
-
-  def _release_if_idle(self, upload_id: str, expected_updated: float) -> None:
-    with self.lock:
-      data = self.load()
-      session = data.get("sessions", {}).get(upload_id)
-      if not session or session.get("status") != "uploading" or not session.get("reservationHeld"):
-        return
-      if float(session.get("updatedAt") or 0) != expected_updated:
-        return
-      self.worker_registry.release(session.get("workerId"), upload_id)
-      session["reservationHeld"] = False
-      self.save(data)
-
-  def _schedule_expiry(self, upload_id: str, delay: float | None = None) -> None:
-    timer = threading.Timer(max(1, delay if delay is not None else self.settings.upload_session_ttl_seconds), self._expire_one, args=(upload_id,))
-    timer.daemon = True
-    timer.start()
-
-  def _expire_one(self, upload_id: str) -> None:
-    with self.lock, self.store.lock:
-      data = self.load()
-      session = data.get("sessions", {}).get(upload_id)
-      if not session or session.get("status") != "uploading":
-        return
-      remaining = float(session.get("updatedAt") or 0) + self.settings.upload_session_ttl_seconds - time.time()
-      if remaining > 0:
-        self._schedule_expiry(upload_id, remaining)
-        return
-      if self._expire(data):
-        self.save(data)
+    session.update({"reservationHeld": False, "updatedAt": time.time(), "error": str(error)})
+    self.database.save(session)
 
   def receive_chunk(self, upload_id: str, user: dict, index: int, offset: int, source, length: int) -> dict:
     if length < 0 or length > self.settings.upload_chunk_bytes:
       raise StorageError("bad_request", "invalid upload chunk size")
-    with self.stream_slots:
-      with self.lock:
-        data, session = self._session(upload_id, user)
-        client = self._ensure_worker(data, session)
+    with self.stream_slots, self.session_locks.hold(upload_id):
+      session = self._session(upload_id, user)
+      client = self._ensure_worker(session)
       tracked = TrackedReader(source)
       try:
-        if self.worker_registry:
-          status = client.stream_upload_chunk(upload_id, index, offset, tracked, length, self.settings.upload_stream_buffer_bytes)
-        else:
-          status = self.local_worker.write_chunk(upload_id, index, offset, tracked, length)
+        status = client.stream_upload_chunk(upload_id, index, offset, tracked, length, self.settings.upload_stream_buffer_bytes) if self.worker_registry else self.local_worker.write_chunk(upload_id, index, offset, tracked, length)
       except WorkerUnavailable as exc:
         remaining = max(0, length - tracked.bytes_read)
         while remaining:
@@ -251,113 +198,141 @@ class UploadManager:
           if not block:
             break
           remaining -= len(block)
-        with self.lock:
-          data, session = self._session(upload_id, user)
-          self._release_failed_reservation(data, session, exc)
+        self._release_failed_reservation(session, exc)
         raise StorageError("upload_worker_unavailable", str(exc)) from exc
-      with self.lock:
-        data, session = self._session(upload_id, user)
-        session["error"] = ""
-        session["updatedAt"] = time.time()
-        self.save(data)
-        self._schedule_idle_release(session)
+      session.update({"error": "", "updatedAt": time.time()})
+      self.database.save(session)
       return self.public(session, status)
 
   def status(self, upload_id: str, user: dict) -> dict:
-    with self.lock:
-      data, session = self._session(upload_id, user)
+    with self.session_locks.hold(upload_id):
+      session = self._session(upload_id, user)
       if session["status"] == "committed":
-        return self.public(session, {"status": "committed", "offsets": [item["size"] for item in session["files"]], "uploadedBytes": sum(item["size"] for item in session["files"]), "totalBytes": sum(item["size"] for item in session["files"]), "processingBytes": sum(item["size"] for item in session["files"])})
-      client = self._ensure_worker(data, session)
-      try:
-        worker_status = client.upload_status(upload_id) if self.worker_registry else self.local_worker.status(upload_id)
-      except WorkerUnavailable as exc:
-        self._release_failed_reservation(data, session, exc)
-        raise StorageError("upload_worker_unavailable", str(exc)) from exc
-      session["status"] = worker_status["status"]
-      session["updatedAt"] = time.time()
-      if worker_status["status"] == "ready":
-        session["status"] = "committing"
-        self.save(data)
-        result = client.upload_result(upload_id) if self.worker_registry else self.local_worker.result(upload_id)
-        workspace = self.store.commit_prepared_upload(user, session, result)
-        session["status"] = "committed"
-        session["workspace"] = workspace
-        if self.worker_registry:
-          self.worker_registry.release(session.get("workerId"), upload_id)
-          session["reservationHeld"] = False
-        self.save(data)
-        if self.audit_callback and not session.get("auditRecorded"):
-          event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
-          self.audit_callback(session["owner"], event, session["workspaceId"])
-          session["auditRecorded"] = True
-      self.save(data)
-      if session["status"] == "uploading":
-        self._schedule_idle_release(session)
-      return self.public(session, worker_status)
+        total = sum(item["size"] for item in session["files"])
+        return self.public(session, {"status": "committed", "offsets": [item["size"] for item in session["files"]], "uploadedBytes": total, "totalBytes": total, "processingBytes": total})
+      if session["status"] in TERMINAL_UPLOAD_STATES:
+        return self.public(session, {"status": session["status"], "error": session.get("error", "")})
+      return self._reconcile_session(session, user)
+
+  def _reconcile_session(self, session: dict, user: dict) -> dict:
+    client = self._ensure_worker(session)
+    try:
+      worker_status = client.upload_status(session["id"]) if self.worker_registry else self.local_worker.status(session["id"])
+    except WorkerUnavailable as exc:
+      self._release_failed_reservation(session, exc)
+      raise StorageError("upload_worker_unavailable", str(exc)) from exc
+    session.update({"status": worker_status["status"], "updatedAt": time.time()})
+    if worker_status["status"] == "failed":
+      self._terminal(session, "failed", worker_status.get("error") or "upload processing failed")
+    elif worker_status["status"] == "ready":
+      session["status"] = "committing"
+      self.database.save(session)
+      result = client.upload_result(session["id"]) if self.worker_registry else self.local_worker.result(session["id"])
+      session["workspace"] = self.store.commit_prepared_upload(user, session, result)
+      self._terminal(session, "committed")
+      if self.audit_callback and not session.get("auditRecorded"):
+        event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
+        self.audit_callback(session["owner"], event, session["workspaceId"])
+        session["auditRecorded"] = True
+        self.database.save(session)
+    else:
+      self.database.save(session)
+    return self.public(session, worker_status)
 
   def complete(self, upload_id: str, user: dict) -> dict:
-    with self.lock:
-      data, session = self._session(upload_id, user)
+    with self.session_locks.hold(upload_id):
+      session = self._session(upload_id, user)
       if session["status"] == "committed":
         return self.public(session, {"status": "committed"})
-      client = self._ensure_worker(data, session)
+      client = self._ensure_worker(session)
       try:
         result = client.complete_upload(upload_id) if self.worker_registry else self.local_worker.complete(upload_id)
       except WorkerUnavailable as exc:
-        self._release_failed_reservation(data, session, exc)
+        self._release_failed_reservation(session, exc)
         raise StorageError("upload_worker_unavailable", str(exc)) from exc
-      session["status"] = result["status"]
-      session["updatedAt"] = time.time()
-      self.save(data)
+      session.update({"status": result["status"], "updatedAt": time.time()})
+      self.database.save(session)
       return self.public(session, result)
 
   def cancel(self, upload_id: str, user: dict) -> dict:
-    with self.lock, self.store.lock:
-      data, session = self._session(upload_id, user)
+    with self.session_locks.hold(upload_id), self.store.lock:
+      session = self._session(upload_id, user)
       if self.worker_registry:
         self.worker_registry.client(session["workerId"]).cancel_upload(upload_id)
-        self.worker_registry.release(session.get("workerId"), upload_id)
-        session["reservationHeld"] = False
       else:
         self.local_worker.cancel(upload_id)
-      if session["mode"] == "append":
-        workspace = self.store.database.get_workspace_header(session["workspaceId"])
-        if workspace and workspace.get("activeUploadId") == upload_id:
-          workspace["locked"] = False
-          workspace.pop("activeUploadId", None)
-          self.store.save_workspace_lifecycle(workspace)
-      session["status"] = "cancelled"
-      self.save(data)
+      self._terminal(session, "cancelled")
       return {"id": upload_id, "status": "cancelled"}
 
-  def _expire(self, data: dict) -> bool:
-    cutoff = time.time() - self.settings.upload_session_ttl_seconds
-    changed = False
-    for session in data.get("sessions", {}).values():
-      if session.get("status") == "uploading" and float(session.get("updatedAt") or 0) < cutoff:
-        changed = True
-        session["status"] = "expired"
-        shutil.rmtree(self.local_worker.directory(session["id"]), ignore_errors=True)
-        if self.worker_registry:
-          self.worker_registry.release(session.get("workerId"), session["id"])
-        if session.get("mode") == "append":
-          workspace = self.store.database.get_workspace_header(session.get("workspaceId"))
-          if workspace and workspace.get("activeUploadId") == session["id"]:
-            workspace["locked"] = False
-            workspace.pop("activeUploadId", None)
-            self.store.save_workspace_lifecycle(workspace)
-    return changed
+  def _terminal(self, session: dict, status: str, error: str = "") -> None:
+    now = time.time()
+    session.update({"status": status, "error": error, "updatedAt": now, "terminalAt": now, "cleanupPending": True})
+    if self.worker_registry:
+      self.worker_registry.release(session.get("workerId"), session["id"])
+    session["reservationHeld"] = False
+    self._release_workspace(session)
+    self.database.save(session)
+    self._cleanup_staging(session)
+
+  def _release_workspace(self, session: dict) -> None:
+    if session.get("mode") != "append":
+      return
+    workspace = self.store.database.get_workspace_header(session.get("workspaceId"))
+    if workspace and workspace.get("activeUploadId") == session["id"]:
+      workspace["locked"] = False
+      workspace.pop("activeUploadId", None)
+      self.store.save_workspace_lifecycle(workspace)
+
+  def _cleanup_staging(self, session: dict) -> None:
+    try:
+      if self.worker_registry and session.get("workerId"):
+        self.worker_registry.client(session["workerId"]).purge_upload(session["id"])
+      else:
+        self.local_worker.purge(session["id"])
+      session["cleanupPending"] = False
+      session["stagingCleanedAt"] = time.time()
+    except Exception as exc:
+      session["cleanupPending"] = True
+      session["cleanupError"] = str(exc)
+    self.database.save(session)
+
+  def _gc_loop(self) -> None:
+    interval = max(1, int(getattr(self.settings, "upload_gc_interval_seconds", 300)))
+    while not self.gc_stop.wait(interval):
+      try:
+        self.collect_garbage()
+      except Exception:
+        continue
+
+  def collect_garbage(self) -> dict:
+    now = time.time()
+    batch = max(1, int(getattr(self.settings, "upload_gc_batch_size", 100)))
+    cutoff = now - int(self.settings.upload_session_ttl_seconds)
+    expired = 0
+    for candidate in self.database.stale_active(cutoff, {"uploading"}, batch):
+      with self.session_locks.hold(candidate["id"]), self.store.lock:
+        current = self.database.get(candidate["id"])
+        if current and current.get("status") == "uploading" and float(current.get("updatedAt") or 0) < cutoff:
+          self._terminal(current, "expired", "upload session expired")
+          expired += 1
+    for candidate in self.database.cleanup_pending(batch):
+      with self.session_locks.hold(candidate["id"]):
+        current = self.database.get(candidate["id"])
+        if current and current.get("cleanupPending"):
+          self._cleanup_staging(current)
+    retention = int(getattr(self.settings, "upload_terminal_retention_seconds", 86400))
+    deleted = self.database.delete_terminal_before(now - retention, batch)
+    return {"expired": expired, "deleted": len(deleted)}
 
   def public(self, session: dict, worker_status: dict) -> dict:
     status = session.get("status") or worker_status.get("status") or "uploading"
     payload = {
-      "id": session["id"], "mode": session["mode"], "workspaceId": session["workspaceId"],
-      "status": status, "phase": "committing" if status == "committing" else "processing" if status in {"processing", "ready"} else "complete" if status == "committed" else "uploading",
-      "chunkSizeBytes": self.settings.upload_chunk_bytes,
-      "offsets": worker_status.get("offsets") or [], "uploadedBytes": int(worker_status.get("uploadedBytes") or 0),
-      "processingBytes": int(worker_status.get("processingBytes") or 0), "totalBytes": int(worker_status.get("totalBytes") or sum(item["size"] for item in session["files"])),
-      "error": worker_status.get("error") or "",
+      "id": session["id"], "mode": session["mode"], "workspaceId": session["workspaceId"], "status": status,
+      "phase": "committing" if status == "committing" else "processing" if status in {"processing", "ready"} else "complete" if status in TERMINAL_UPLOAD_STATES else "uploading",
+      "chunkSizeBytes": self.settings.upload_chunk_bytes, "offsets": worker_status.get("offsets") or [],
+      "uploadedBytes": int(worker_status.get("uploadedBytes") or 0), "processingBytes": int(worker_status.get("processingBytes") or 0),
+      "totalBytes": int(worker_status.get("totalBytes") or sum(item["size"] for item in session["files"])),
+      "error": worker_status.get("error") or session.get("error") or "",
     }
     if session.get("workspace"):
       payload["workspace"] = session["workspace"]

@@ -31,8 +31,8 @@ class AccountStoreTest(unittest.TestCase):
       reloaded = AccountStore(path, {})
       self.assertEqual(reloaded.users["li.review"]["codex"]["baseUrl"], "https://codex.example/v1")
       self.assertEqual(reloaded.users["li.review"]["codex"]["apiKey"], "sk-test")
-      if sys.platform != "win32":
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+      self.assertFalse(path.exists())
+      self.assertTrue((Path(tempdir) / "account.sqlite3").is_file())
 
   def test_seed_is_copied_before_mutation(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:

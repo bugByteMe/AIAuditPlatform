@@ -22,7 +22,7 @@ class AccountRechargeMixin:
         raise ValueError("recharge order already exists")
       self.recharge_orders[order_id] = deepcopy(order)
       try:
-        self.save()
+        self.database.save_order(self.recharge_orders[order_id])
       except Exception:
         self.recharge_orders.pop(order_id, None)
         raise
@@ -43,7 +43,7 @@ class AccountRechargeMixin:
       previous = deepcopy(order)
       order.update(deepcopy(updates))
       try:
-        self.save()
+        self.database.save_order(order)
       except Exception:
         self.recharge_orders[order_id] = previous
         raise
@@ -59,7 +59,7 @@ class AccountRechargeMixin:
       previous = deepcopy(order)
       order.update(deepcopy(updates))
       try:
-        self.save()
+        self.database.save_order(order)
       except Exception:
         self.recharge_orders[order_id] = previous
         raise
@@ -81,7 +81,7 @@ class AccountRechargeMixin:
       reserved = {**deepcopy(payment), "id": f"rch_{key[:16]}", "status": "processing", "reason": ""}
       self.recharge_payments[key] = reserved
       try:
-        self.save()
+        self.database.save_payment(key, reserved)
       except Exception:
         self.recharge_payments.pop(key, None)
         raise
@@ -101,7 +101,7 @@ class AccountRechargeMixin:
           raise ValueError("recharge account was not found")
         user.setdefault("micu", {}).update(deepcopy(binding_updates))
       try:
-        self.save()
+        self.database.save_payment_and_user(key, payment, user if binding_updates else None)
       except Exception:
         self.recharge_payments[key] = previous_payment
         if user is not None:
@@ -142,4 +142,3 @@ class AccountRechargeMixin:
       }
       order.clear()
       order.update(retained)
-

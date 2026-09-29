@@ -84,7 +84,7 @@ class AdminHandlerMixin:
     except MicuApiError as exc:
       raise StorageError("budget_provider_unavailable", str(exc)) from exc
     binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "rechargeBaselineQuota": balance["rawQuota"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
-    ACCOUNT_STORE.save()
+    ACCOUNT_STORE.save_user(account)
     add_audit(actor["username"], "account MicuAPI balance added", f"{account['id']} amountCny={balance['addedCny']} balanceCny={balance['remainingCny']}")
     self.write_json({"account": admin_account(account)})
 
@@ -149,7 +149,7 @@ class AdminHandlerMixin:
         MICU_CLIENT.delete_token(user["micu"])
       except MicuApiError as exc:
         user["enabled"] = False
-        ACCOUNT_STORE.save()
+        ACCOUNT_STORE.save_user(user)
         raise StorageError("budget_provider_unavailable", f"MicuAPI key cleanup failed: {exc}") from exc
     removed_users, removed_pending = ACCOUNT_STORE.remove_accounts(user_ids)
     self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
@@ -176,7 +176,8 @@ class AdminHandlerMixin:
       except MicuApiError as exc:
         for member in active_users:
           member["enabled"] = False
-        ACCOUNT_STORE.save()
+        for member in active_users:
+          ACCOUNT_STORE.save_user(member)
         raise StorageError("budget_provider_unavailable", f"MicuAPI key cleanup failed: {exc}") from exc
     removed_group, removed_users, removed_pending = ACCOUNT_STORE.remove_group_and_accounts(group_id, user_ids)
     self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
@@ -243,7 +244,7 @@ class AdminHandlerMixin:
         "passwordHash": hash_password(password),
       }
       try:
-        ACCOUNT_STORE.save()
+        ACCOUNT_STORE.save_user(USERS[username])
       except Exception:
         USERS.pop(username, None)
         raise
@@ -273,7 +274,7 @@ class AdminHandlerMixin:
       except MicuApiError as exc:
         user["enabled"] = was_enabled
         raise StorageError("budget_provider_unavailable", str(exc)) from exc
-    ACCOUNT_STORE.save()
+    ACCOUNT_STORE.save_user(user)
     add_audit(actor["username"], "account updated", username)
     self.write_json({"account": public_user(user)})
 
@@ -284,4 +285,3 @@ class AdminHandlerMixin:
   def workers(self) -> None:
     self.require_admin()
     self.write_json({"workers": CHAT_RUNTIME.worker_status()})
-

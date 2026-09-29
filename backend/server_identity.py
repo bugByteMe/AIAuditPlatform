@@ -149,7 +149,7 @@ class IdentityHandlerMixin:
       if not user["customCodex"].get("apiKey"):
         raise ValueError("custom API key is required")
     user["providerMode"] = mode
-    ACCOUNT_STORE.save()
+    ACCOUNT_STORE.save_user(user)
     add_audit(user["username"], "codex settings updated", f"provider={mode}")
     custom = user.get("customCodex") or {}
     self.write_json(

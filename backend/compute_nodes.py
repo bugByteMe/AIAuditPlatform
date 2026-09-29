@@ -130,6 +130,9 @@ class WorkerClient:
   def cancel_upload(self, upload_id: str) -> dict:
     return self.request("DELETE", f"/v1/uploads/{urllib.parse.quote(upload_id)}")
 
+  def purge_upload(self, upload_id: str) -> dict:
+    return self.request("DELETE", f"/v1/uploads/{urllib.parse.quote(upload_id)}/staging")
+
   def stream_upload_chunk(self, upload_id: str, file_index: int, offset: int, source, length: int, buffer_bytes: int) -> dict:
     parsed = urllib.parse.urlparse(self.base_url)
     connection = http.client.HTTPSConnection(parsed.hostname, parsed.port, timeout=max(self.timeout, self.upload_timeout), context=self.ssl_context)
