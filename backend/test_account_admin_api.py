@@ -107,7 +107,9 @@ class AccountAdminApiTest(AccountApiTestBase):
     self.assertEqual(users["bob"]["micu"]["lastBalanceCny"], "9.00")
     self.assertEqual(users["alice"]["micu"]["rechargeBaselineQuota"], 7)
     self.assertEqual(users["bob"]["micu"]["rechargeBaselineQuota"], 9)
-    account_store.save.assert_called_once_with()
+    self.assertEqual(account_store.save_user.call_count, 2)
+    account_store.save_user.assert_any_call(users["alice"])
+    account_store.save_user.assert_any_call(users["bob"])
     self.assertNotIn("micu", users["custom"])
 
   def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
@@ -287,4 +289,3 @@ class AccountAdminApiTest(AccountApiTestBase):
     wechat.decode_callback.assert_called_once_with(handler.headers, b"{}")
     apply.assert_called_once_with(store.recharge_order.return_value, transaction)
     self.assertEqual(binary_responses, [(b"", 204)])
-
