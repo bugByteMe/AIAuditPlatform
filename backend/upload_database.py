@@ -5,6 +5,7 @@ from pathlib import Path
 
 from sqlalchemy import JSON, BigInteger, Boolean, Column, Float, Index, MetaData, String, Table, create_engine, delete, select, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.pool import NullPool
 
 
 TERMINAL_UPLOAD_STATES = {"committed", "cancelled", "expired", "failed"}
@@ -14,7 +15,8 @@ class UploadDatabase:
   def __init__(self, root: Path, database_url: str = ""):
     url = database_url or f"sqlite:///{(root / 'upload.sqlite3').as_posix()}"
     connect_args = {"check_same_thread": False, "timeout": 30} if url.startswith("sqlite") else {}
-    self.engine = create_engine(url, pool_pre_ping=True, connect_args=connect_args)
+    engine_options = {"poolclass": NullPool} if url.startswith("sqlite") else {"pool_pre_ping": True}
+    self.engine = create_engine(url, connect_args=connect_args, **engine_options)
     self.metadata = MetaData()
     self.sessions = Table(
       "upload_sessions", self.metadata,

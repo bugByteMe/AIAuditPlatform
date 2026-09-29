@@ -121,7 +121,7 @@ class AccountStoreTest(unittest.TestCase):
   def test_batch_creation_rolls_back_when_save_fails(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})
-      with patch.object(store, "save", side_effect=OSError("disk full")):
+      with patch.object(store.database, "save_batch", side_effect=OSError("disk full")):
         with self.assertRaises(OSError):
           store.create_batch(new_group_name="Rollback", count=2, budget_tokens=0, max_sessions=1)
       self.assertEqual(store.groups, {})

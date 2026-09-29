@@ -5,6 +5,7 @@ from pathlib import Path
 from sqlalchemy import JSON, Boolean, Column, Index, MetaData, String, Table, create_engine, delete, func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
+from sqlalchemy.pool import NullPool
 
 
 class AccountDatabase:
@@ -13,7 +14,8 @@ class AccountDatabase:
   def __init__(self, root: Path, database_url: str = ""):
     self.database_url = database_url or f"sqlite:///{(root / 'account.sqlite3').as_posix()}"
     connect_args = {"check_same_thread": False, "timeout": 30} if self.database_url.startswith("sqlite") else {}
-    self.engine: Engine = create_engine(self.database_url, pool_pre_ping=True, connect_args=connect_args)
+    engine_options = {"poolclass": NullPool} if self.database_url.startswith("sqlite") else {"pool_pre_ping": True}
+    self.engine: Engine = create_engine(self.database_url, connect_args=connect_args, **engine_options)
     self.metadata = MetaData()
     self.groups = Table(
       "account_groups", self.metadata,
