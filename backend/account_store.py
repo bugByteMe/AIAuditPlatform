@@ -1,13 +1,13 @@
 from __future__ import annotations
 
 import json
-import os
 import secrets
 import threading
 from copy import deepcopy
 from pathlib import Path
 
 from account_common import new_id, timestamp
+from account_database import AccountDatabase
 from account_recharge import AccountRechargeMixin
 from config import SETTINGS
 
@@ -16,8 +16,10 @@ DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
 class AccountStore(AccountRechargeMixin):
-  def __init__(self, path: Path, seed_users: dict[str, dict]):
+  def __init__(self, path: Path, seed_users: dict[str, dict], database_url: str = ""):
     self.path = path
+    self.database_url = database_url
+    self.database = AccountDatabase(path.parent, database_url)
     self.seed_users = deepcopy(seed_users)
     self.lock = threading.RLock()
     self.users: dict[str, dict] = {}
@@ -29,6 +31,16 @@ class AccountStore(AccountRechargeMixin):
 
   def load_or_seed(self) -> None:
     self.path.parent.mkdir(parents=True, exist_ok=True)
+    if not self.database.empty():
+      state = self.database.load()
+      self.users.update(deepcopy(state.get("users") or {}))
+      self.pending_accounts.update(deepcopy(state.get("pendingAccounts") or {}))
+      self.groups.update(deepcopy(state.get("groups") or {}))
+      self.recharge_payments.update(deepcopy(state.get("rechargePayments") or {}))
+      self.recharge_orders.update(deepcopy(state.get("rechargeOrders") or {}))
+      if self._normalize_provider_state():
+        self.save()
+      return
     existed = self.path.exists()
     raw = json.loads(self.path.read_text(encoding="utf-8")) if existed else deepcopy(self.seed_users)
     migrated = not (isinstance(raw, dict) and raw.get("schemaVersion") == SCHEMA_VERSION)
@@ -42,7 +54,10 @@ class AccountStore(AccountRechargeMixin):
     self.recharge_payments.update(deepcopy(state.get("rechargePayments") or {}))
     self.recharge_orders.update(deepcopy(state.get("rechargeOrders") or {}))
     recovered = self._normalize_provider_state()
-    if migrated or not existed or recovered:
+    if self.database_url and existed:
+      raise RuntimeError("accounts.json requires offline migration before SQL account storage can start")
+    self.database.replace_all(self.state())
+    if recovered:
       self.save()
 
   def migrate_legacy(self, users: dict[str, dict]) -> dict:
@@ -144,12 +159,15 @@ class AccountStore(AccountRechargeMixin):
     if users is not None and users is not self.users:
       self.users.clear()
       self.users.update(users)
-    self.path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = self.path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(self.state(), ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
-    os.chmod(tmp, 0o600)
-    tmp.replace(self.path)
-    os.chmod(self.path, 0o600)
+    self.database.sync(self.state())
+
+  def save_user(self, user: dict) -> None:
+    with self.lock:
+      self.database.save_user(user)
+
+  def save_group(self, group: dict) -> None:
+    with self.lock:
+      self.database.save_group(group)
 
   def group_by_name(self, name: str) -> dict | None:
     normalized = name.strip().casefold()
@@ -179,7 +197,7 @@ class AccountStore(AccountRechargeMixin):
     }
     self.groups[group_id] = group
     try:
-      self.save()
+      self.database.save_group(group)
     except Exception:
       self.groups.pop(group_id, None)
       raise
@@ -265,7 +283,7 @@ class AccountStore(AccountRechargeMixin):
       if new_group:
         self.groups[group_id] = new_group
       self.pending_accounts.update({account["id"]: account for account in created})
-      self.save()
+      self.database.save_batch(new_group, created)
     except Exception:
       self.groups.clear()
       self.groups.update(previous_groups)
@@ -333,7 +351,7 @@ class AccountStore(AccountRechargeMixin):
     self.pending_accounts.pop(user_id)
     self.users[username] = active
     try:
-      self.save()
+      self.database.activate(user_id, active)
     except Exception:
       self.users.pop(username, None)
       self.pending_accounts[user_id] = previous_pending
@@ -353,7 +371,7 @@ class AccountStore(AccountRechargeMixin):
     account["status"] = "revoked"
     account["inviteToken"] = ""
     account["revokedAt"] = timestamp()
-    self.save()
+    self.database.save_pending(account)
     return account
 
   def update_group_disk_limit(self, group_id: str, disk_limit_bytes: int | None) -> dict:
@@ -366,7 +384,7 @@ class AccountStore(AccountRechargeMixin):
       previous = group.get("diskLimitBytes")
       group["diskLimitBytes"] = disk_limit_bytes
       try:
-        self.save()
+        self.database.save_group(group)
       except Exception:
         group["diskLimitBytes"] = previous
         raise
@@ -382,7 +400,7 @@ class AccountStore(AccountRechargeMixin):
       previous = group.get("liveRunLimit", DEFAULT_GROUP_LIVE_RUN_LIMIT)
       group["liveRunLimit"] = live_run_limit
       try:
-        self.save()
+        self.database.save_group(group)
       except Exception:
         group["liveRunLimit"] = previous
         raise

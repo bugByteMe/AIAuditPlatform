@@ -25,6 +25,12 @@ Users create workspaces by uploading files or folders through the web UI. The ba
 
 Folder uploads use persisted, resumable upload sessions. The browser first sends a file manifest to the control plane, which validates permissions, paths, file count, declared sizes, blocked file types, and group quota before accepting bytes. It then sends bounded binary chunks through the authenticated control-plane API. The control plane streams each chunk to a reserved compute worker without buffering the file or request body in memory.
 
+Upload coordination is stored per session in SQL and normal chunk/status
+operations lock only that upload ID. A bounded background collector expires
+abandoned sessions, retries worker staging cleanup, and removes terminal rows
+after their retention window. Each worker also collects stale staging
+directories independently without traversing active workspaces or blob data.
+
 Compute workers stage chunks under shared storage, persist per-file offsets, stream files while hashing, create missing content-addressed blobs, and apply completed files to the active workspace. Only the control plane commits workspace and snapshot metadata. New workspaces remain invisible until commit; existing workspaces hold a mutation lease from session creation through commit or cancellation.
 
 The public upload lifecycle is:

@@ -42,6 +42,13 @@ class WorkerState:
     self.events_dir.mkdir(parents=True, exist_ok=True)
     self.load()
     threading.Thread(target=self.lease_watchdog, name=f"worker-lease-{node['id']}", daemon=True).start()
+    threading.Thread(target=self.upload_gc_loop, name=f"worker-upload-gc-{node['id']}", daemon=True).start()
+
+  def upload_gc_loop(self) -> None:
+    interval = max(1, SETTINGS.upload_gc_interval_seconds)
+    while True:
+      time.sleep(interval)
+      self.uploads.collect_garbage(time.time() - SETTINGS.upload_worker_orphan_ttl_seconds)
 
   def load(self) -> None:
     if self.runs_path.exists():
@@ -295,6 +302,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
           self.write_json(self.state.uploads.complete(upload_id), HTTPStatus.ACCEPTED)
         elif method == "DELETE" and not action:
           self.write_json(self.state.uploads.cancel(upload_id))
+        elif method == "DELETE" and action == "staging":
+          self.write_json(self.state.uploads.purge(upload_id))
         else:
           self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
       elif len(parts) >= 3 and parts[:2] == ["v1", "runs"]:

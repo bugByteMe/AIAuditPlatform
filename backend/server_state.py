@@ -64,7 +64,7 @@ SEED_USERS = {
   },
 }
 
-ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS)
+ACCOUNT_STORE = AccountStore(WORKSPACE_STORAGE_DIR / "accounts.json", SEED_USERS, SETTINGS.database_url)
 
 USERS = ACCOUNT_STORE.users
 
@@ -124,7 +124,7 @@ def check_micu_budget(user: dict) -> None:
     }
   )
   if establishes_baseline:
-    ACCOUNT_STORE.save()
+    ACCOUNT_STORE.save_user(user)
   if balance["status"] == "exhausted":
     raise StorageError("budget_exhausted", "MicuAPI balance is exhausted")
   if balance["status"] != "ready":
@@ -134,7 +134,7 @@ CHAT_RUNTIME = ChatRuntime(
   WORKSPACE_STORE,
   USERS,
   capacity=SETTINGS.local_run_capacity,
-  save_users=ACCOUNT_STORE.save,
+  save_users=None,
   groups=ACCOUNT_STORE.groups,
   budget_checker=check_micu_budget,
 )
@@ -199,7 +199,7 @@ def refresh_micu_balance(user: dict) -> None:
     balance = MICU_CLIENT.balance(binding)
     binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "rechargeBaselineQuota": balance["referenceQuota"], "lastSyncedAt": int(time.time()), "status": balance["status"], "lastError": ""})
     if establishes_baseline:
-      ACCOUNT_STORE.save()
+      ACCOUNT_STORE.save_user(user)
   except MicuApiError as exc:
     binding.update({"status": "unavailable", "lastError": str(exc)})
 
@@ -229,7 +229,8 @@ def refresh_micu_balances(users) -> None:
     establishes_baseline = establishes_baseline or "rechargeBaselineQuota" not in binding
     binding.update({"lastBalanceCny": balance["remainingCny"], "lastRemainingPercent": balance["remainingPercent"], "rechargeBaselineQuota": balance["referenceQuota"], "lastSyncedAt": synced_at, "status": balance["status"], "lastError": ""})
   if establishes_baseline:
-    ACCOUNT_STORE.save()
+    for user in managed:
+      ACCOUNT_STORE.save_user(user)
 
 def provision_micu(username: str, initial_balance_cny) -> dict:
   if not MICU_CLIENT.configured:
@@ -263,7 +264,8 @@ def reconcile_micu_accounts() -> None:
         user["micu"] = {"tokenName": username, "status": "error", "lastError": str(exc)}
       changed = True
   if changed:
-    ACCOUNT_STORE.save()
+    for user in USERS.values():
+      ACCOUNT_STORE.save_user(user)
 
 def user_by_username(username: str) -> dict | None:
   normalized = username.strip().casefold()

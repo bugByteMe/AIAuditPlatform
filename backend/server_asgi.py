@@ -237,6 +237,7 @@ async def app_lifespan(_app: FastAPI):
     yield
   finally:
     WECHAT_RECONCILE_STOP.set()
+    UPLOAD_MANAGER.shutdown()
     CHAT_RUNTIME.set_event_callback(None)
     SSE_BROKER.unbind()
 

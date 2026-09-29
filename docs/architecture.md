@@ -47,7 +47,9 @@ backend and PostgreSQL is selected in production through
 connections without dedicating one operating-system thread to each connection.
 Chat event reads and writes do not take the workspace lifecycle lock; lifecycle
 coordination is scoped by workspace, group, session, or run. Production stores
-both chat and workspace metadata in PostgreSQL. Large workspace files and
+account state, upload coordination, chat state, and workspace metadata in
+PostgreSQL. Account and upload mutations update scoped rows instead of
+serializing a process-wide JSON document. Large workspace files and
 content-addressed blobs remain on shared storage.
 
 Online reads and mutations avoid reconstructing the global workspace catalog.
@@ -63,12 +65,19 @@ validation.
 The database stores product metadata, not large workspace file payloads:
 
 - Users, groups, memberships, account state.
+- Resumable upload sessions, worker assignments, lifecycle state, and cleanup metadata.
 - User and group budgets.
 - Workspace records, permissions, forks, lightweight checkpoints, and bounded file-version metadata.
 - Chat sessions, runs, model settings, lifecycle state.
 - Token usage records.
 - Artifact records and checksums.
 - Audit logs.
+
+The control plane periodically expires abandoned upload sessions, releases
+their reservations and workspace mutation leases, retries staging cleanup, and
+deletes terminal coordination rows after the configured retention period.
+Workers independently remove only stale upload staging directories; workspace
+and blob directories are outside that collector's scope.
 
 ### Shared Filesystem
 

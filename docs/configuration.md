@@ -26,11 +26,12 @@ that proxy.
 ## Service and Storage
 
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.
-- `AI_AUDIT_DATABASE_URL` selects PostgreSQL persistence for normalized chat and workspace metadata. Keep the PostgreSQL URL in the service environment, never in `ai_audit.json` or source control. When unset, local `chat/chat.sqlite3` and `workspace.sqlite3` databases are used for development and isolated tests.
+- `AI_AUDIT_DATABASE_URL` selects PostgreSQL persistence for normalized account, upload-coordination, chat, and workspace metadata. Keep the PostgreSQL URL in the service environment, never in `ai_audit.json` or source control. When unset, local `account.sqlite3`, `upload.sqlite3`, `chat/chat.sqlite3`, and `workspace.sqlite3` databases are used for development and isolated tests.
 - `session_cookie`, `session_ttl_seconds`, `pbkdf2_iterations`, and `audit_log_limit` configure authentication persistence and audit retention.
 - `max_file_bytes`, `max_workspace_bytes`, `max_file_count`, `max_text_preview_bytes`, `blocked_upload_suffixes`, and `office_preview_timeout_seconds` configure upload and preview limits.
 - `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation; `upload_chunk_timeout_seconds` bounds control-plane forwarding of one chunk to a worker.
 - `upload_session_ttl_seconds` controls abandoned-session retention, `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
+- `upload_gc_interval_seconds` controls the control-plane and worker staging sweeps, `upload_terminal_retention_seconds` retains terminal coordination records for reconnect diagnostics, `upload_gc_batch_size` bounds each control-plane collection pass, and `upload_worker_orphan_ttl_seconds` controls worker staging cleanup.
 - `upload_reservation_cpus` and `upload_reservation_memory` reserve worker capacity during active upload sessions. Each compute node may set `upload_slots` (default `1`).
 
 ## Chat Streaming
@@ -75,6 +76,15 @@ The shared filesystem must expose the same `active/`, `codex/homes/`, upload sta
 
 ```text
 AI_AUDIT_WORKER_AUTH_TOKEN=<secret> AI_AUDIT_WORKER_NODE_ID=worker-01 python backend/worker_agent.py
+```
+
+Before the first deployment of SQL account and upload coordination, stop the
+control plane and import any existing JSON state. The importers fail if their
+target tables are nonempty and leave the source files untouched for rollback:
+
+```bash
+AI_AUDIT_DATABASE_URL=<postgres-url> python backend/migrate_account_store.py --storage-root /mnt/workspace_storage
+AI_AUDIT_DATABASE_URL=<postgres-url> python backend/migrate_upload_store.py --storage-root /mnt/workspace_storage
 ```
 
 The control plane requires the same bearer token through `AI_AUDIT_WORKER_AUTH_TOKEN`. Keep it out of the JSON file. `worker_ca_file` is the CA used by the control plane to verify worker HTTPS certificates; every node's `tls_cert_file` and `tls_key_file` are used only by that node's HTTPS server. Certificates must cover the configured IP address or hostname.

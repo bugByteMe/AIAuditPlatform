@@ -31,8 +31,8 @@ class AccountStoreTest(unittest.TestCase):
       reloaded = AccountStore(path, {})
       self.assertEqual(reloaded.users["li.review"]["codex"]["baseUrl"], "https://codex.example/v1")
       self.assertEqual(reloaded.users["li.review"]["codex"]["apiKey"], "sk-test")
-      if sys.platform != "win32":
-        self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+      self.assertFalse(path.exists())
+      self.assertTrue((Path(tempdir) / "account.sqlite3").is_file())
 
   def test_seed_is_copied_before_mutation(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
@@ -121,7 +121,7 @@ class AccountStoreTest(unittest.TestCase):
   def test_batch_creation_rolls_back_when_save_fails(self) -> None:
     with tempfile.TemporaryDirectory() as tempdir:
       store = AccountStore(Path(tempdir) / "accounts.json", {})
-      with patch.object(store, "save", side_effect=OSError("disk full")):
+      with patch.object(store.database, "save_batch", side_effect=OSError("disk full")):
         with self.assertRaises(OSError):
           store.create_batch(new_group_name="Rollback", count=2, budget_tokens=0, max_sessions=1)
       self.assertEqual(store.groups, {})
