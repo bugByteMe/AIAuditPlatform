@@ -131,7 +131,7 @@ class WorkspaceStoreTest(unittest.TestCase):
     finally:
       connection.close()
     self.assertIn("run_lock_enabled", columns)
-    self.assertEqual(version, 2)
+    self.assertEqual(version, 3)
 
   def test_each_file_retains_only_its_immediately_previous_content(self) -> None:
     workspace = self.create_workspace()

@@ -15,6 +15,7 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
+from config import SETTINGS
 from postgres_workspace_database import PostgresWorkspaceDatabase
 from workspace_database import WorkspaceDatabase
 from workspace_common import (
@@ -25,7 +26,7 @@ from workspace_common import (
 
 class WorkspaceLifecycleMixin:
   def create_workspace(self, user: dict, name: str, shared: bool, files: list[UploadedFile]) -> dict:
-    with self.lock:
+    with self.coordination_locks.hold(f"group:{user.get('groupId') or user.get('group') or user['username']}"):
       upload_sizes = {normalize_relative_path(item.path): len(item.content) for item in files}
       self.assert_group_quota(user, sum(upload_sizes.values()))
       return self._create_workspace(user, name, shared, files)
@@ -88,7 +89,7 @@ class WorkspaceLifecycleMixin:
     return self.public_workspace(workspace, metadata)
 
   def update_workspace(self, workspace_id: str, user: dict, payload: dict) -> dict:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if workspace["owner"] != user["username"] and user["role"] != "system_admin":
@@ -116,7 +117,7 @@ class WorkspaceLifecycleMixin:
     return user["role"] == "system_admin" or workspace["owner"] == user["username"]
 
   def add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       workspace_path = self.workspace_path(workspace_id)
@@ -172,7 +173,7 @@ class WorkspaceLifecycleMixin:
     return self.public_workspace(workspace, metadata)
 
   def delete_workspace_path(self, workspace_id: str, user: dict, raw_path: str) -> dict:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if not self.user_can_mutate_workspace(user, workspace):
@@ -218,10 +219,67 @@ class WorkspaceLifecycleMixin:
     metadata["artifacts"][workspace["id"]] = self.diff_snapshots(parent, snapshot)
     return snapshot
 
+  def apply_workspace_delta(self, metadata: dict, workspace: dict, reason: str, actor: str, delta: dict) -> dict:
+    if int(delta.get("version") or 0) != 2:
+      raise StorageError("invalid_manifest", "unsupported checkpoint delta version")
+    upserts = delta.get("upserts")
+    deletes = delta.get("deletes")
+    if not isinstance(upserts, dict) or not isinstance(deletes, list):
+      raise StorageError("invalid_manifest", "checkpoint delta requires upserts and deletes")
+    normalized_deletes = set()
+    for raw_path in deletes:
+      path = normalize_relative_path(str(raw_path))
+      if path != raw_path or path in normalized_deletes:
+        raise StorageError("invalid_manifest", "checkpoint delete paths must be normalized and unique")
+      normalized_deletes.add(path)
+    normalized_upserts = {}
+    total_upsert_size = 0
+    for raw_path, raw_entry in upserts.items():
+      path = normalize_relative_path(str(raw_path))
+      if path != raw_path or path in normalized_deletes or not isinstance(raw_entry, dict):
+        raise StorageError("invalid_manifest", "checkpoint paths must be unique and disjoint")
+      entry = {**raw_entry, "path": path}
+      digest = str(entry.get("blob") or "")
+      if len(digest) != 64 or any(char not in "0123456789abcdef" for char in digest) or str(entry.get("checksum") or "") != f"sha256:{digest}":
+        raise StorageError("invalid_manifest", f"invalid checksum for {path}")
+      entry["size"] = int(entry.get("size") or 0)
+      blob = self.blob_path(digest)
+      if entry["size"] < 0 or not blob.is_file() or blob.stat().st_size != entry["size"]:
+        raise StorageError("missing_blob", f"checkpoint blob is unavailable for {path}")
+      for field in ("mtime", "mtimeNs", "ctimeNs", "device", "inode", "mode"):
+        entry[field] = int(entry.get(field) or 0)
+      entry["mode"] = (entry["mode"] or 0o644) & 0o777
+      total_upsert_size += entry["size"]
+      normalized_upserts[path] = entry
+    if len(normalized_upserts) + len(normalized_deletes) > MAX_FILE_COUNT or total_upsert_size > MAX_WORKSPACE_BYTES:
+      raise StorageError("workspace_too_large", "checkpoint delta exceeds workspace limits")
+    delta = {**delta, "upserts": normalized_upserts, "deletes": sorted(normalized_deletes)}
+    parent = metadata.get("snapshots", {}).get(workspace.get("latestSnapshotId"))
+    old_files = (parent or {}).get("files") or {}
+    artifacts = []
+    for path, entry in sorted(normalized_upserts.items()):
+      old = old_files.get(path)
+      if old is None:
+        artifacts.append(self.artifact_from_entry(entry, "added"))
+      elif old.get("checksum") != entry.get("checksum"):
+        artifacts.append(self.artifact_from_entry(entry, "modified"))
+    for path in sorted(normalized_deletes):
+      if path in old_files:
+        artifacts.append(self.artifact_from_entry(old_files[path], "deleted"))
+    snapshot = {
+      "id": generated_id("snap"), "workspaceId": workspace["id"], "parentSnapshotId": workspace.get("latestSnapshotId"),
+      "reason": reason, "actor": actor, "created": now_string(), "manifestPath": None, "files": {},
+    }
+    candidates = self.database.apply_workspace_delta(workspace, delta, snapshot, artifacts)
+    metadata.setdefault("snapshots", {})[snapshot["id"]] = snapshot
+    metadata.setdefault("artifacts", {})[workspace["id"]] = artifacts
+    self.defer_blob_cleanup(candidates)
+    return snapshot
+
   def commit_prepared_upload(self, user: dict, session: dict, result: dict) -> dict:
     """Commit a worker-prepared manifest while keeping metadata control-plane-owned."""
-    with self.lock:
-      workspace_id = str(session["workspaceId"])
+    workspace_id = str(session["workspaceId"])
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       if session["mode"] == "create":
         existing = self.database.get_workspace_header(workspace_id)
         if existing:
@@ -291,7 +349,7 @@ class WorkspaceLifecycleMixin:
       return self.public_workspace(workspace, metadata)
 
   def fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       source = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if source.get("locked"):
@@ -341,7 +399,7 @@ class WorkspaceLifecycleMixin:
     return self.public_workspace(fork, metadata)
 
   def delete_workspace(self, workspace_id: str, user: dict) -> dict:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if workspace["owner"] != user["username"] and user["role"] != "system_admin":
@@ -358,16 +416,15 @@ class WorkspaceLifecycleMixin:
       self.delete_workspace_metadata(workspace_id)
       shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
       shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
-      self.garbage_collect_blobs()
       return deleted
 
   def delete_owned_workspaces(self, usernames: set[str]) -> list[dict]:
-    with self.lock:
-      targets = [
+    targets = [
         workspace["id"]
         for workspace in self.database.list_workspace_headers(username="", group_name="", system_admin=True)
         if workspace.get("owner") in usernames
       ]
+    with self.coordination_locks.hold(*(f"workspace:{workspace_id}" for workspace_id in targets)):
       deleted = []
       for workspace_id in targets:
         workspace = self.database.get_workspace_header(workspace_id)
@@ -377,16 +434,16 @@ class WorkspaceLifecycleMixin:
         self.delete_workspace_metadata(workspace_id)
         shutil.rmtree(self.workspace_path(workspace_id), ignore_errors=True)
         shutil.rmtree(self.preview_dir / workspace_id, ignore_errors=True)
-      self.garbage_collect_blobs()
       return deleted
 
   def garbage_collect_blobs(self, metadata: dict | None = None) -> int:
     referenced = self.database.referenced_blobs()
+    cutoff = time.time() - max(60, int(getattr(SETTINGS, "blob_gc_grace_seconds", 3600)))
     removed = 0
     removed_digests: set[str] = set()
     if self.blob_dir.exists():
       for path in self.blob_dir.rglob("*"):
-        if path.is_file() and not path.name.endswith(".tmp") and path.name not in referenced:
+        if path.is_file() and not path.name.endswith(".tmp") and path.name not in referenced and path.stat().st_mtime <= cutoff:
           removed_digests.add(path.name)
           path.unlink()
           removed += 1

@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, and_, create_engine, delete, insert, or_, select, update
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, and_, create_engine, delete, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
@@ -40,6 +40,8 @@ class PostgresWorkspaceDatabase:
       Column("path", Text, primary_key=True), Column("slot", String(16), primary_key=True),
       Column("checksum", String(128), nullable=False), Column("blob", Text, nullable=False, index=True),
       Column("size", BigInteger, nullable=False), Column("mtime", BigInteger, nullable=False),
+      Column("mtime_ns", BigInteger, nullable=False, default=0), Column("ctime_ns", BigInteger, nullable=False, default=0),
+      Column("device", BigInteger, nullable=False, default=0), Column("inode", BigInteger, nullable=False, default=0),
       Column("mode", Integer, nullable=False), Column("snapshot_id", String(160)),
       CheckConstraint("slot IN ('current', 'previous')", name="workspace_file_slot"),
     )
@@ -53,12 +55,17 @@ class PostgresWorkspaceDatabase:
     Index("workspace_sessions_order", self.workspace_sessions.c.workspace_id, self.workspace_sessions.c.ordinal)
     Index("workspaces_shared_group", self.workspaces.c.shared, self.workspaces.c.group_name)
     self.metadata.create_all(self.engine)
+    with self.engine.begin() as connection:
+      for name in ("mtime_ns", "ctime_ns", "device", "inode"):
+        connection.execute(text(f"ALTER TABLE workspace_file_versions ADD COLUMN IF NOT EXISTS {name} BIGINT NOT NULL DEFAULT 0"))
 
   @staticmethod
   def _entry(row) -> dict:
     return {
       "path": row["path"], "checksum": row["checksum"], "blob": row["blob"], "size": int(row["size"]),
       "mtime": int(row["mtime"]), "mode": int(row["mode"]),
+      "mtimeNs": int(row["mtime_ns"]), "ctimeNs": int(row["ctime_ns"]),
+      "device": int(row["device"]), "inode": int(row["inode"]),
     }
 
   @staticmethod
@@ -289,6 +296,8 @@ class PostgresWorkspaceDatabase:
     return {
       "workspace_id": workspace_id, "path": path, "slot": slot, "checksum": str(entry["checksum"]),
       "blob": str(entry["blob"]), "size": int(entry["size"]), "mtime": int(entry.get("mtime") or 0),
+      "mtime_ns": int(entry.get("mtimeNs") or 0), "ctime_ns": int(entry.get("ctimeNs") or 0),
+      "device": int(entry.get("device") or 0), "inode": int(entry.get("inode") or 0),
       "mode": int(entry.get("mode") or 0o644), "snapshot_id": snapshot_id,
     }
 
@@ -312,3 +321,7 @@ class PostgresWorkspaceDatabase:
 
   def file_versions(self, workspace_id: str, path: str) -> dict[str, dict]:
     return self.file_versions_for_path(workspace_id, path)
+
+  def apply_workspace_delta(self, workspace: dict, delta: dict, snapshot: dict, artifacts: list[dict]) -> set[str]:
+    from workspace_delta_database import apply_postgres_delta
+    return apply_postgres_delta(self, workspace, delta, snapshot, artifacts)

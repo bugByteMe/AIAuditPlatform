@@ -15,6 +15,9 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from chat_runtime import DockerCodexRunner, safe_segment
+from checkpoint_delta import (
+  CHECKPOINT_PROTOCOL_VERSION, capture_pre_run, cleanup_refs, read_json_ref, scan_delta, write_result,
+)
 from config import SETTINGS
 from upload_store import WorkerUploadStore
 from workspace_store import StorageError
@@ -139,6 +142,11 @@ class WorkerState:
           run["status"] = "running"
         self.save_runs()
       if target_status == "completed":
+        pre_ref = capture_pre_run(self.root, workspace_path, run)
+        if pre_ref:
+          with self.lock:
+            run["checkpointPreRef"] = pre_ref
+            self.save_runs()
         for event in self.runner.start_prepared(run, workspace_path, codex_home):
           with self.lock:
             if self.runs[run_id]["status"] == "stopping":
@@ -150,9 +158,12 @@ class WorkerState:
       target_status = "failed"
 
     result_files = None
+    result_delta = None
     checkpoint_error = None
     try:
-      result_files = scan_workspace_manifest(workspace_path, self.root / "blobs" / "sha256")
+      result_delta = scan_delta(self.root, workspace_path, self.root / "blobs" / "sha256", run)
+      if result_delta is None:
+        result_files = scan_workspace_manifest(workspace_path, self.root / "blobs" / "sha256")
     except Exception as exc:
       checkpoint_error = exc
       target_status = "failed"
@@ -170,6 +181,10 @@ class WorkerState:
       run["error"] = str(error or "")
       if result_files is not None:
         run["resultFiles"] = result_files
+      if result_delta is not None:
+        run["resultRef"] = write_result(self.root, run_id, result_delta)
+        run["resultVersion"] = CHECKPOINT_PROTOCOL_VERSION
+        run["resultStats"] = result_delta.get("stats") or {}
       if error:
         self.append_event(run_id, {"type": "error", "message": str(error)})
       self.save_runs()
@@ -222,6 +237,7 @@ class WorkerState:
       self.runs.pop(run_id, None)
       self.events.pop(run_id, None)
       self.event_path(run_id).unlink(missing_ok=True)
+      cleanup_refs(self.root, run.get("checkpointBaseRef"), run.get("checkpointPreRef"), run.get("resultRef"))
       self.save_runs()
       return {"id": run_id, "acknowledged": True}
 
@@ -229,7 +245,16 @@ class WorkerState:
     public = {key: run.get(key) for key in ["id", "status", "container", "error", "created"]}
     if run.get("status") in TERMINAL and isinstance(run.get("resultFiles"), dict):
       public["resultFiles"] = run["resultFiles"]
+    if run.get("status") in TERMINAL and run.get("resultRef"):
+      public.update({"resultReady": True, "resultVersion": run.get("resultVersion"), "resultStats": run.get("resultStats") or {}})
     return public
+
+  def run_result(self, run_id: str) -> dict:
+    with self.lock:
+      run = self.require_run(run_id)
+      if run.get("status") not in TERMINAL or not run.get("resultRef"):
+        raise ValueError("run result is not available")
+      return read_json_ref(self.root, str(run["resultRef"]))
 
   def run_events(self, run_id: str, after: int, wait_seconds: float) -> dict:
     deadline = time.monotonic() + max(0, min(wait_seconds, 10))
@@ -250,6 +275,7 @@ class WorkerState:
       "cpuTotal": self.node["cpu"],
       "memoryTotalBytes": self.node["memoryBytes"],
       "activeRuns": sorted(active),
+      "checkpointProtocol": CHECKPOINT_PROTOCOL_VERSION,
       "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -314,6 +340,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
         elif method == "GET" and action == "events":
           query = parse_qs(parsed.query)
           self.write_json(self.state.run_events(run_id, int((query.get("after") or ["0"])[0]), float((query.get("wait") or ["0"])[0])))
+        elif method == "GET" and action == "result":
+          self.write_json(self.state.run_result(run_id))
         elif method == "POST" and action == "stop":
           self.write_json(self.state.stop_run(run_id))
         elif method == "POST" and action == "lease":

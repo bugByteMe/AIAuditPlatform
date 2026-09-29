@@ -4,6 +4,7 @@ import shutil
 import threading
 
 from chat_common import RUNNING_STATES, TERMINAL_STATES
+from checkpoint_delta import write_baseline
 from workspace_store import StorageError, generated_id, now_string
 
 
@@ -25,7 +26,7 @@ class ChatSessionMixin:
         self.active_runs.add(str(run["id"]))
         threading.Thread(target=self.execute_run, args=(str(run["id"]), node_id), name=f"ai-audit-recover-{run['id']}", daemon=True).start()
         continue
-      with self.store.lock:
+      with self.lifecycle_locks.hold(f"workspace:{run['workspaceId']}"):
         metadata = self.store.load_workspace_metadata(str(run["workspaceId"]))
         stored = self.chat_store.get_run(str(run["id"]))
         if stored:
@@ -287,6 +288,10 @@ class ChatSessionMixin:
         "codexSessionId": session.get("codexForkSourceId") or session.get("codexSessionId"),
       }
       self.codex_preparer.capture_fork_base(run)
+      base_snapshot = metadata.get("snapshots", {}).get(run.get("baseSnapshotId")) or {"files": {}}
+      run["checkpointBaseRef"] = write_baseline(
+        self.store.root, run["id"], run.get("baseSnapshotId"), base_snapshot.get("files") or {},
+      )
       self.chat_store.save_run(run)
       workspace["locked"] = True
       workspace["activeRunId"] = workspace.get("activeRunId") or run["id"]

@@ -66,9 +66,9 @@ isolated development tests and legacy migration:
 - The metadata database stores workspaces, lightweight checkpoint records,
   current/previous file versions, session links, and the latest artifact diff.
   Full file maps are not duplicated into checkpoint JSON manifests.
-- Online commits update only one workspace and use its prior latest snapshot as
-  an optimistic concurrency boundary. Unrelated workspace and artifact rows are
-  never rewritten.
+- Run completion commits lock one workspace row and upsert only changed or
+  deleted paths. If runs overlap, each delta is rebased onto the latest committed
+  snapshot and the last completion wins only for paths touched by both runs.
 
 This model gives content deduplication without unbounded binary history or dependence on Git semantics for user-uploaded folders. Retention is bounded per normalized path; a workspace that continually creates and deletes new path names can still accumulate one retained version for every deleted path.
 
@@ -84,7 +84,7 @@ Group-shared workspaces support collaborative access. Users with access can insp
 
 The owner controls an exclusive run lock while the workspace is idle. It is disabled by default. When enabled, only one mutating Codex run may be active. When disabled, runs from different chat sessions may share the live workspace after the initiating user confirms an overwrite and artifact-attribution warning. A chat session still permits only one active run.
 
-The operational workspace write lock remains held from the first active run until the last active run reaches a terminal state. Uploads, file replacement, deletion, workspace deletion, and forking remain blocked throughout. Concurrent terminal scans are serialized, but changes made by overlapping shared-directory runs cannot be attributed exclusively; artifact results are therefore best-effort for overlapping runs.
+The operational workspace write lock remains held from the first active run until the last active run reaches a terminal state. Uploads, file replacement, deletion, workspace deletion, and forking remain blocked throughout. In-process mutation coordination is keyed by workspace, so unrelated workspaces do not queue behind one global lock. Changes made by overlapping shared-directory runs cannot be attributed exclusively; artifact results are therefore best-effort for overlapping runs.
 
 ## Forking
 
@@ -116,26 +116,24 @@ A checkpoint records a workspace lifecycle boundary and retains a lightweight id
 - File mode when relevant.
 - Blob storage location or blob identifier.
 
-Checkpoint creation should:
+Run checkpoint creation uses protocol version 2:
 
-1. Scan the active workspace directory.
-2. Compute checksums for new or changed files.
-3. Add missing blobs to content-addressed storage.
-4. Compare the scan with the current file-version rows.
-5. Shift changed or deleted current content into the single previous slot and discard any displaced older version.
-6. Commit the checkpoint, file versions, workspace size, and artifact diff in one SQLite transaction.
-7. Delete displaced blobs only when no current or previous version in any workspace references them.
+1. The control plane writes the admitted snapshot manifest to a run-scoped baseline file on shared storage.
+2. Immediately before execution, the worker captures a stat-only manifest.
+3. Completion compares path, size, nanosecond mtime/ctime, device, inode, and mode. Trusted unchanged files reuse their prior checksum and blob without reading file contents.
+4. Only new or potentially modified files are hashed and copied to blob storage. The result file contains only `upserts`, `deletes`, observed totals, and scan statistics.
+5. The control plane validates referenced blobs, then updates only touched current/previous file-version rows in the checkpoint transaction.
+6. Displaced blobs enter deferred garbage collection. After the grace period, references are checked again before deletion.
 
 File checksums are computed with fixed-size streaming reads. Text preview reads are
 limited to the configured preview prefix, so neither operation allocates memory
 proportional to the source file size.
 
-For remote runs, the compute worker performs the final workspace scan and writes
-missing content-addressed blobs beside the shared workspace. Its terminal response
-includes that manifest. The control node validates manifest structure, limits, and
-blob size/existence, then records the checkpoint without reading or rehashing the
-workspace files. A missing final manifest is a checkpoint failure; the control node
-does not fall back to a remote-workspace rescan.
+For remote runs, large baseline and result objects are stored as separate JSON
+files on shared storage. `runs.json` retains only protocol/version references and
+small result statistics. The control plane fetches v2 results through the worker's
+result endpoint. During rolling upgrades it still accepts a legacy worker's inline
+full manifest; a missing v2 delta and missing legacy manifest is a checkpoint failure.
 
 The active workspace directory remains materialized on the shared filesystem for normal browsing and future runs. Previous file versions are retained internally for bounded recovery and are not currently exposed through download or restore APIs. Historical whole-workspace checkpoints are not materializable.
 

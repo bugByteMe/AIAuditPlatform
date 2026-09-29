@@ -54,6 +54,8 @@
   "upload_session_ttl_seconds": 86400,
   "upload_terminal_retention_seconds": 86400,
   "upload_gc_interval_seconds": 300,
+  "blob_gc_interval_seconds": 300,
+  "blob_gc_grace_seconds": 3600,
   "upload_gc_batch_size": 100,
   "upload_worker_orphan_ttl_seconds": 172800,
   "upload_reservation_idle_seconds": 60,

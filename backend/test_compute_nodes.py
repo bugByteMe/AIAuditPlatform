@@ -130,6 +130,28 @@ class WorkerRegistryTest(unittest.TestCase):
     with self.assertRaises(WorkerRunFailed):
       list(events)
 
+  def test_terminal_worker_fetches_v2_delta_out_of_band(self):
+    client = object.__new__(WorkerClient)
+    client.lease_seconds = 30
+    client.timeout = 1
+    client.node = {"id": "worker-1"}
+    delta = {"version": 2, "baseSnapshotId": "snap-1", "upserts": {}, "deletes": ["old.txt"]}
+
+    def request(method, path, payload=None, timeout=None):
+      if path == "/v1/runs":
+        return {"container": "run-container"}
+      if path.endswith("/events?after=0&wait=5"):
+        return {"status": "completed", "container": "run-container", "events": [], "resultReady": True, "resultVersion": 2}
+      if path.endswith("/result"):
+        return delta
+      return {}
+
+    client.request = request
+    run = {"id": "run-1"}
+    _, events = client.start(run)
+    self.assertEqual(list(events), [])
+    self.assertEqual(run["resultDelta"], delta)
+
   def test_worker_events_retain_internal_source_id_for_idempotency(self):
     client = object.__new__(WorkerClient)
     client.lease_seconds = 30

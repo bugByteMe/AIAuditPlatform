@@ -9,6 +9,7 @@ import time
 from hashlib import sha256
 from pathlib import Path
 
+from checkpoint_delta import stat_fields
 from config import SETTINGS
 from workspace_store import StorageError, UploadedFile, ensure_under_root, normalize_relative_path
 
@@ -226,7 +227,7 @@ class WorkerUploadStore:
         stat = destination.stat()
         manifest[item["path"]] = {
           "path": item["path"], "checksum": f"sha256:{checksum}", "blob": checksum,
-          "size": stat.st_size, "mtime": int(stat.st_mtime), "mode": stat.st_mode & 0o777,
+          **stat_fields(stat),
         }
       result = {"snapshotId": state["snapshotId"], "files": manifest}
       _atomic_json(self.directory(upload_id) / "result.json", result)

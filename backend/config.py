@@ -189,6 +189,8 @@ class Settings:
     self.upload_terminal_retention_seconds = _int("upload_terminal_retention_seconds", "AI_AUDIT_UPLOAD_TERMINAL_RETENTION_SECONDS", 24 * 60 * 60)
     self.upload_gc_interval_seconds = _int("upload_gc_interval_seconds", "AI_AUDIT_UPLOAD_GC_INTERVAL_SECONDS", 5 * 60)
     self.upload_gc_batch_size = _int("upload_gc_batch_size", "AI_AUDIT_UPLOAD_GC_BATCH_SIZE", 100)
+    self.blob_gc_interval_seconds = _int("blob_gc_interval_seconds", "AI_AUDIT_BLOB_GC_INTERVAL_SECONDS", 5 * 60)
+    self.blob_gc_grace_seconds = _int("blob_gc_grace_seconds", "AI_AUDIT_BLOB_GC_GRACE_SECONDS", 60 * 60)
     self.upload_worker_orphan_ttl_seconds = _int("upload_worker_orphan_ttl_seconds", "AI_AUDIT_UPLOAD_WORKER_ORPHAN_TTL_SECONDS", 48 * 60 * 60)
     self.upload_reservation_idle_seconds = _int("upload_reservation_idle_seconds", "AI_AUDIT_UPLOAD_RESERVATION_IDLE_SECONDS", 60)
     self.upload_max_concurrent_streams = _int("upload_max_concurrent_streams", "AI_AUDIT_UPLOAD_MAX_CONCURRENT_STREAMS", 8)

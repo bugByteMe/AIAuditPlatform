@@ -5,6 +5,7 @@ import threading
 import time
 
 from chat_common import RUNNING_STATES, TERMINAL_STATES
+from checkpoint_delta import capture_pre_run, cleanup_refs, scan_delta
 from codex_runner import RunnerError, safe_segment
 from compute_nodes import WorkerUnavailable
 from config import SETTINGS
@@ -64,7 +65,7 @@ class ChatExecutionMixin:
         if run.get("status") in TERMINAL_STATES:
           return
         if run_id in self.stop_requested:
-          with self.store.lock:
+          with self.lifecycle_locks.hold(f"workspace:{run['workspaceId']}"):
             metadata = self.store.load_workspace_metadata(str(run["workspaceId"]))
             self.ensure_chat_metadata(metadata)
             self.finalize_run(metadata, run, "stopped", None, remote=bool(node_id), checkpoint=False)
@@ -93,6 +94,7 @@ class ChatExecutionMixin:
         started, event_stream = self.worker_registry.client(node_id).start(run_for_worker)
         run_for_worker["container"] = str(started.get("container") or "")
       else:
+        run_for_worker["checkpointPreRef"] = capture_pre_run(self.store.root, workspace_path, run_for_worker)
         event_stream = self.runner.start(run_for_worker, workspace_path)
       for event in event_stream:
         with self.lifecycle_locks.hold(f"run:{run_id}"):
@@ -106,7 +108,11 @@ class ChatExecutionMixin:
           self.record_runner_event(run_id, event, container=str(run_for_worker.get("container") or ""))
           with self.condition:
             self.condition.notify_all()
-      with self.store.lock:
+      if not node_id:
+        run_for_worker["resultDelta"] = scan_delta(
+          self.store.root, workspace_path, self.store.blob_dir, run_for_worker,
+        )
+      with self.lifecycle_locks.hold(f"workspace:{run['workspaceId']}"):
         stored_run = self.chat_store.get_run(run_id)
         if not stored_run:
           return
@@ -122,9 +128,14 @@ class ChatExecutionMixin:
             final_status,
             None,
             result_files=run_for_worker.get("resultFiles") if node_id else None,
+            result_delta=run_for_worker.get("resultDelta"),
             remote=bool(node_id),
           )
-          self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
+          workspace = metadata["workspaces"][run["workspaceId"]]
+          if run.pop("_deltaCommitted", False):
+            self.store.save_workspace_lifecycle(workspace)
+          else:
+            self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
           self.chat_store.save_run(run)
           self.publish_run_finalization(run)
           with self.condition:
@@ -136,17 +147,22 @@ class ChatExecutionMixin:
         return
       if node_id and self.worker_registry and isinstance(exc, WorkerUnavailable):
         time.sleep(max(0.0, SETTINGS.worker_run_lease_seconds))
-      with self.store.lock:
-        stored_run = self.chat_store.get_run(run_id)
-        if not stored_run:
-          return
+      stored_run = self.chat_store.get_run(run_id)
+      if not stored_run:
+        return
+      with self.lifecycle_locks.hold(f"workspace:{stored_run['workspaceId']}"):
         metadata = self.store.load_workspace_metadata(str(stored_run["workspaceId"]))
         self.ensure_chat_metadata(metadata)
         run = self.chat_store.get_run(run_id)
         if run:
           remote_files = run_for_worker.get("resultFiles") if node_id and "run_for_worker" in locals() else None
-          self.finalize_run(metadata, run, "failed", str(exc), result_files=remote_files, remote=bool(node_id))
-          self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
+          result_delta = run_for_worker.get("resultDelta") if "run_for_worker" in locals() else None
+          self.finalize_run(metadata, run, "failed", str(exc), result_files=remote_files, result_delta=result_delta, remote=bool(node_id))
+          workspace = metadata["workspaces"][run["workspaceId"]]
+          if run.pop("_deltaCommitted", False):
+            self.store.save_workspace_lifecycle(workspace)
+          else:
+            self.store.save_workspace_metadata(str(run["workspaceId"]), metadata)
           self.chat_store.save_run(run)
           self.publish_run_finalization(run)
           with self.condition:
@@ -163,6 +179,8 @@ class ChatExecutionMixin:
         self.worker_registry.release(node_id, run_id)
       self.active_runs.discard(run_id)
       self.stop_requested.discard(run_id)
+      cleanup_run = run_for_worker if "run_for_worker" in locals() else (self.chat_store.get_run(run_id) or {})
+      cleanup_refs(self.store.root, cleanup_run.get("checkpointBaseRef"), cleanup_run.get("checkpointPreRef"))
 
   def record_runner_event(self, run_id: str, event: dict, *, container: str = "") -> dict:
     source_event_id = event.get("_workerEventId")
@@ -202,6 +220,7 @@ class ChatExecutionMixin:
     error: str | None,
     *,
     result_files: dict | None = None,
+    result_delta: dict | None = None,
     remote: bool = False,
     checkpoint: bool = True,
   ) -> None:
@@ -212,7 +231,10 @@ class ChatExecutionMixin:
       self.append_event(run["sessionId"], "error", error, run["id"])
     try:
       if checkpoint:
-        if remote:
+        if result_delta is not None:
+          snapshot = self.store.apply_workspace_delta(metadata, workspace, status, run["id"], result_delta)
+          run["_deltaCommitted"] = True
+        elif remote:
           if result_files is None:
             raise StorageError("missing_worker_manifest", "worker did not return the final workspace manifest")
           snapshot = self.store.refresh_workspace_metadata_from_files(metadata, workspace, status, run["id"], result_files)
@@ -372,12 +394,12 @@ class ChatExecutionMixin:
         self.condition.wait(min(0.25, wait_for))
 
   def delete_user_resources(self, usernames: set[str]) -> dict:
-    with self.store.lock:
-      workspace_ids = {
+    workspace_ids = {
         workspace["id"]
         for workspace in self.store.database.list_workspace_headers(username="", group_name="", system_admin=True)
         if workspace.get("owner") in usernames
       }
+    with self.lifecycle_locks.hold(*(f"workspace:{workspace_id}" for workspace_id in workspace_ids)):
       chat_deleted = self.chat_store.delete_workspaces(workspace_ids)
       workspaces = self.store.delete_owned_workspaces(usernames)
       self.chat_store.delete_user_usage(usernames)

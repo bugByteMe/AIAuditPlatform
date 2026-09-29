@@ -32,6 +32,7 @@ that proxy.
 - `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation; `upload_chunk_timeout_seconds` bounds control-plane forwarding of one chunk to a worker.
 - `upload_session_ttl_seconds` controls abandoned-session retention, `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
 - `upload_gc_interval_seconds` controls the control-plane and worker staging sweeps, `upload_terminal_retention_seconds` retains terminal coordination records for reconnect diagnostics, `upload_gc_batch_size` bounds each control-plane collection pass, and `upload_worker_orphan_ttl_seconds` controls worker staging cleanup.
+- `blob_gc_interval_seconds` controls deferred blob-candidate checks and `blob_gc_grace_seconds` (default one hour) prevents a blob displaced by an overlapping checkpoint from being deleted immediately. Every deletion rechecks database references; a periodic aged full scan recovers candidates after restart.
 - `upload_reservation_cpus` and `upload_reservation_memory` reserve worker capacity during active upload sessions. Each compute node may set `upload_slots` (default `1`).
 - `file_work_workers` and `file_work_queue` bound ZIP creation, file hashing, Office conversion, artifact refresh, forks, and filesystem-heavy deletion. The production default is one worker so file work cannot consume both CPUs on the current control node.
 - `upload_request_workers` and `upload_request_queue` isolate upload forwarding and upload-session worker calls from ordinary HTTP and SSE work.
@@ -98,7 +99,7 @@ The control plane requires the same bearer token through `AI_AUDIT_WORKER_AUTH_T
 - `worker_request_timeout_seconds` bounds individual HTTPS calls.
 - `worker_run_lease_seconds` fences orphaned work. A worker stops an active container if the control plane no longer renews its lease.
 
-The agent API is intentionally narrow: health; run start, status/events, stop, lease renewal, and terminal acknowledgement; plus upload initialization, bounded chunks, status, finalization, and cleanup. It requires HTTPS and constant-time bearer authentication. Codex API keys are written by the control plane into the session-scoped shared `CODEX_HOME`; they are not included in scheduler requests or worker run records.
+The agent API is intentionally narrow: health; run start, status/events, terminal checkpoint result, stop, lease renewal, and terminal acknowledgement; plus upload initialization, bounded chunks, status, finalization, and cleanup. Health advertises checkpoint protocol version `2`. It requires HTTPS and constant-time bearer authentication. Codex API keys are written by the control plane into the session-scoped shared `CODEX_HOME`; they are not included in scheduler requests or worker run records.
 
 ## Account Policy
 

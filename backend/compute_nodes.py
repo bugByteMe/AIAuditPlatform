@@ -67,6 +67,8 @@ class WorkerClient:
         "codexSessionId",
         "requestedCpu",
         "requestedMemoryBytes",
+        "baseSnapshotId",
+        "checkpointBaseRef",
       ]
     }
     started = self.request("POST", "/v1/runs", payload)
@@ -94,12 +96,15 @@ class WorkerClient:
         remote_status = str(result.get("status") or "")
         if remote_status in terminal:
           run["remoteStatus"] = remote_status
-          result_files = result.get("resultFiles")
-          if isinstance(result_files, dict):
-            run["resultFiles"] = result_files
+          if result.get("resultReady") and int(result.get("resultVersion") or 0) == 2:
+            run["resultDelta"] = self.request("GET", f"/v1/runs/{urllib.parse.quote(run['id'])}/result")
           else:
-            detail = str(result.get("error") or "worker terminal response did not include a workspace manifest")
-            raise WorkerRunFailed(f"{detail}; final workspace manifest unavailable")
+            result_files = result.get("resultFiles")
+            if isinstance(result_files, dict):
+              run["resultFiles"] = result_files
+            else:
+              detail = str(result.get("error") or "worker terminal response did not include checkpoint data")
+              raise WorkerRunFailed(f"{detail}; final workspace checkpoint unavailable")
           if result.get("error"):
             raise WorkerRunFailed(str(result["error"]))
           return
@@ -220,6 +225,7 @@ class WorkerRegistry:
             "lastContactMonotonic": time.monotonic(),
             "error": "",
             "activeRuns": list(health.get("activeRuns") or []),
+            "checkpointProtocol": int(health.get("checkpointProtocol") or 1),
           }
         )
     except Exception as exc:
@@ -299,6 +305,7 @@ class WorkerRegistry:
               "activeRunCount": 0,
               "activeRunIds": [],
               "activeUploadCount": 0,
+              "checkpointProtocol": 0,
               "lastContact": None,
               "error": "disabled by configuration",
             }
@@ -327,6 +334,7 @@ class WorkerRegistry:
             "activeRunCount": len(run_reservations),
             "activeRunIds": sorted(run_reservations),
             "activeUploadCount": len(upload_reservations),
+            "checkpointProtocol": int(state.get("checkpointProtocol") or 1),
             "lastContact": state.get("lastContact"),
             "error": state.get("error") or "",
           }

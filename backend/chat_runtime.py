@@ -4,7 +4,7 @@ import queue
 import threading
 from pathlib import Path
 
-from chat_common import KeyedLockPool, RUNNING_STATES, TERMINAL_STATES
+from chat_common import RUNNING_STATES, TERMINAL_STATES
 from chat_execution import ChatExecutionMixin
 from chat_sessions import ChatSessionMixin
 from chat_store import ChatStore
@@ -47,7 +47,7 @@ class ChatRuntime(ChatSessionMixin, ChatExecutionMixin):
     self.scheduler_poll_seconds = max(0.01, SETTINGS.scheduler_poll_seconds)
     self.lock = threading.RLock()
     self.condition = threading.Condition(self.lock)
-    self.lifecycle_locks = KeyedLockPool()
+    self.lifecycle_locks = store.coordination_locks
     self.queue: queue.Queue[str] = queue.Queue()
     self.active_runs: set[str] = set()
     self.stop_requested: set[str] = set()

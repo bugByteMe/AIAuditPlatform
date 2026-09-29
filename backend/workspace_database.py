@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 
 class WorkspaceDatabase:
@@ -101,6 +101,10 @@ class WorkspaceDatabase:
           blob TEXT NOT NULL,
           size INTEGER NOT NULL,
           mtime INTEGER NOT NULL,
+          mtime_ns INTEGER NOT NULL DEFAULT 0,
+          ctime_ns INTEGER NOT NULL DEFAULT 0,
+          device INTEGER NOT NULL DEFAULT 0,
+          inode INTEGER NOT NULL DEFAULT 0,
           mode INTEGER NOT NULL,
           snapshot_id TEXT,
           PRIMARY KEY (workspace_id, path, slot)
@@ -125,10 +129,14 @@ class WorkspaceDatabase:
       row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
       if row is None:
         connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
-      elif int(row["version"]) == 1:
+      elif int(row["version"]) in {1, 2}:
         columns = {column[1] for column in connection.execute("PRAGMA table_info(workspaces)")}
         if "run_lock_enabled" not in columns:
           connection.execute("ALTER TABLE workspaces ADD COLUMN run_lock_enabled INTEGER NOT NULL DEFAULT 0")
+        file_columns = {column[1] for column in connection.execute("PRAGMA table_info(workspace_file_versions)")}
+        for name in ("mtime_ns", "ctime_ns", "device", "inode"):
+          if name not in file_columns:
+            connection.execute(f"ALTER TABLE workspace_file_versions ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
         connection.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))
       elif int(row["version"]) != SCHEMA_VERSION:
         raise RuntimeError(f"unsupported workspace database schema version: {row['version']}")
@@ -141,6 +149,8 @@ class WorkspaceDatabase:
       "blob": row["blob"],
       "size": int(row["size"]),
       "mtime": int(row["mtime"]),
+      "mtimeNs": int(row["mtime_ns"]), "ctimeNs": int(row["ctime_ns"]),
+      "device": int(row["device"]), "inode": int(row["inode"]),
       "mode": int(row["mode"]),
     }
 
@@ -288,6 +298,8 @@ class WorkspaceDatabase:
       str(entry["blob"]),
       int(entry["size"]),
       int(entry.get("mtime") or 0),
+      int(entry.get("mtimeNs") or 0), int(entry.get("ctimeNs") or 0),
+      int(entry.get("device") or 0), int(entry.get("inode") or 0),
       int(entry.get("mode") or 0o644),
       snapshot_id,
     )
@@ -391,12 +403,12 @@ class WorkspaceDatabase:
       connection.execute("DELETE FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,))
       for path, (entry, snapshot_id) in next_current.items():
         connection.execute(
-          "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           self._entry_tuple(workspace_id, path, "current", entry, snapshot_id),
         )
       for path, (entry, snapshot_id) in next_previous.items():
         connection.execute(
-          "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+          "INSERT INTO workspace_file_versions VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
           self._entry_tuple(workspace_id, path, "previous", entry, snapshot_id),
         )
 
@@ -477,3 +489,7 @@ class WorkspaceDatabase:
           (workspace_id, path),
         )
       }
+
+  def apply_workspace_delta(self, workspace: dict, delta: dict, snapshot: dict, artifacts: list[dict]) -> set[str]:
+    from workspace_delta_database import apply_sqlite_delta
+    return apply_sqlite_delta(self, workspace, delta, snapshot, artifacts)

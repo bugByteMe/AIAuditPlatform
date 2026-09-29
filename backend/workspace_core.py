@@ -10,11 +10,14 @@ import subprocess
 import tempfile
 import threading
 import time
+import weakref
 import zipfile
 from hashlib import sha256
 from pathlib import Path
 from typing import Callable
 
+from chat_common import KeyedLockPool
+from config import SETTINGS
 from postgres_workspace_database import PostgresWorkspaceDatabase
 from workspace_database import WorkspaceDatabase
 from workspace_common import (
@@ -32,10 +35,13 @@ class WorkspaceCoreMixin:
     self.preview_dir = root / "previews"
     self.chat_session_provider: Callable[[dict], list[dict]] | None = None
     self.account_provider: Callable[[], tuple[dict[str, dict], dict[str, dict]]] | None = None
-    self.lock = threading.RLock()
+    self.coordination_locks = KeyedLockPool()
+    self._gc_lock = threading.Lock()
+    self._gc_candidates: dict[str, float] = {}
     self.database = PostgresWorkspaceDatabase(database_url) if database_url else WorkspaceDatabase(root)
     self.ensure_layout()
     self.cleanup_stale_bundles()
+    threading.Thread(target=self._blob_gc_loop, args=(weakref.ref(self),), name="workspace-blob-gc", daemon=True).start()
 
   def cleanup_stale_bundles(self) -> None:
     cutoff = time.time() - BUNDLE_TEMP_TTL_SECONDS
@@ -153,15 +159,23 @@ class WorkspaceCoreMixin:
       if str(exc) == "workspace_changed":
         raise StorageError("workspace_changed", "workspace changed during metadata commit") from exc
       raise
-    self.cleanup_unreferenced_blobs(candidates)
+    self.defer_blob_cleanup(candidates)
 
   def delete_workspace_metadata(self, workspace_id: str) -> dict | None:
     workspace, candidates = self.database.delete_workspace_state(workspace_id)
-    self.cleanup_unreferenced_blobs(candidates)
+    self.defer_blob_cleanup(candidates)
     return workspace
 
+  def defer_blob_cleanup(self, candidates: set[str]) -> None:
+    if not candidates:
+      return
+    with self._gc_lock:
+      queued = time.time()
+      for digest in candidates:
+        self._gc_candidates.setdefault(digest, queued)
+
   def cleanup_unreferenced_blobs(self, candidates: set[str]) -> None:
-    candidates -= self.database.referenced_blobs(candidates) if candidates else set()
+    candidates = set(candidates) - (self.database.referenced_blobs(candidates) if candidates else set())
     for digest in candidates:
       blob = self.blob_path(digest)
       if blob.exists():
@@ -170,11 +184,39 @@ class WorkspaceCoreMixin:
     self.remove_empty_blob_directories()
 
   @staticmethod
+  def _blob_gc_loop(store_ref) -> None:
+    last_full_scan = time.time()
+    while True:
+      store = store_ref()
+      if store is None:
+        return
+      interval = max(5, int(getattr(SETTINGS, "blob_gc_interval_seconds", 300)))
+      grace = max(60, int(getattr(SETTINGS, "blob_gc_grace_seconds", 3600)))
+      del store
+      time.sleep(interval)
+      store = store_ref()
+      if store is None:
+        return
+      cutoff = time.time() - grace
+      with store._gc_lock:
+        ready = {digest for digest, queued in store._gc_candidates.items() if queued <= cutoff}
+      if not ready:
+        if time.time() - last_full_scan >= max(grace, 6 * 60 * 60):
+          store.garbage_collect_blobs()
+          last_full_scan = time.time()
+      else:
+        store.cleanup_unreferenced_blobs(ready)
+        with store._gc_lock:
+          for digest in ready:
+            store._gc_candidates.pop(digest, None)
+      del store
+
+  @staticmethod
   def empty_metadata() -> dict:
     return {"workspaces": {}, "snapshots": {}, "artifacts": {}}
 
   def save_workspace_lifecycle(self, workspace: dict) -> None:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace['id']}"):
       self.database.save_workspace_lifecycle(workspace)
 
   def prune_preview_blobs(self, digests: set[str]) -> None:

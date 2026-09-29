@@ -14,6 +14,7 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
+from checkpoint_delta import stat_fields
 from postgres_workspace_database import PostgresWorkspaceDatabase
 from workspace_database import WorkspaceDatabase
 from workspace_common import (
@@ -51,9 +52,7 @@ def scan_workspace_manifest(workspace_path: Path, blob_dir: Path) -> dict:
       "path": relative,
       "checksum": f"sha256:{digest}",
       "blob": digest,
-      "size": stat.st_size,
-      "mtime": int(stat.st_mtime),
-      "mode": stat.st_mode & 0o777,
+      **stat_fields(stat),
     }
   return files
 
@@ -109,6 +108,10 @@ class WorkspaceSnapshotMixin:
         "blob": digest,
         "size": size,
         "mtime": int(raw_entry.get("mtime") or 0),
+        "mtimeNs": int(raw_entry.get("mtimeNs") or 0),
+        "ctimeNs": int(raw_entry.get("ctimeNs") or 0),
+        "device": int(raw_entry.get("device") or 0),
+        "inode": int(raw_entry.get("inode") or 0),
         "mode": int(raw_entry.get("mode") or 0o644) & 0o777,
       }
     return validated
@@ -176,7 +179,7 @@ class WorkspaceSnapshotMixin:
     }
 
   def refresh_artifacts(self, workspace_id: str, user: dict) -> list[dict]:
-    with self.lock:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       parent_id = workspace.get("latestSnapshotId")

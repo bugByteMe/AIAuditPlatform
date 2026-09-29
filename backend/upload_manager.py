@@ -29,7 +29,6 @@ class UploadManager:
       if legacy_sessions:
         self.database.import_sessions(legacy_sessions)
     self.local_worker = WorkerUploadStore(workspace_store.root, settings.upload_stream_buffer_bytes)
-    self.create_lock = threading.RLock()
     self.session_locks = KeyedLockPool()
     self.stream_slots = threading.BoundedSemaphore(max(1, settings.upload_max_concurrent_streams))
     self.gc_stop = threading.Event()
@@ -63,8 +62,10 @@ class UploadManager:
         self.store.save_workspace_lifecycle(workspace)
 
   def create(self, user: dict, payload: dict) -> dict:
-    with self.create_lock, self.store.lock:
-      mode = str(payload.get("mode") or "create")
+    mode = str(payload.get("mode") or "create")
+    group_key = f"group:{user.get('groupId') or user.get('group') or user['username']}"
+    workspace_key = f"workspace:{payload.get('workspaceId')}" if mode == "append" else group_key
+    with self.store.coordination_locks.hold(group_key, workspace_key):
       if mode not in {"create", "append"}:
         raise StorageError("bad_request", "upload mode must be create or append")
       raw_files = payload.get("files") or []
@@ -255,7 +256,8 @@ class UploadManager:
       return self.public(session, result)
 
   def cancel(self, upload_id: str, user: dict) -> dict:
-    with self.session_locks.hold(upload_id), self.store.lock:
+    session = self._session(upload_id, user)
+    with self.session_locks.hold(upload_id), self.store.coordination_locks.hold(f"workspace:{session['workspaceId']}"):
       session = self._session(upload_id, user)
       if self.worker_registry:
         self.worker_registry.client(session["workerId"]).cancel_upload(upload_id)
@@ -310,7 +312,7 @@ class UploadManager:
     cutoff = now - int(self.settings.upload_session_ttl_seconds)
     expired = 0
     for candidate in self.database.stale_active(cutoff, {"uploading"}, batch):
-      with self.session_locks.hold(candidate["id"]), self.store.lock:
+      with self.session_locks.hold(candidate["id"]), self.store.coordination_locks.hold(f"workspace:{candidate['workspaceId']}"):
         current = self.database.get(candidate["id"])
         if current and current.get("status") == "uploading" and float(current.get("updatedAt") or 0) < cutoff:
           self._terminal(current, "expired", "upload session expired")
