@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import ROOT, SETTINGS, normalize_compute_nodes, parse_memory_bytes
+from config import ROOT, SETTINGS, Settings, normalize_compute_nodes, parse_memory_bytes
 
 
 class ConfigurationTest(unittest.TestCase):
@@ -113,3 +115,11 @@ class ConfigurationTest(unittest.TestCase):
   def test_memory_parser_accepts_binary_units(self) -> None:
     self.assertEqual(parse_memory_bytes("1.5g"), int(1.5 * 1024**3))
     self.assertEqual(parse_memory_bytes("512MiB"), 512 * 1024**2)
+
+  def test_workload_limits_reject_invalid_configuration(self) -> None:
+    with patch.dict(os.environ, {"AI_AUDIT_FILE_WORK_WORKERS": "0"}):
+      with self.assertRaisesRegex(ValueError, "file_work_workers must be positive"):
+        Settings()
+    with patch.dict(os.environ, {"AI_AUDIT_EXTERNAL_REQUEST_QUEUE": "-1"}):
+      with self.assertRaisesRegex(ValueError, "external_request_queue must be non-negative"):
+        Settings()
