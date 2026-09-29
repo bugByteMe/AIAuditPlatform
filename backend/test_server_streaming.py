@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import sys
 import io
+import threading
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import patch
 
 from fastapi.testclient import TestClient
+from fastapi.responses import Response
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import server
 from server import Handler, app
+from server_workloads import BoundedExecutor, WorkloadBusy
 
 
 class FakeChatRuntime:
@@ -44,6 +48,26 @@ class FakeUploadManager:
     return {"id": upload_id, "offsets": [length], "status": "uploading"}
 
 
+class BusyPool:
+  async def run(self, *_args):
+    raise WorkloadBusy("file")
+
+
+class BusyPools:
+  def pool(self, _workload):
+    return BusyPool()
+
+
+class RoutedPools:
+  def __init__(self, file_pool):
+    self.file_pool = file_pool
+
+  def pool(self, workload):
+    if workload != "file":
+      raise AssertionError(f"unexpected workload: {workload}")
+    return self.file_pool
+
+
 class ServerStreamingTest(unittest.TestCase):
   def test_server_entrypoint_uses_configured_host_and_port(self) -> None:
     with patch.object(sys, "argv", ["server.py"]), patch("uvicorn.run") as run:
@@ -51,7 +75,7 @@ class ServerStreamingTest(unittest.TestCase):
     run.assert_called_once_with(app, host=server.SETTINGS.host, port=server.SETTINGS.port)
 
   def test_fastapi_health_and_options_preserve_transport_contract(self) -> None:
-    with TestClient(app) as client:
+    with TestClient(app) as client, patch("server_asgi.workload_pools", side_effect=AssertionError("default route used dedicated pool")):
       response = client.get("/api/health", headers={"Origin": "https://audit.example"})
       self.assertEqual(response.status_code, 200)
       self.assertEqual(response.json(), {"ok": True})
@@ -60,6 +84,54 @@ class ServerStreamingTest(unittest.TestCase):
       options = client.options("/api/health", headers={"Origin": "https://audit.example"})
       self.assertEqual(options.status_code, 204)
       self.assertEqual(options.headers["access-control-allow-credentials"], "true")
+
+  def test_dedicated_pool_overload_returns_retryable_service_unavailable(self) -> None:
+    with TestClient(app) as client, patch("server_asgi.workload_pools", return_value=BusyPools()):
+      response = client.get(
+        "/api/workspaces/workspace-1/download?mode=full",
+        headers={"Origin": "https://audit.example"},
+      )
+    self.assertEqual(response.status_code, 503)
+    self.assertEqual(response.json(), {"error": "server_busy", "message": "server is busy; retry shortly"})
+    self.assertEqual(response.headers["retry-after"], "2")
+    self.assertEqual(response.headers["cache-control"], "no-store")
+    self.assertEqual(response.headers["access-control-allow-origin"], "https://audit.example")
+
+  def test_saturated_file_pool_does_not_block_health_or_sse(self) -> None:
+    file_pool = BoundedExecutor("file", 1, 0)
+    routed = RoutedPools(file_pool)
+    started = threading.Event()
+    release = threading.Event()
+    original_dispatch = server.server_asgi.dispatch_request
+
+    def dispatch(request, body):
+      if str(request.url.path).endswith("/download"):
+        started.set()
+        release.wait(2)
+        return Response(content=b"bundle", media_type="application/zip")
+      return original_dispatch(request, body)
+
+    try:
+      with TestClient(app) as client, patch("server_asgi.workload_pools", return_value=routed), patch(
+        "server_asgi.dispatch_request", side_effect=dispatch
+      ), patch.object(Handler, "require_user", return_value={"username": "user"}), patch(
+        "server.CHAT_RUNTIME", TerminalChatRuntime()
+      ), ThreadPoolExecutor(max_workers=1) as callers:
+        first = callers.submit(client.get, "/api/workspaces/workspace-1/download?mode=full")
+        self.assertTrue(started.wait(1))
+        health = client.get("/api/health")
+        stream = client.get("/api/workspaces/workspace-1/chat/stream?sessionId=chat-1&after=0")
+        rejected = client.get("/api/workspaces/workspace-1/download?mode=full")
+        release.set()
+        completed = first.result(timeout=2)
+      self.assertEqual(health.status_code, 200)
+      self.assertEqual(stream.status_code, 200)
+      self.assertIn("event: completed", stream.text)
+      self.assertEqual(rejected.status_code, 503)
+      self.assertEqual(completed.status_code, 200)
+    finally:
+      release.set()
+      file_pool.shutdown()
 
   def test_fastapi_sse_preserves_event_framing(self) -> None:
     with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch(

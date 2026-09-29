@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import json
+import os
 import sys
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from config import ROOT, SETTINGS, normalize_compute_nodes, parse_memory_bytes
+from config import ROOT, SETTINGS, Settings, normalize_compute_nodes, parse_memory_bytes
 
 
 class ConfigurationTest(unittest.TestCase):
@@ -26,6 +28,10 @@ class ConfigurationTest(unittest.TestCase):
       "container_uid",
       "docker_stop_grace_seconds",
       "docker_stop_timeout_seconds",
+      "external_request_queue",
+      "external_request_workers",
+      "file_work_queue",
+      "file_work_workers",
       "max_file_bytes",
       "max_file_count",
       "max_text_preview_bytes",
@@ -56,6 +62,8 @@ class ConfigurationTest(unittest.TestCase):
       "upload_worker_orphan_ttl_seconds",
       "upload_reservation_idle_seconds",
       "upload_max_concurrent_streams",
+      "upload_request_queue",
+      "upload_request_workers",
       "upload_reservation_cpus",
       "upload_reservation_memory",
       "wechat_pay_enabled",
@@ -80,6 +88,12 @@ class ConfigurationTest(unittest.TestCase):
     self.assertTrue(SETTINGS.blocked_upload_suffixes)
     self.assertGreater(SETTINGS.upload_chunk_bytes, SETTINGS.upload_stream_buffer_bytes)
     self.assertGreater(SETTINGS.upload_chunk_timeout_seconds, 0)
+    self.assertGreater(SETTINGS.file_work_workers, 0)
+    self.assertGreaterEqual(SETTINGS.file_work_queue, 0)
+    self.assertGreater(SETTINGS.upload_request_workers, 0)
+    self.assertGreaterEqual(SETTINGS.upload_request_queue, 0)
+    self.assertGreater(SETTINGS.external_request_workers, 0)
+    self.assertGreaterEqual(SETTINGS.external_request_queue, 0)
 
   def test_compute_node_configuration_is_normalized(self) -> None:
     nodes = normalize_compute_nodes(
@@ -101,3 +115,11 @@ class ConfigurationTest(unittest.TestCase):
   def test_memory_parser_accepts_binary_units(self) -> None:
     self.assertEqual(parse_memory_bytes("1.5g"), int(1.5 * 1024**3))
     self.assertEqual(parse_memory_bytes("512MiB"), 512 * 1024**2)
+
+  def test_workload_limits_reject_invalid_configuration(self) -> None:
+    with patch.dict(os.environ, {"AI_AUDIT_FILE_WORK_WORKERS": "0"}):
+      with self.assertRaisesRegex(ValueError, "file_work_workers must be positive"):
+        Settings()
+    with patch.dict(os.environ, {"AI_AUDIT_EXTERNAL_REQUEST_QUEUE": "-1"}):
+      with self.assertRaisesRegex(ValueError, "external_request_queue must be non-negative"):
+        Settings()

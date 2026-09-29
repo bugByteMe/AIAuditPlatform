@@ -49,6 +49,15 @@
 - Worker HTTPS rejects missing/incorrect bearer credentials and the control plane verifies the configured CA.
 - Exclusive workspace locking prevents two active runs, while disabled locking requires explicit confirmation for cross-session concurrency and always rejects same-session overlap.
 
+## Control-Plane Concurrency
+
+- File, upload, and external-provider operations use separate bounded executors and never run in the ordinary request/SSE thread pool.
+- Executor worker and queue limits reject invalid configuration at startup.
+- Saturating file work does not delay health checks or SSE event reconciliation.
+- Requests beyond a dedicated executor's worker-plus-queue capacity fail immediately with `503 server_busy` and `Retry-After: 2`.
+- Success, failure, queued cancellation, overload rejection, and shutdown all release executor capacity without leaking active or queued counts.
+- Upload chunk forwarding remains incrementally streamed when it runs in the dedicated upload executor.
+
 ## Workspace Lifecycle
 
 - Checksum and text-preview readers request bounded chunks rather than whole-file reads.
