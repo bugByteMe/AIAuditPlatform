@@ -365,7 +365,10 @@ export function renderEvents() {
     renderedEventSignature = "";
     return;
   }
-  const signature = JSON.stringify([state.lang, session.id, session.status, session.events]);
+  const signature = JSON.stringify([
+    state.lang, session.id, session.status, session.events, session.historyLoaded,
+    session.historyHasMore, session.historyLoading, session.historyLoadError,
+  ]);
   if (renderedEventSessionId === session.id && renderedEventSignature === signature) return;
   const switchingSession = renderedEventSessionId !== session.id;
   const scrollPosition = switchingSession ? null : captureEventScroll(stream);
@@ -389,7 +392,14 @@ export function renderEvents() {
   const thinking = ACTIVE_CHAT_STATES.has(session.status)
     ? `<article class="event event-running-dots" role="status" aria-label="${escapeHtml(t("chat.thinking"))}"><span class="event-type">${escapeHtml(t("chat.thinking"))}</span><span class="running-dots" aria-hidden="true"><span></span><span></span><span></span></span></article>`
     : "";
-  stream.innerHTML = events + thinking;
+  const historyStatus = session.historyLoading
+    ? `<div class="chat-history-status" role="status" aria-live="polite"><span class="chat-history-spinner" aria-hidden="true"></span><span>${escapeHtml(t(session.historyLoadingKind === "older" ? "chat.loadingOlder" : "chat.loadingHistory"))}</span></div>`
+    : session.historyLoadError
+      ? `<div class="chat-history-status chat-history-error" role="alert"><span>${escapeHtml(t("chat.historyLoadFailed"))}</span><button type="button" class="btn ghost" data-retry-chat-history>${escapeHtml(t("chat.retryHistory"))}</button></div>`
+      : session.historyLoaded && !session.historyHasMore && session.events.length
+        ? `<div class="chat-history-boundary">${escapeHtml(t("chat.historyStart"))}</div>`
+        : "";
+  stream.innerHTML = historyStatus + events + thinking;
   stream.querySelectorAll(".event-fold").forEach((fold) => {
     const summary = fold.querySelector("summary");
     const collapsible = fold.dataset.multiline === "true" || summary.scrollWidth > summary.clientWidth;

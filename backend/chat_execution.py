@@ -104,7 +104,8 @@ class ChatExecutionMixin:
               return
             stored_run["status"] = "stopping"
             self.chat_store.save_run(stored_run)
-            break
+            if not node_id:
+              break
           self.record_runner_event(run_id, event, container=str(run_for_worker.get("container") or ""))
           with self.condition:
             self.condition.notify_all()

@@ -121,6 +121,19 @@ The implementation uses the statically configured compute-node inventory wheneve
 
 The worker persists compact run state and its event stream beneath `<workspace_storage_dir>/worker_state/<node_id>/`. Checkpoint protocol v2 keeps baseline, stat-only pre-run, and changed-file result JSON in separate run-scoped files, so `runs.json` contains only references and small statistics. Start is idempotent by run ID, and the control plane can reconnect from its last persisted event cursor after restart. A worker restart marks its interrupted work failed rather than launching a duplicate container. The lease watchdog stops orphaned containers when the control plane disappears. After the control plane has checkpointed a terminal run, it acknowledges the result so the worker removes the run, event stream, and checkpoint sidecar files.
 
+A stop request does not bypass checkpointing. Local runs stop their container and
+scan the v2 delta locally. Remote runs continue draining the authenticated worker
+event stream after the stop command until the worker publishes its terminal v2
+delta; only then does the control plane mark the chat stopped and acknowledge the
+worker result. A run stopped while still queued captures a stat-only pre-run view
+and commits an incremental delta directly, without invoking the legacy full scan.
+
+Chat history loads the newest bounded page when a session is selected and fetches
+older pages when the user scrolls near the top. Initial and older-page requests
+display an accessible loading indicator. Older-page insertion preserves the first
+visible event as a scroll anchor; failures expose an inline retry action, and the
+top boundary explicitly indicates when the start of the conversation is reached.
+
 Each runner event is committed in one database transaction with its application
 event row, worker cursor, run state, session summary, and any positive usage
 delta. Remote worker event IDs are retained in an internal receipt table so a

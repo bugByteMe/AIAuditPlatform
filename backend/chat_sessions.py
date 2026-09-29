@@ -4,7 +4,7 @@ import shutil
 import threading
 
 from chat_common import RUNNING_STATES, TERMINAL_STATES
-from checkpoint_delta import write_baseline
+from checkpoint_delta import capture_pre_run, cleanup_refs, scan_delta, write_baseline
 from workspace_store import StorageError, generated_id, now_string
 
 
@@ -351,10 +351,33 @@ class ChatSessionMixin:
       self.append_event(run["sessionId"], "stopping", "Stop requested. Creating a resumable checkpoint.", run_id)
       self.chat_store.save_run(run)
       if was_queued:
-        self.finalize_run(metadata, run, "stopped", None)
-        self.store.save_workspace_metadata(workspace_id, metadata)
-        self.chat_store.save_run(run)
-        self.publish_run_finalization(run)
+        checkpoint_run = dict(run)
+        try:
+          checkpoint_error = None
+          result_delta = None
+          try:
+            checkpoint_run["checkpointPreRef"] = capture_pre_run(
+              self.store.root, self.store.workspace_path(workspace_id), checkpoint_run,
+            )
+            result_delta = scan_delta(
+              self.store.root, self.store.workspace_path(workspace_id), self.store.blob_dir, checkpoint_run,
+            )
+            if result_delta is None:
+              raise StorageError("missing_checkpoint_baseline", "queued run has no incremental checkpoint baseline")
+          except Exception as exc:
+            checkpoint_error = f"Checkpoint failed: {exc}"
+          self.finalize_run(
+            metadata, run, "stopped", checkpoint_error, result_delta=result_delta, checkpoint=checkpoint_error is None,
+          )
+          workspace = metadata["workspaces"][workspace_id]
+          run.pop("_deltaCommitted", False)
+          self.store.save_workspace_lifecycle(workspace)
+          self.chat_store.save_run(run)
+          self.publish_run_finalization(run)
+        finally:
+          cleanup_refs(
+            self.store.root, checkpoint_run.get("checkpointBaseRef"), checkpoint_run.get("checkpointPreRef"),
+          )
       with self.condition:
         self.condition.notify_all()
     if not was_queued:

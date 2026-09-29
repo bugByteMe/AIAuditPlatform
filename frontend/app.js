@@ -450,16 +450,29 @@ function startChatStreamForSession(workspaceId, sessionId) {
 
 async function loadLatestSessionHistory(workspaceId, session) {
   if (!workspaceId || !session || session.historyLoaded) return;
-  const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
-    sessionId: session.id,
-    latest: "true",
-    limit: "200",
-  }).toString()}`);
-  const events = result.events || [];
-  mergeSessionEvents(session, events, state.chatLastEventIds);
-  session.historyBefore = events.length ? Math.min(...events.map((event) => Number(event.id) || 0)) : 0;
-  session.historyHasMore = Boolean(result.hasMore && events.length);
-  session.historyLoaded = true;
+  session.historyLoading = true;
+  session.historyLoadingKind = "initial";
+  session.historyLoadError = false;
+  renderDynamic();
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
+      sessionId: session.id,
+      latest: "true",
+      limit: "200",
+    }).toString()}`);
+    const events = result.events || [];
+    mergeSessionEvents(session, events, state.chatLastEventIds);
+    session.historyBefore = events.length ? Math.min(...events.map((event) => Number(event.id) || 0)) : 0;
+    session.historyHasMore = Boolean(result.hasMore && events.length);
+    session.historyLoaded = true;
+  } catch (error) {
+    session.historyLoadError = true;
+    throw error;
+  } finally {
+    session.historyLoading = false;
+    session.historyLoadingKind = "";
+    renderDynamic();
+  }
 }
 
 async function loadOlderSessionHistory() {
@@ -472,6 +485,9 @@ async function loadOlderSessionHistory() {
     return;
   }
   session.historyLoading = true;
+  session.historyLoadingKind = "older";
+  session.historyLoadError = false;
+  renderDynamic();
   try {
     const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/events?${new URLSearchParams({
       sessionId: session.id,
@@ -485,10 +501,16 @@ async function loadOlderSessionHistory() {
     current.historyHasMore = Boolean(result.hasMore && events.length);
     if (mergeHistoricalEvents(current, events)) renderDynamic();
   } catch (error) {
+    const current = findSessionById(state.workspaces, workspace.id, session.id);
+    if (current) current.historyLoadError = true;
     console.warn("Older chat history load failed", error);
   } finally {
     const current = findSessionById(state.workspaces, workspace.id, session.id);
-    if (current) current.historyLoading = false;
+    if (current) {
+      current.historyLoading = false;
+      current.historyLoadingKind = "";
+    }
+    renderDynamic();
   }
 }
 
@@ -1223,6 +1245,15 @@ async function createNewChatSession() {
 
 function bindGlobalClicks() {
   document.addEventListener("click", (event) => {
+    if (event.target.closest("[data-retry-chat-history]")) {
+      const session = currentSessionObject();
+      if (session) {
+        session.historyLoadError = false;
+        if (session.historyLoaded) loadOlderSessionHistory();
+        else maybeStartChatStream();
+      }
+      return;
+    }
     const editableName = event.target.closest("[data-edit-name]");
     if (editableName) {
       event.preventDefault();

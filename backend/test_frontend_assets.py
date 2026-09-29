@@ -73,6 +73,7 @@ class FrontendAssetTests(unittest.TestCase):
     def test_chat_realtime_reconciliation_is_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         chat_events_source = (FRONTEND_ROOT / "js" / "chatEvents.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
         self.assertIn("fallbackPollingActive", app_source)
         self.assertIn('addEventListener("heartbeat"', app_source)
         self.assertIn("pollChatEvents(workspaceId, sessionId, generation, false)", app_source)
@@ -82,8 +83,12 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('before,\n      limit: "200"', app_source)
         self.assertIn('querySelector("#event-stream").addEventListener("scroll"', app_source)
         self.assertIn("mergeHistoricalEvents(current, events)", app_source)
+        self.assertIn('session.historyLoadingKind = "older"', app_source)
+        self.assertIn("data-retry-chat-history", app_source)
         self.assertIn("export function mergeHistoricalEvents", chat_events_source)
         self.assertIn("sessionEventCursor", chat_events_source)
+        self.assertIn("chat-history-spinner", render_source)
+        self.assertIn("session.historyLoadError", render_source)
 
     def test_workspace_catalog_uses_summary_then_lazy_detail(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

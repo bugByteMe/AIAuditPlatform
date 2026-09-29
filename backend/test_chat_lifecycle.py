@@ -1,3 +1,5 @@
+import threading
+
 from chat_runtime_test_support import *
 
 
@@ -346,3 +348,71 @@ class ChatLifecycleTest(ChatRuntimeTestBase):
     session = self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "stopped")
     self.assertTrue(any(event[0] == "stopped" for event in session["events"]))
 
+  def test_queued_stop_uses_incremental_checkpoint(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    with patch.object(runtime.queue, "put"):
+      result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Queued task"})
+    base_snapshot_id = result["run"]["baseSnapshotId"]
+    with patch.object(self.store, "refresh_workspace_metadata", side_effect=AssertionError("unexpected full scan")):
+      runtime.stop_run(workspace["id"], result["run"]["id"], self.users["li.review"])
+    stopped = runtime.chat_store.get_run(result["run"]["id"])
+    self.assertEqual(stopped["status"], "stopped")
+    self.assertNotEqual(stopped["resultSnapshotId"], base_snapshot_id)
+    self.assertEqual(self.store.get_workspace(workspace["id"], self.users["li.review"])["latestSnapshotId"], stopped["resultSnapshotId"])
+
+  def test_remote_stop_waits_for_terminal_delta(self) -> None:
+    workspace = self.create_workspace()
+
+    class RemoteClient:
+      def __init__(self):
+        self.started = threading.Event()
+        self.stopped = threading.Event()
+        self.acknowledged = False
+
+      def start(self, run):
+        self.started.set()
+
+        def events():
+          yield {"type": "progress", "message": "working"}
+          self.stopped.wait(2)
+          yield {"type": "stopping", "message": "stop requested"}
+          run["remoteStatus"] = "stopped"
+          run["resultDelta"] = {"version": 2, "baseSnapshotId": run["baseSnapshotId"], "upserts": {}, "deletes": []}
+
+        return {"container": "remote-container"}, events()
+
+      def stop(self, run_id):
+        self.stopped.set()
+        return {"id": run_id, "status": "stopping"}
+
+      def acknowledge(self, run_id):
+        self.acknowledged = True
+        return {"id": run_id, "acknowledged": True}
+
+    class RemoteRegistry:
+      def __init__(self):
+        self.remote = RemoteClient()
+
+      def compatible(self, cpu, memory):
+        return True
+
+      def claim(self, run_id, cpu, memory):
+        return "worker-1"
+
+      def client(self, node_id):
+        return self.remote
+
+      def release(self, node_id, run_id):
+        return None
+
+    registry = RemoteRegistry()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner(), worker_registry=registry)
+    result = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Remote task"})
+    self.assertTrue(registry.remote.started.wait(2))
+    runtime.stop_run(workspace["id"], result["run"]["id"], self.users["li.review"])
+    session = self.wait_for_status(runtime, workspace["id"], result["session"]["id"], "stopped")
+    stopped = runtime.chat_store.get_run(result["run"]["id"])
+    self.assertTrue(stopped.get("resultSnapshotId"))
+    self.assertTrue(registry.remote.acknowledged)
+    self.assertFalse(any("Checkpoint failed" in event[1] for event in session["events"]))
