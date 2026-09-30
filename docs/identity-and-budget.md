@@ -83,6 +83,8 @@ Budget checks belong in the backend control plane. Workers may report usage but 
 System admins can:
 
 - Create users and persistent named groups individually or in invitation batches.
+- Configure each account's group membership and concurrent-session limit from a single settings dialog.
+- Rename groups and configure their live-run and disk limits from a single settings dialog.
 - View and revoke unused invitation tokens.
 - Set an initial MicuAPI CNY balance and add funds to an existing balance.
 - Preview and import fixed-price XLSX payment exports; each unused successful payment credits 80% of its face amount to the exact username in the sheet.

@@ -124,6 +124,18 @@
     grid-template-columns: 1fr;
   }
 
+  .admin-user-item {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .admin-settings-actions {
+    flex-wrap: wrap;
+  }
+
+  .admin-settings-invite {
+    grid-template-columns: 1fr;
+  }
+
   .event {
     grid-template-columns: 1fr;
   }

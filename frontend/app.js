@@ -923,11 +923,70 @@ async function openRechargeQrModal(amount) {
 async function revokeInvite(userId) {
   try {
     await api(`/api/accounts/${encodeURIComponent(userId)}/revoke-invite`, { method: "POST" });
+    closeAccountSettingsModal();
     await loadAccountControlData();
     showToast(t("toast.inviteRevoked"));
   } catch (error) {
     showToast(error.message);
   }
+}
+
+function openAccountSettingsModal(accountId) {
+  const account = state.accounts.find((item) => item.id === accountId);
+  if (!account) return;
+  const form = document.querySelector("#account-settings-form");
+  form.elements.accountId.value = account.id;
+  form.elements.maxSessions.value = String(account.maxSessions ?? 1);
+  form.elements.maxSessions.max = String(state.runtimeConfig.accountMaxSessionsLimit);
+  form.elements.amountCny.value = "0.00";
+  const groupSelect = form.elements.groupId;
+  groupSelect.innerHTML = [
+    `<option value="">${escapeMarkup(t("admin.ungroupedOption"))}</option>`,
+    ...state.groups.map((group) => `<option value="${escapeMarkup(group.id)}">${escapeMarkup(group.name)}</option>`),
+  ].join("");
+  groupSelect.value = account.groupId || "";
+  const balance = account.budget?.source === "custom"
+    ? t("admin.customProvider")
+    : account.budget?.remaining === null || account.budget?.remaining === undefined
+      ? t("admin.balanceUnavailable")
+      : `¥${account.budget.remaining}`;
+  document.querySelector("#account-settings-name").textContent = `${account.username || account.id} · ${balance}`;
+  document.querySelector("#account-settings-balance-field").classList.toggle("hidden", !account.username || account.budget?.source === "custom");
+  document.querySelector("#account-settings-error").textContent = "";
+  const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
+  document.querySelector("#account-settings-delete").disabled = isCurrentUser;
+  const invitePanel = document.querySelector("#account-settings-invite");
+  invitePanel.classList.toggle("hidden", !account.inviteToken);
+  document.querySelector("#account-settings-invite-token").textContent = account.inviteToken || "";
+  document.querySelector("#account-settings-copy-invite").dataset.copyInvite = account.inviteToken || "";
+  document.querySelector("#account-settings-revoke-invite").dataset.revokeInvite = account.inviteToken ? account.id : "";
+  document.querySelector("#account-settings-modal").classList.remove("hidden");
+}
+
+function closeAccountSettingsModal() {
+  document.querySelector("#account-settings-modal").classList.add("hidden");
+}
+
+function openGroupSettingsModal(groupId) {
+  const group = state.groups.find((item) => item.id === groupId);
+  if (!group) return;
+  const form = document.querySelector("#group-settings-form");
+  form.elements.groupId.value = group.id;
+  form.elements.name.value = group.name || "";
+  form.elements.liveRunLimit.value = String(group.liveRunLimit ?? 1);
+  form.elements.diskLimitMib.value = group.diskLimitBytes === null || group.diskLimitBytes === undefined
+    ? ""
+    : String(Math.round(Number(group.diskLimitBytes) / (1024 * 1024)));
+  document.querySelector("#group-settings-summary").textContent = `${Number(group.userCount || 0)} ${t("admin.usersCount")}`;
+  document.querySelector("#group-settings-error").textContent = "";
+  const containsCurrentUser = state.accounts.some((account) =>
+    account.groupId === group.id && (account.id === state.user?.id || account.username === state.user?.username));
+  document.querySelector("#group-settings-delete").disabled = containsCurrentUser;
+  document.querySelector("#group-settings-modal").classList.remove("hidden");
+}
+
+function closeGroupSettingsModal() {
+  document.querySelector("#group-settings-modal").classList.add("hidden");
 }
 
 async function createAdminGroup() {
@@ -942,66 +1001,11 @@ async function createAdminGroup() {
   }
 }
 
-async function setGroupDiskLimit(groupId) {
-  const group = state.groups.find((item) => item.id === groupId);
-  const initial = group?.diskLimitBytes === null || group?.diskLimitBytes === undefined ? "" : String(Math.round(Number(group.diskLimitBytes) / (1024 * 1024)));
-  const raw = window.prompt(t("admin.promptDiskLimit"), initial);
-  if (raw === null) return;
-  const trimmed = raw.trim();
-  const mebibytes = trimmed === "" ? null : Number(trimmed);
-  if (mebibytes !== null && (!Number.isFinite(mebibytes) || mebibytes < 0)) return;
-  try {
-    await api(`/api/groups/${encodeURIComponent(groupId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ diskLimitBytes: mebibytes === null ? null : Math.round(mebibytes * 1024 * 1024) }),
-    });
-    await loadAccountControlData();
-    showToast(t("toast.groupLimitSaved"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function setGroupLiveRunLimit(groupId) {
-  const group = state.groups.find((item) => item.id === groupId);
-  const raw = window.prompt(t("admin.promptLiveRunLimit"), String(group?.liveRunLimit ?? 1));
-  if (raw === null) return;
-  const liveRunLimit = Number(raw.trim());
-  if (!Number.isInteger(liveRunLimit) || liveRunLimit < 0) return;
-  try {
-    await api(`/api/groups/${encodeURIComponent(groupId)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ liveRunLimit }),
-    });
-    await loadAccountControlData();
-    showToast(t("toast.groupLiveRunLimitSaved"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function resetAccountBudget(userId) {
-  const account = state.accounts.find((item) => item.id === userId);
-  const raw = window.prompt(t("admin.promptBudget"), "0.00");
-  if (raw === null) return;
-  const amountCny = Number(raw.trim());
-  if (!Number.isFinite(amountCny) || amountCny < 0) return;
-  try {
-    await api(`/api/accounts/${encodeURIComponent(userId)}/reset-budget`, {
-      method: "POST",
-      body: JSON.stringify({ amountCny: amountCny.toFixed(2) }),
-    });
-    await loadAccountControlData();
-    showToast(t("toast.budgetReset"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
 async function deleteAdminAccount(userId) {
   if (!window.confirm(t("admin.confirmDeleteUser"))) return;
   try {
     await api(`/api/accounts/${encodeURIComponent(userId)}`, { method: "DELETE" });
+    closeAccountSettingsModal();
     await loadAccountControlData();
     showToast(t("toast.accountDeleted"));
   } catch (error) {
@@ -1013,6 +1017,7 @@ async function deleteAdminGroup(groupId) {
   if (!window.confirm(t("admin.confirmDeleteGroup"))) return;
   try {
     await api(`/api/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
+    closeGroupSettingsModal();
     await loadAccountControlData();
     showToast(t("toast.groupDeleted"));
   } catch (error) {
@@ -1299,36 +1304,38 @@ function bindGlobalClicks() {
       return;
     }
 
-    const setGroupLimit = event.target.closest("[data-set-group-limit]");
-    if (setGroupLimit) {
+    const accountSettings = event.target.closest("[data-open-account-settings]");
+    if (accountSettings) {
+      openAccountSettingsModal(accountSettings.dataset.openAccountSettings);
+      return;
+    }
+
+    const groupSettings = event.target.closest("[data-open-group-settings]");
+    if (groupSettings) {
       event.preventDefault();
-      setGroupDiskLimit(setGroupLimit.dataset.setGroupLimit);
+      openGroupSettingsModal(groupSettings.dataset.openGroupSettings);
       return;
     }
 
-    const setGroupLiveRunLimitButton = event.target.closest("[data-set-group-live-run-limit]");
-    if (setGroupLiveRunLimitButton) {
-      event.preventDefault();
-      setGroupLiveRunLimit(setGroupLiveRunLimitButton.dataset.setGroupLiveRunLimit);
+    if (event.target.closest("[data-close-account-settings]")) {
+      closeAccountSettingsModal();
       return;
     }
 
-    const deleteGroup = event.target.closest("[data-delete-group]");
-    if (deleteGroup) {
-      event.preventDefault();
-      deleteAdminGroup(deleteGroup.dataset.deleteGroup);
+    if (event.target.closest("[data-close-group-settings]")) {
+      closeGroupSettingsModal();
       return;
     }
 
-    const resetBudget = event.target.closest("[data-reset-budget]");
-    if (resetBudget) {
-      resetAccountBudget(resetBudget.dataset.resetBudget);
+    if (event.target.closest("#account-settings-delete")) {
+      const accountId = document.querySelector('#account-settings-form [name="accountId"]').value;
+      if (accountId) deleteAdminAccount(accountId);
       return;
     }
 
-    const deleteAccount = event.target.closest("[data-delete-account]");
-    if (deleteAccount) {
-      deleteAdminAccount(deleteAccount.dataset.deleteAccount);
+    if (event.target.closest("#group-settings-delete")) {
+      const groupId = document.querySelector('#group-settings-form [name="groupId"]').value;
+      if (groupId) deleteAdminGroup(groupId);
       return;
     }
 
@@ -2021,6 +2028,71 @@ function bindForms() {
       errorElement.textContent = error.message;
     } finally {
       if (submitButton) submitButton.disabled = false;
+    }
+  });
+
+  document.querySelector("#account-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const accountId = String(form.get("accountId") || "");
+    const maxSessions = Number(form.get("maxSessions"));
+    const amountCny = Number(form.get("amountCny") || 0);
+    const errorElement = document.querySelector("#account-settings-error");
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    errorElement.textContent = "";
+    if (!accountId || !Number.isInteger(maxSessions) || maxSessions < 0 || !Number.isFinite(amountCny) || amountCny < 0) return;
+    submitButton.disabled = true;
+    try {
+      await api(`/api/accounts/${encodeURIComponent(accountId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({ groupId: String(form.get("groupId") || ""), maxSessions }),
+      });
+      const account = state.accounts.find((item) => item.id === accountId);
+      if (amountCny > 0 && account?.username && account.budget?.source !== "custom") {
+        await api(`/api/accounts/${encodeURIComponent(accountId)}/reset-budget`, {
+          method: "POST",
+          body: JSON.stringify({ amountCny: amountCny.toFixed(2) }),
+        });
+      }
+      await loadAccountControlData();
+      closeAccountSettingsModal();
+      showToast(t("toast.accountSettingsSaved"));
+    } catch (error) {
+      errorElement.textContent = error.message;
+    } finally {
+      submitButton.disabled = false;
+    }
+  });
+
+  document.querySelector("#group-settings-form").addEventListener("submit", async (event) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    const groupId = String(form.get("groupId") || "");
+    const name = String(form.get("name") || "").trim();
+    const liveRunLimit = Number(form.get("liveRunLimit"));
+    const rawDiskLimit = String(form.get("diskLimitMib") || "").trim();
+    const diskLimitMib = rawDiskLimit === "" ? null : Number(rawDiskLimit);
+    const errorElement = document.querySelector("#group-settings-error");
+    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    errorElement.textContent = "";
+    if (!groupId || !name || !Number.isInteger(liveRunLimit) || liveRunLimit < 0 || (diskLimitMib !== null && (!Number.isFinite(diskLimitMib) || diskLimitMib < 0))) return;
+    submitButton.disabled = true;
+    try {
+      await api(`/api/groups/${encodeURIComponent(groupId)}`, {
+        method: "PATCH",
+        body: JSON.stringify({
+          name,
+          liveRunLimit,
+          diskLimitBytes: diskLimitMib === null ? null : Math.round(diskLimitMib * 1024 * 1024),
+        }),
+      });
+      await loadAccountControlData();
+      closeGroupSettingsModal();
+      showToast(t("toast.groupSettingsSaved"));
+    } catch (error) {
+      errorElement.textContent = error.message;
+    } finally {
+      submitButton.disabled = false;
     }
   });
 

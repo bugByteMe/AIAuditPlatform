@@ -497,19 +497,12 @@ export function renderAdmin() {
     const status = account.status === "active" && !account.enabled ? "disabled" : account.status || "active";
     const name = account.username || account.id;
     const token = account.inviteToken || "";
-    const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
     const budget = account.budget || {};
     const balance = budget.source === "custom"
       ? t("admin.customProvider")
       : budget.remaining === null || budget.remaining === undefined
         ? t("admin.balanceUnavailable")
         : `¥${escapeHtml(budget.remaining)}`;
-    const actions = [
-      token ? `<button class="btn" data-copy-invite="${escapeHtml(token)}">${t("admin.copy")}</button>` : "",
-      token ? `<button class="btn" data-revoke-invite="${escapeHtml(account.id)}">${t("admin.revoke")}</button>` : "",
-      account.username ? `<button class="btn" data-reset-budget="${escapeHtml(account.id)}">${t("admin.resetBudget")}</button>` : "",
-      `<button class="btn danger" data-delete-account="${escapeHtml(account.id)}" ${isCurrentUser ? "disabled" : ""}>${t("admin.deleteUser")}</button>`,
-    ].join("");
     return `
       <article class="admin-item admin-user-item">
         <div>
@@ -518,17 +511,19 @@ export function renderAdmin() {
             <span>${escapeHtml(account.role || "user")}</span>
             <span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span>
             <span>${balance} ${t("admin.balance")}</span>
+            <span>${Number(account.maxSessions ?? 1)} ${t("admin.concurrentSessions")}</span>
             <span>${Number(account.usedTokens || 0).toLocaleString()} ${t("admin.tokensUsed")}</span>
             <span>${formatBytes(account.diskUsageBytes)} · ${Number(account.workspaceCount || 0)} ${t("admin.workspaces")}</span>
           </div>
           ${token ? `<code class="invite-token">${escapeHtml(token)}</code>` : ""}
         </div>
-        <div class="admin-actions">${actions}</div>
+        <div class="admin-actions">
+          <button type="button" class="btn icon-btn admin-settings-button" data-open-account-settings="${escapeHtml(account.id)}" aria-label="${escapeHtml(t("admin.configureUser"))}" title="${escapeHtml(t("admin.configureUser"))}">⚙</button>
+        </div>
       </article>`;
   };
   const groups = state.groups.map((group) => {
     const accounts = state.accounts.filter((account) => account.groupId === group.id);
-    const containsCurrentUser = accounts.some((account) => account.id === state.user?.id || account.username === state.user?.username);
     const used = Number(group.diskUsageBytes || 0);
     const limit = group.diskLimitBytes === null || group.diskLimitBytes === undefined ? null : Number(group.diskLimitBytes);
     const percent = limit === null ? 0 : limit === 0 ? (used > 0 ? 100 : 0) : Math.min(100, Math.round((used / limit) * 100));
@@ -542,9 +537,7 @@ export function renderAdmin() {
             <div class="meta-line"><span>${Number(group.userCount || 0)} ${t("admin.usersCount")}</span><span>${Number(group.workspaceCount || 0)} ${t("admin.workspaces")}</span><span>${usage}</span><span>${liveRunLimit} ${t("admin.concurrentLiveRuns")}</span></div>
           </div>
           <div class="admin-actions">
-            <button class="btn" data-set-group-limit="${escapeHtml(group.id)}">${t("admin.setDiskLimit")}</button>
-            <button class="btn" data-set-group-live-run-limit="${escapeHtml(group.id)}">${t("admin.setLiveRunLimit")}</button>
-            <button class="btn danger" data-delete-group="${escapeHtml(group.id)}" ${containsCurrentUser ? "disabled" : ""}>${t("admin.deleteGroup")}</button>
+            <button type="button" class="btn icon-btn admin-settings-button" data-open-group-settings="${escapeHtml(group.id)}" aria-label="${escapeHtml(t("admin.configureGroup"))}" title="${escapeHtml(t("admin.configureGroup"))}">⚙</button>
           </div>
         </summary>
         <div class="meter ${limit !== null && used > limit ? "danger" : ""}"><span style="width: ${percent}%"></span></div>

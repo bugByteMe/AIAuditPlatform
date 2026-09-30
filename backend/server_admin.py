@@ -111,8 +111,8 @@ class AdminHandlerMixin:
     actor = self.require_admin()
     group_id = unquote(raw_group_id)
     payload = self.read_json()
-    if not ({"diskLimitBytes", "liveRunLimit"} & payload.keys()):
-      raise ValueError("diskLimitBytes or liveRunLimit is required")
+    if not ({"name", "diskLimitBytes", "liveRunLimit"} & payload.keys()):
+      raise ValueError("name, diskLimitBytes, or liveRunLimit is required")
     group = ACCOUNT_STORE.groups.get(group_id)
     if not group:
       raise ValueError("group not found")
@@ -123,6 +123,9 @@ class AdminHandlerMixin:
     live_run_limit = int(payload["liveRunLimit"]) if "liveRunLimit" in payload else None
     if live_run_limit is not None and live_run_limit < 0:
       raise ValueError("liveRunLimit must be non-negative")
+    if "name" in payload:
+      group = ACCOUNT_STORE.update_group_name(group_id, str(payload.get("name") or ""))
+      add_audit(actor["username"], "group name updated", f"{group_id} name={group['name']}")
     if "diskLimitBytes" in payload:
       group = ACCOUNT_STORE.update_group_disk_limit(group_id, disk_limit)
       add_audit(actor["username"], "group disk limit updated", f"{group_id} limit={group['diskLimitBytes']}")
@@ -255,12 +258,28 @@ class AdminHandlerMixin:
     actor = self.require_admin()
     username = unquote(raw_username)
     user = user_by_identifier(username)
+    is_pending = False
+    if not user:
+      user = ACCOUNT_STORE.pending_accounts.get(username)
+      is_pending = bool(user)
     if not user:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
       return
     payload = self.read_json()
     was_enabled = bool(user.get("enabled", True))
-    for key in ["displayName", "role", "group", "enabled", "maxSessions"]:
+    if "groupId" in payload:
+      group_id = str(payload.get("groupId") or "")
+      group = ACCOUNT_STORE.groups.get(group_id) if group_id else None
+      if group_id and not group:
+        raise ValueError("group not found")
+      user["groupId"] = group_id
+      user["group"] = str(group.get("name") or "") if group else ""
+    if "maxSessions" in payload:
+      max_sessions = int(payload["maxSessions"])
+      if max_sessions < 0 or max_sessions > SETTINGS.account_max_sessions_limit:
+        raise ValueError("maxSessions is outside the allowed range")
+      user["maxSessions"] = max_sessions
+    for key in ["displayName", "role", "enabled"]:
       if key in payload:
         user[key] = payload[key]
     if "codexBaseUrl" in payload or "codexApiKey" in payload or "clearCodexApiKey" in payload:
@@ -274,7 +293,10 @@ class AdminHandlerMixin:
       except MicuApiError as exc:
         user["enabled"] = was_enabled
         raise StorageError("budget_provider_unavailable", str(exc)) from exc
-    ACCOUNT_STORE.save_user(user)
+    if is_pending:
+      ACCOUNT_STORE.save_pending(user)
+    else:
+      ACCOUNT_STORE.save_user(user)
     add_audit(actor["username"], "account updated", username)
     self.write_json({"account": public_user(user)})
 

@@ -116,9 +116,35 @@
 }
 
 .admin-group-users {
-  margin-top: 8px;
+  margin-top: 4px;
   padding-left: 18px;
   border-left: 2px solid var(--line);
+}
+
+.admin-user-item {
+  gap: 8px;
+  padding: 6px 4px;
+}
+
+.admin-user-item h3 {
+  margin-bottom: 2px;
+}
+
+.admin-user-item .meta-line {
+  margin-top: 2px;
+  font-size: 12px;
+}
+
+.admin-user-item .invite-token {
+  margin-top: 4px;
+  font-size: 11px;
+}
+
+.admin-settings-button {
+  width: 30px !important;
+  min-width: 30px !important;
+  min-height: 30px;
+  color: var(--muted);
 }
 
 .admin-user-item:last-child {
@@ -435,6 +461,29 @@ td.code {
 
 .modal-actions {
   justify-content: flex-end;
+}
+
+.admin-settings-panel {
+  width: min(520px, 100%);
+}
+
+.admin-settings-invite {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: end;
+  gap: 12px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+}
+
+.admin-settings-invite .invite-token {
+  margin: 0;
+}
+
+.admin-settings-actions .settings-action-spacer {
+  flex: 1;
 }
 
 .recharge-layout {

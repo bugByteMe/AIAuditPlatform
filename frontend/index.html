@@ -466,6 +466,75 @@
         </div>
       </form>
     </div>
+    <div class="modal-backdrop hidden" id="account-settings-modal" role="dialog" aria-modal="true" aria-labelledby="account-settings-title">
+      <form class="modal-panel admin-settings-panel" id="account-settings-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="account-settings-title" data-i18n="admin.userSettings">用户设置</h2>
+            <p id="account-settings-name"></p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-account-settings aria-label="Close">×</button>
+        </div>
+        <input type="hidden" name="accountId" />
+        <label class="field">
+          <span data-i18n="admin.groupBelonged">所属小组</span>
+          <select name="groupId" id="account-settings-group"></select>
+        </label>
+        <label class="field">
+          <span data-i18n="admin.maxSessions">并发会话数</span>
+          <input name="maxSessions" type="number" min="0" max="10" required />
+        </label>
+        <label class="field" id="account-settings-balance-field">
+          <span data-i18n="admin.balanceToAdd">追加余额（元）</span>
+          <input name="amountCny" type="number" min="0" step="0.01" value="0.00" />
+        </label>
+        <div class="admin-settings-invite hidden" id="account-settings-invite">
+          <code class="invite-token" id="account-settings-invite-token"></code>
+          <div class="admin-actions">
+            <button type="button" class="btn" id="account-settings-copy-invite" data-i18n="admin.copy">复制</button>
+            <button type="button" class="btn" id="account-settings-revoke-invite" data-i18n="admin.revoke">撤销</button>
+          </div>
+        </div>
+        <p class="form-error" id="account-settings-error"></p>
+        <div class="modal-actions admin-settings-actions">
+          <button type="button" class="btn danger" id="account-settings-delete" data-i18n="admin.deleteUser">删除用户</button>
+          <span class="settings-action-spacer"></span>
+          <button type="button" class="btn" data-close-account-settings data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" data-i18n="actions.save">保存</button>
+        </div>
+      </form>
+    </div>
+    <div class="modal-backdrop hidden" id="group-settings-modal" role="dialog" aria-modal="true" aria-labelledby="group-settings-title">
+      <form class="modal-panel admin-settings-panel" id="group-settings-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="group-settings-title" data-i18n="admin.groupSettings">小组设置</h2>
+            <p id="group-settings-summary"></p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-group-settings aria-label="Close">×</button>
+        </div>
+        <input type="hidden" name="groupId" />
+        <label class="field">
+          <span data-i18n="admin.groupName">小组名称</span>
+          <input name="name" required />
+        </label>
+        <label class="field">
+          <span data-i18n="admin.liveRunLimit">任务并发上限</span>
+          <input name="liveRunLimit" type="number" min="0" required />
+        </label>
+        <label class="field">
+          <span data-i18n="admin.diskLimitMib">磁盘限额（MiB，留空表示不限）</span>
+          <input name="diskLimitMib" type="number" min="0" step="1" />
+        </label>
+        <p class="form-error" id="group-settings-error"></p>
+        <div class="modal-actions admin-settings-actions">
+          <button type="button" class="btn danger" id="group-settings-delete" data-i18n="admin.deleteGroup">删除小组</button>
+          <span class="settings-action-spacer"></span>
+          <button type="button" class="btn" data-close-group-settings data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" data-i18n="actions.save">保存</button>
+        </div>
+      </form>
+    </div>
     <div class="modal-backdrop hidden" id="codex-settings-modal" role="dialog" aria-modal="true" aria-labelledby="codex-settings-title">
       <form class="modal-panel" id="codex-settings-form">
         <div class="panel-head">

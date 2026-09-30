@@ -165,6 +165,10 @@ class AccountStore(AccountRechargeMixin):
     with self.lock:
       self.database.save_user(user)
 
+  def save_pending(self, account: dict) -> None:
+    with self.lock:
+      self.database.save_pending(account)
+
   def save_group(self, group: dict) -> None:
     with self.lock:
       self.database.save_group(group)
@@ -403,6 +407,36 @@ class AccountStore(AccountRechargeMixin):
         self.database.save_group(group)
       except Exception:
         group["liveRunLimit"] = previous
+        raise
+      return deepcopy(group)
+
+  def update_group_name(self, group_id: str, name: str) -> dict:
+    with self.lock:
+      group = self.groups.get(group_id)
+      if not group:
+        raise ValueError("group not found")
+      name = name.strip()
+      if not name:
+        raise ValueError("group name is required")
+      existing = self.group_by_name(name)
+      if existing and str(existing.get("id")) != group_id:
+        raise ValueError("group name already exists")
+      previous_name = str(group.get("name") or "")
+      affected_users = [user for user in self.users.values() if str(user.get("groupId") or "") == group_id]
+      affected_pending = [account for account in self.pending_accounts.values() if str(account.get("groupId") or "") == group_id]
+      group["name"] = name
+      for account in [*affected_users, *affected_pending]:
+        account["group"] = name
+      try:
+        self.database.save_group(group)
+        for user in affected_users:
+          self.database.save_user(user)
+        for account in affected_pending:
+          self.database.save_pending(account)
+      except Exception:
+        group["name"] = previous_name
+        for account in [*affected_users, *affected_pending]:
+          account["group"] = previous_name
         raise
       return deepcopy(group)
 
