@@ -46,6 +46,10 @@ single instances assembled by the server state module. Splitting a service must
 not duplicate those resources or weaken existing transaction and lock
 boundaries.
 
+The WeChat reconciliation loop explicitly imports its settings and the shared
+shutdown event from `server_state`; ASGI startup/shutdown and the loop must use
+the same event rather than creating separate stop signals.
+
 ## Tests
 
 Tests are grouped by behavior rather than by façade file. Shared fixtures live
