@@ -64,6 +64,7 @@
       "chat"
       "filesRail"
       "files";
+    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
     height: auto;
     min-height: 0;
   }
@@ -96,6 +97,14 @@
   }
 
   .event-stream { min-height: 0; }
+
+  .chat-panel {
+    overflow: auto;
+  }
+
+  .chat-head {
+    flex-shrink: 0;
+  }
 }
 
 @media (max-width: 700px) {

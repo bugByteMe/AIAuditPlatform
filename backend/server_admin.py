@@ -15,18 +15,26 @@ from server_state import *
 from server_utils import hash_password, invite_digest, utc_timestamp, verify_password
 from wechat_pay import WechatPayError
 from workspace_store import StorageError, parse_query, parse_urlencoded_paths
+from account_permissions import PLATFORM_ACCOUNT_FIELDS, PLATFORM_GROUP_FIELDS, validate_role
 
 class AdminHandlerMixin:
+  def authorize_management_fields(self, actor: dict, payload: dict, allowed: frozenset) -> None:
+    if actor.get("role") != "system_admin" and payload.keys() - allowed:
+      raise StorageError("forbidden", "these fields require system administrator permission")
+
   def accounts(self) -> None:
-    self.require_admin()
-    refresh_micu_balances(USERS.values())
+    actor = self.require_management()
+    system_admin = actor.get("role") == "system_admin"
+    if system_admin:
+      refresh_micu_balances(USERS.values())
+    serialize = admin_account if system_admin else public_user
     user_usage, group_usage = WORKSPACE_STORE.usage_summaries()
     active = [
-      {**admin_account(user), **user_usage.get(str(user.get("id") or ""), {"diskUsageBytes": 0, "workspaceCount": 0})}
+      {**serialize(user), **user_usage.get(str(user.get("id") or ""), {"diskUsageBytes": 0, "workspaceCount": 0})}
       for user in USERS.values()
     ]
     pending = [
-      {**admin_account(account), "diskUsageBytes": 0, "workspaceCount": 0}
+      {**serialize(account), "diskUsageBytes": 0, "workspaceCount": 0}
       for account in ACCOUNT_STORE.pending_accounts.values()
     ]
     all_accounts = [*USERS.values(), *ACCOUNT_STORE.pending_accounts.values()]
@@ -89,8 +97,9 @@ class AdminHandlerMixin:
     self.write_json({"account": admin_account(account)})
 
   def create_group(self) -> None:
-    actor = self.require_admin()
+    actor = self.require_management()
     payload = self.read_json()
+    self.authorize_management_fields(actor, payload, PLATFORM_GROUP_FIELDS)
     raw_limit = payload.get("diskLimitBytes") if "diskLimitBytes" in payload else None
     parsed_limit = None if raw_limit is None else int(raw_limit)
     if parsed_limit is not None and parsed_limit < 0:
@@ -108,9 +117,10 @@ class AdminHandlerMixin:
     self.write_json({"group": group}, HTTPStatus.CREATED)
 
   def update_group(self, raw_group_id: str) -> None:
-    actor = self.require_admin()
+    actor = self.require_management()
     group_id = unquote(raw_group_id)
     payload = self.read_json()
+    self.authorize_management_fields(actor, payload, PLATFORM_GROUP_FIELDS)
     if not ({"name", "diskLimitBytes", "liveRunLimit"} & payload.keys()):
       raise ValueError("name, diskLimitBytes, or liveRunLimit is required")
     group = ACCOUNT_STORE.groups.get(group_id)
@@ -160,7 +170,7 @@ class AdminHandlerMixin:
     self.write_json({"deleted": {"accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
 
   def delete_group(self, raw_group_id: str) -> None:
-    actor = self.require_admin()
+    actor = self.require_management()
     group_id = unquote(raw_group_id)
     group = ACCOUNT_STORE.groups.get(group_id)
     if not group:
@@ -220,6 +230,7 @@ class AdminHandlerMixin:
     password = str(payload.get("password", "")).strip()
     if not username or not password:
       raise ValueError("username and password are required")
+    role = validate_role(payload.get("role") or "user")
     with REGISTRATION_LOCKS.hold(f"username:{username.casefold()}"):
       if ACCOUNT_STORE.username_exists(username):
         self.write_json({"error": "account_exists"}, HTTPStatus.CONFLICT)
@@ -234,7 +245,7 @@ class AdminHandlerMixin:
         "id": user_id,
         "username": username,
         "displayName": str(payload.get("displayName") or username),
-        "role": str(payload.get("role") or "user"),
+        "role": role,
         "groupId": str(group.get("id") if group else ""),
         "group": group_name,
         "usedTokens": 0,
@@ -255,7 +266,7 @@ class AdminHandlerMixin:
     self.write_json({"account": public_user(USERS[username])}, HTTPStatus.CREATED)
 
   def update_account(self, raw_username: str) -> None:
-    actor = self.require_admin()
+    actor = self.require_management()
     username = unquote(raw_username)
     user = user_by_identifier(username)
     is_pending = False
@@ -266,6 +277,14 @@ class AdminHandlerMixin:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
       return
     payload = self.read_json()
+    self.authorize_management_fields(actor, payload, PLATFORM_ACCOUNT_FIELDS)
+    if "role" in payload:
+      validate_role(payload["role"])
+      if user.get("role") == "system_admin" and payload["role"] != "system_admin":
+        if not any(other.get("role") == "system_admin" and other.get("id") != user.get("id") for other in USERS.values()):
+          raise StorageError("protected_admin", "at least one system administrator must remain")
+    stored_user = user
+    user = dict(user)
     was_enabled = bool(user.get("enabled", True))
     if "groupId" in payload:
       group_id = str(payload.get("groupId") or "")
@@ -293,6 +312,7 @@ class AdminHandlerMixin:
       except MicuApiError as exc:
         user["enabled"] = was_enabled
         raise StorageError("budget_provider_unavailable", str(exc)) from exc
+    stored_user.update(user)
     if is_pending:
       ACCOUNT_STORE.save_pending(user)
     else:

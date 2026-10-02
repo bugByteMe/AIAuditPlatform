@@ -3,6 +3,7 @@ import { fallbackAuditEvents } from "./mockData.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { isEventStreamNearBottom } from "./scrollPosition.js";
 import { state } from "./state.js";
+import { renderWorkspaceTitle } from "./workspaceTitle.js";
 
 const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
 let renderedEventSessionId = "";
@@ -216,6 +217,7 @@ export function renderCurrentUser() {
 }
 
 export function renderWorkspaces() {
+  renderWorkspaceTitle(document, state.user, state.groups);
   const items = workspaceList();
   if (!items.length) {
     document.querySelector("#workspace-list").innerHTML = `<div class="empty-state">${state.lang === "zh" ? "还没有工作区，请上传文件夹创建。" : "No workspaces yet. Upload files to create one."}</div>`;
@@ -508,7 +510,7 @@ export function renderAdmin() {
         <div>
           <h3>${escapeHtml(name)}</h3>
           <div class="meta-line">
-            <span>${escapeHtml(account.role || "user")}</span>
+            <span>${escapeHtml(t(`roles.${account.role || "user"}`))}</span>
             <span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span>
             <span>${balance} ${t("admin.balance")}</span>
             <span>${Number(account.maxSessions ?? 1)} ${t("admin.concurrentSessions")}</span>

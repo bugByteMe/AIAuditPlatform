@@ -21,7 +21,7 @@ class AccountApiTestBase(unittest.TestCase):
     handler = object.__new__(Handler)
     handler.read_json = lambda: payload
     handler.require_admin = lambda: actor
+    handler.require_management = lambda: actor
     handler.responses = []
     handler.write_json = lambda body, status=200, headers=None: handler.responses.append((body, int(status), headers or {}))
     return handler
-

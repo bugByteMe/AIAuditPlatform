@@ -598,6 +598,7 @@
 }
 
 .composer {
+  flex-shrink: 0;
   padding: 10px 12px;
   border-top: 1px solid var(--line);
 }
@@ -606,6 +607,7 @@
   display: block;
   width: 100%;
   min-height: 82px;
+  max-height: max(82px, min(320px, 35dvh));
   resize: vertical;
   padding: 12px;
   border: 1px solid var(--line);

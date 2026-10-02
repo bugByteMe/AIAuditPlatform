@@ -74,6 +74,12 @@ This model gives content deduplication without unbounded binary history or depen
 
 ## Permissions
 
+The workspace overview title uses the current user's actual group name:
+`<group name>的工作区` in Chinese, with a localized English equivalent. Loaded
+group records take precedence over the user's serialized group name. Before user
+loading, for ungrouped users, or when the group has no usable name, the title
+falls back to the generic workspace label. Names are inserted as text.
+
 Workspaces can be:
 
 - Private to the owner.

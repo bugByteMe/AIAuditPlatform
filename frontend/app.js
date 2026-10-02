@@ -26,6 +26,7 @@ import {
 } from "./js/render.js";
 import { currentWorkspace } from "./js/selectors.js";
 import { isEventStreamNearTop } from "./js/scrollPosition.js";
+import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSettingsPayload, groupSettingsPayload } from "./js/adminPermissions.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 let activeChatStream = null;
@@ -593,7 +594,8 @@ function routeToView(view, { replace = false } = {}) {
 
 function showAuthenticated(user) {
   state.user = user;
-  const isAdmin = user?.role === "system_admin";
+  const isAdmin = canManageAccounts(user);
+  applyAdminPermissions(document, user);
   document.querySelector("#admin-nav-button").classList.toggle("hidden", !isAdmin);
   if (!isAdmin && viewFromLocation() === "admin") routeToView("workspace", { replace: true });
   document.querySelector("#auth-screen").classList.add("hidden");
@@ -618,7 +620,7 @@ function showLogin() {
 }
 
 async function loadAccountControlData() {
-  if (state.user?.role !== "system_admin") {
+  if (!canManageAccounts(state.user)) {
     state.accounts = [];
     state.groups = [];
     state.workers = [];
@@ -627,9 +629,14 @@ async function loadAccountControlData() {
     return;
   }
   try {
-    const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), api("/api/audit-logs"), api("/api/workers")]);
+    const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), isSystemAdmin(state.user) ? api("/api/audit-logs") : { logs: [] }, isSystemAdmin(state.user) ? api("/api/workers") : { workers: [] }]);
     state.accounts = accounts.accounts || [];
     state.groups = accounts.groups || [];
+    const ownAccount = state.accounts.find((account) => account.id === state.user?.id);
+    if (ownAccount) {
+      state.user.groupId = ownAccount.groupId;
+      state.user.group = ownAccount.group;
+    }
     state.auditLogs = logs.logs || [];
     state.workers = workers.workers || [];
   } catch {
@@ -640,6 +647,7 @@ async function loadAccountControlData() {
   }
   renderAdmin();
   renderWorkers();
+  renderWorkspaces();
 }
 
 async function refreshWorkerStatus() {
@@ -932,10 +940,12 @@ async function revokeInvite(userId) {
 }
 
 function openAccountSettingsModal(accountId) {
+  if (!canManageAccounts(state.user)) return;
   const account = state.accounts.find((item) => item.id === accountId);
   if (!account) return;
   const form = document.querySelector("#account-settings-form");
   form.elements.accountId.value = account.id;
+  form.elements.role.value = account.role || "user";
   form.elements.maxSessions.value = String(account.maxSessions ?? 1);
   form.elements.maxSessions.max = String(state.runtimeConfig.accountMaxSessionsLimit);
   form.elements.amountCny.value = "0.00";
@@ -951,12 +961,12 @@ function openAccountSettingsModal(accountId) {
       ? t("admin.balanceUnavailable")
       : `¥${account.budget.remaining}`;
   document.querySelector("#account-settings-name").textContent = `${account.username || account.id} · ${balance}`;
-  document.querySelector("#account-settings-balance-field").classList.toggle("hidden", !account.username || account.budget?.source === "custom");
+  document.querySelector("#account-settings-balance-field").classList.toggle("hidden", !isSystemAdmin(state.user) || !account.username || account.budget?.source === "custom");
   document.querySelector("#account-settings-error").textContent = "";
   const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
   document.querySelector("#account-settings-delete").disabled = isCurrentUser;
   const invitePanel = document.querySelector("#account-settings-invite");
-  invitePanel.classList.toggle("hidden", !account.inviteToken);
+  invitePanel.classList.toggle("hidden", !isSystemAdmin(state.user) || !account.inviteToken);
   document.querySelector("#account-settings-invite-token").textContent = account.inviteToken || "";
   document.querySelector("#account-settings-copy-invite").dataset.copyInvite = account.inviteToken || "";
   document.querySelector("#account-settings-revoke-invite").dataset.revokeInvite = account.inviteToken ? account.id : "";
@@ -968,6 +978,7 @@ function closeAccountSettingsModal() {
 }
 
 function openGroupSettingsModal(groupId) {
+  if (!canManageAccounts(state.user)) return;
   const group = state.groups.find((item) => item.id === groupId);
   if (!group) return;
   const form = document.querySelector("#group-settings-form");
@@ -1364,7 +1375,7 @@ function bindGlobalClicks() {
 
     const nav = event.target.closest(".nav-item");
     if (nav) {
-      if (nav.dataset.view === "admin" && state.user?.role !== "system_admin") return;
+      if (nav.dataset.view === "admin" && !canManageAccounts(state.user)) return;
       routeToView(nav.dataset.view);
       if (nav.dataset.view === "admin") loadAccountControlData();
       return;
@@ -2045,15 +2056,17 @@ function bindForms() {
     try {
       await api(`/api/accounts/${encodeURIComponent(accountId)}`, {
         method: "PATCH",
-        body: JSON.stringify({ groupId: String(form.get("groupId") || ""), maxSessions }),
+        body: JSON.stringify(accountSettingsPayload(state.user, form)),
       });
       const account = state.accounts.find((item) => item.id === accountId);
-      if (amountCny > 0 && account?.username && account.budget?.source !== "custom") {
+      if (isSystemAdmin(state.user) && amountCny > 0 && account?.username && account.budget?.source !== "custom") {
         await api(`/api/accounts/${encodeURIComponent(accountId)}/reset-budget`, {
           method: "POST",
           body: JSON.stringify({ amountCny: amountCny.toFixed(2) }),
         });
       }
+      const session = await api("/api/session");
+      showAuthenticated(session.user);
       await loadAccountControlData();
       closeAccountSettingsModal();
       showToast(t("toast.accountSettingsSaved"));
@@ -2080,11 +2093,7 @@ function bindForms() {
     try {
       await api(`/api/groups/${encodeURIComponent(groupId)}`, {
         method: "PATCH",
-        body: JSON.stringify({
-          name,
-          liveRunLimit,
-          diskLimitBytes: diskLimitMib === null ? null : Math.round(diskLimitMib * 1024 * 1024),
-        }),
+        body: JSON.stringify(groupSettingsPayload(state.user, form)),
       });
       await loadAccountControlData();
       closeGroupSettingsModal();
@@ -2377,7 +2386,7 @@ async function bootstrap() {
 
 function syncRouteFromLocation() {
   const requestedView = viewFromLocation();
-  const view = requestedView === "admin" && state.user?.role !== "system_admin" ? "workspace" : requestedView;
+  const view = requestedView === "admin" && !canManageAccounts(state.user) ? "workspace" : requestedView;
   if (view !== requestedView) routeToView(view, { replace: true });
   switchView(view);
   if (view === "admin" && state.user) loadAccountControlData();

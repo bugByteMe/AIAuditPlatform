@@ -131,7 +131,7 @@
             <section class="panel wide">
               <div class="panel-head">
                 <div>
-                  <h2 data-i18n="workspace.title">工作区</h2>
+                  <h2 id="workspace-overview-title">工作区</h2>
                   <p data-i18n="workspace.help">创建、打开、共享或复刻审计任务目录。</p>
                 </div>
                 <span class="pill success" data-i18n="workspace.lockFree">无写入锁</span>
@@ -334,15 +334,15 @@
                   <p data-i18n="admin.usersHelp">批量创建账号、分组并设置预算。</p>
                 </div>
                 <div class="toolbar-actions">
-                  <button class="btn" id="recharge-import-button" data-i18n="admin.importRecharge">批量充值</button>
+                  <button class="btn" id="recharge-import-button" data-system-admin-only data-i18n="admin.importRecharge">批量充值</button>
                   <button class="btn" id="create-group-button" data-i18n="admin.createGroup">新建小组</button>
-                  <button class="btn primary" id="batch-create-button" data-i18n="admin.batchCreate">批量创建</button>
+                  <button class="btn primary" id="batch-create-button" data-system-admin-only data-i18n="admin.batchCreate">批量创建</button>
                   <input type="file" id="recharge-import-input" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
                 </div>
               </div>
               <div class="admin-grid" id="admin-grid"></div>
             </section>
-            <section class="panel wide">
+            <section class="panel wide" data-system-admin-only>
               <div class="panel-head">
                 <div>
                   <h2 data-i18n="admin.workers">计算节点</h2>
@@ -351,7 +351,7 @@
               </div>
               <div class="worker-grid" id="worker-grid"></div>
             </section>
-            <section class="panel">
+            <section class="panel" data-system-admin-only>
               <div class="panel-head">
                 <div>
                   <h2 data-i18n="admin.audit">审计事件</h2>
@@ -476,15 +476,24 @@
           <button type="button" class="rail-toggle" data-close-account-settings aria-label="Close">×</button>
         </div>
         <input type="hidden" name="accountId" />
+        <label class="field" data-system-admin-only>
+          <span data-i18n="admin.role">用户角色</span>
+          <select name="role">
+            <option value="user" data-i18n="roles.user">普通用户</option>
+            <option value="group_admin" data-i18n="roles.group_admin">小组管理员</option>
+            <option value="platform_admin" data-i18n="roles.platform_admin">平台管理员</option>
+            <option value="system_admin" data-i18n="roles.system_admin">系统管理员</option>
+          </select>
+        </label>
         <label class="field">
           <span data-i18n="admin.groupBelonged">所属小组</span>
           <select name="groupId" id="account-settings-group"></select>
         </label>
-        <label class="field">
+        <label class="field" data-system-admin-only>
           <span data-i18n="admin.maxSessions">并发会话数</span>
           <input name="maxSessions" type="number" min="0" max="10" required />
         </label>
-        <label class="field" id="account-settings-balance-field">
+        <label class="field" id="account-settings-balance-field" data-system-admin-only>
           <span data-i18n="admin.balanceToAdd">追加余额（元）</span>
           <input name="amountCny" type="number" min="0" step="0.01" value="0.00" />
         </label>
@@ -497,7 +506,7 @@
         </div>
         <p class="form-error" id="account-settings-error"></p>
         <div class="modal-actions admin-settings-actions">
-          <button type="button" class="btn danger" id="account-settings-delete" data-i18n="admin.deleteUser">删除用户</button>
+          <button type="button" class="btn danger" id="account-settings-delete" data-system-admin-only data-i18n="admin.deleteUser">删除用户</button>
           <span class="settings-action-spacer"></span>
           <button type="button" class="btn" data-close-account-settings data-i18n="actions.cancel">取消</button>
           <button type="submit" class="btn primary" data-i18n="actions.save">保存</button>
@@ -522,7 +531,7 @@
           <span data-i18n="admin.liveRunLimit">任务并发上限</span>
           <input name="liveRunLimit" type="number" min="0" required />
         </label>
-        <label class="field">
+        <label class="field" data-system-admin-only>
           <span data-i18n="admin.diskLimitMib">磁盘限额（MiB，留空表示不限）</span>
           <input name="diskLimitMib" type="number" min="0" step="1" />
         </label>

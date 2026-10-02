@@ -13,6 +13,33 @@ The system should support these roles:
 - User: can create workspaces, use chat, access permitted shared workspaces, fork workspaces, and download permitted artifacts.
 - Group admin: can inspect group usage and manage group workspace access if enabled.
 - System admin: can create users and groups, set budgets, disable accounts or groups, inspect usage, and view audit logs.
+- Platform admin (`platform_admin`): can list users/groups, assign user group membership, create/delete groups, and edit group names and concurrent live-run limits. This role does not inherit system-admin workspace, budget, invitation, worker, or audit-log privileges.
+
+### Administration permissions
+
+| Operation | system_admin | platform_admin | user / group_admin / unknown |
+| --- | --- | --- | --- |
+| List users and groups | Yes | Yes, without invitations or exact balances | No |
+| Change user group (`groupId`) | Yes | Yes | No |
+| Change user role, status, session limit, password or provider settings | Yes | No | No |
+| Create/delete groups | Yes | Yes, existing cascade safeguards apply | No |
+| Edit group `name` / `liveRunLimit` | Yes | Yes | No |
+| Edit group disk limit or other configuration | Yes | No | No |
+| Create/delete accounts, revoke invitations, recharge, inspect workers/logs | Yes | No | No |
+
+Management APIs check the authenticated role. Platform-admin account PATCH
+requests accept only `groupId`; group POST/PATCH requests accept only `name`
+and `liveRunLimit`. A request containing any restricted or unknown field fails
+with 403 before mutation, even when it also contains allowed fields. Existing
+system-admin endpoints remain system-only. New roles must be one of `user`,
+`group_admin`, `platform_admin`, `system_admin`; unknown stored roles retain no
+management privileges. Existing role storage needs no schema migration.
+Role changes cannot demote the last system administrator.
+
+The user settings dialog exposes a localized role selector only to system
+administrators. Platform admins see group assignment and group name/concurrency
+controls; other controls are hidden and disabled, and save payloads contain only
+permitted fields. API permission errors remain visible in the dialog.
 
 ## Authentication
 

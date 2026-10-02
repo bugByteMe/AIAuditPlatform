@@ -2,6 +2,11 @@
 
 ## Session Model
 
+The chat composer retains its native vertical mouse resize handle and multiline
+editing/submission behavior. Its height is bounded between 82px and the smaller
+of 320px or 35% of the viewport (never below 82px). Resizing affects layout only,
+does not persist across sessions, and leaves the send controls outside the input.
+
 A chat session is the user-facing conversation attached to a workspace. A session may have multiple runs when it is stopped and later resumed.
 
 A run is one execution attempt inside one Codex Docker container.

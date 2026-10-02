@@ -264,7 +264,15 @@ class BaseHandler(BaseHTTPRequestHandler):
     if not user:
       self.write_json({"error": "unauthorized"}, HTTPStatus.UNAUTHORIZED)
       raise RequestStopped()
-    if user["role"] != "system_admin":
+    if user.get("role") != "system_admin":
+      self.write_json({"error": "forbidden"}, HTTPStatus.FORBIDDEN)
+      raise RequestStopped()
+    return user
+
+  def require_management(self) -> dict:
+    from account_permissions import MANAGEMENT_ROLES
+    user = self.require_user()
+    if user.get("role") not in MANAGEMENT_ROLES:
       self.write_json({"error": "forbidden"}, HTTPStatus.FORBIDDEN)
       raise RequestStopped()
     return user

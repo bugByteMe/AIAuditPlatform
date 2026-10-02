@@ -123,6 +123,11 @@
 
 ## Admin
 
+- Explicitly test `system_admin`, `platform_admin`, `group_admin`, ordinary users, and unknown roles. Only the first two may access account/group management.
+- Platform admins may list accounts/groups, change only account `groupId`, create/delete groups, and update only group `name`/`liveRunLimit`. Mixed payloads containing restricted or unknown fields return 403 before mutation.
+- System admins may create and persist platform admins and change roles; invalid roles and demotion of the last system admin are rejected. Existing cascading group deletion and protected-admin checks remain enforced.
+- Platform account lists exclude invitation tokens and system-only budget detail; budget-provider refresh, audit logs, and worker status remain system-only.
+- Frontend role controls, user deletion, recharge, disk limits, worker panels, and audit panels are hidden/disabled for platform admins; outgoing save payloads contain only permitted fields.
 - Admin can batch-create users and groups.
 - Batch-created accounts have unique immutable IDs and invite tokens but no username or password hash.
 - Only system admins can list or revoke unused invite tokens.
@@ -139,6 +144,13 @@
 - A run stop timeout rejects cascading deletion without removing the account or group.
 - Only system admins can read compute-worker health and resource summaries.
 - The admin worker cards and chat header render available/total CPU and memory without restoring the removed large console heading.
+
+## Workspace title and composer layout
+
+- Render the current group's localized workspace title using text content; use the generic title while loading, without membership, or without a usable group name.
+- Mouse-resize the composer on desktop and 390px screens to both bounds (82px minimum; the smaller of 320px and 35dvh maximum). Preserve newlines, submitted text, error recovery, disabled behavior, and access to the send button without horizontal overflow.
+- Run frontend unit tests with `node --test frontend/js/*.test.mjs`.
+- Run browser tests with `node --test frontend/tests/ui.browser.mjs` using Playwright and installed Microsoft Edge. `PLAYWRIGHT_MODULE` may reference an existing Playwright `index.mjs`; `PLAYWRIGHT_CHANNEL` may select another installed Chromium channel. All API responses in these tests are synthetic and intercepted locally.
 
 ## Recharge
 
