@@ -307,11 +307,11 @@
                 </div>
               </div>
               <div class="recharge-products">
-                <button type="button" class="recharge-product" data-recharge-amount="1"><strong>¥1</strong><span data-i18n="recharge.debugSelect">调试</span></button>
-                <button type="button" class="recharge-product" data-recharge-amount="50"><strong>¥50</strong><span data-i18n="recharge.select">选择</span></button>
-                <button type="button" class="recharge-product" data-recharge-amount="100"><strong>¥100</strong><span data-i18n="recharge.select">选择</span></button>
-                <button type="button" class="recharge-product" data-recharge-amount="200"><strong>¥200</strong><span data-i18n="recharge.select">选择</span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="50"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥50</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="100"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥100</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="200"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥200</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
               </div>
+              <button type="button" class="recharge-debug" data-recharge-amount="1"><span data-i18n="recharge.debugSelect">调试</span><strong>¥1</strong><span aria-hidden="true">↗</span></button>
             </section>
             <section class="panel recharge-history-panel">
               <div class="panel-head">
@@ -604,12 +604,19 @@
       <section class="modal-panel qr-payment-panel">
         <div class="panel-head">
           <div>
-            <h2 id="recharge-qr-title"><span data-i18n="recharge.payTitle">扫码支付</span> <span id="recharge-qr-amount"></span></h2>
-            <p data-i18n="recharge.scanHelp">请使用对应的支付应用扫描二维码。</p>
+            <h2 id="recharge-qr-title"><span id="recharge-payment-heading" data-i18n="recharge.payTitle">扫码支付</span> <span id="recharge-qr-amount"></span></h2>
+            <p id="recharge-scan-help" data-i18n="recharge.scanHelp">请使用对应的支付应用扫描二维码。</p>
           </div>
           <button type="button" class="rail-toggle" data-close-recharge-qr aria-label="Close">×</button>
         </div>
         <img class="payment-qr" id="recharge-qr-image" alt="Payment QR code" />
+        <div class="payment-success hidden" id="recharge-payment-notice" role="status" aria-live="polite" aria-atomic="true">
+          <span class="payment-success-icon" aria-hidden="true">✓</span>
+          <h3 id="recharge-payment-notice-title"></h3>
+          <span class="payment-success-label" data-i18n="recharge.paidAmount">付款金额</span>
+          <strong id="recharge-payment-notice-amount"></strong>
+          <p id="recharge-payment-notice-detail"></p>
+        </div>
         <p class="form-error hidden" id="recharge-qr-missing" data-i18n="recharge.qrMissing">付款二维码尚未配置，请联系管理员。</p>
         <p class="payment-reminder" id="recharge-order-status" data-i18n="recharge.orderCreating">正在创建微信支付订单...</p>
         <div class="modal-actions">

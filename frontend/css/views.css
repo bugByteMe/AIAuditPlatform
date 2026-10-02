@@ -586,28 +586,91 @@ td.code {
 
 .recharge-product {
   display: grid;
-  gap: 6px;
-  padding: 22px 12px;
+  gap: 20px;
+  padding: 22px;
   border: 1px solid var(--line);
   border-radius: 8px;
-  background: #ffffff;
+  background: linear-gradient(145deg, #ffffff, #f4f9f9);
   color: var(--text);
+  text-align: left;
   cursor: pointer;
+  transition: border-color 150ms, box-shadow 150ms;
 }
 
-.recharge-product:hover {
+.recharge-product:hover:not(:disabled) {
   border-color: var(--primary);
-  background: var(--surface-2);
+  box-shadow: 0 6px 18px #163b3b0d;
 }
 
 .recharge-product strong {
-  font-size: 24px;
+  font-size: 34px;
+  line-height: 1.15;
+  letter-spacing: 0;
 }
 
-.recharge-product span {
+.recharge-product-label {
   color: var(--muted);
   font-size: 13px;
 }
+
+.recharge-product-action {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+  color: var(--primary);
+  font-size: 13px;
+}
+
+.recharge-debug {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  margin-top: 14px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface-2);
+  color: var(--muted);
+  text-align: left;
+  cursor: pointer;
+}
+
+.recharge-debug span:last-child { margin-left: auto; }
+.recharge-debug:hover:not(:disabled) { border-color: var(--primary); }
+.recharge-product:focus-visible,
+.recharge-debug:focus-visible { outline: 2px solid var(--primary); outline-offset: 3px; }
+.recharge-product:disabled,
+.recharge-debug:disabled { opacity: 0.5; cursor: not-allowed; }
+
+.payment-success {
+  display: grid;
+  justify-items: center;
+  gap: 14px;
+  width: 100%;
+  padding: 34px 20px;
+  border: 1px solid #cae6dc;
+  border-radius: 8px;
+  background: #f0faf5;
+  color: #18634a;
+}
+
+.payment-success-icon {
+  display: grid;
+  place-items: center;
+  width: 72px;
+  height: 72px;
+  border-radius: 50%;
+  background: #d9f1e5;
+  font-size: 38px;
+}
+
+.payment-success h3 { margin: 0; font-size: 26px; }
+.payment-success > strong { font-size: 32px; }
+.payment-success-label { margin-bottom: -8px; font-size: 13px; }
+.payment-success p { margin: 0; color: #386d59; line-height: 1.6; }
 
 .qr-payment-panel {
   justify-items: center;
@@ -617,6 +680,11 @@ td.code {
 .qr-payment-panel .panel-head,
 .qr-payment-panel .modal-actions {
   width: 100%;
+}
+
+.qr-payment-panel .panel-head {
+  display: flex;
+  align-items: center;
 }
 
 .payment-qr {

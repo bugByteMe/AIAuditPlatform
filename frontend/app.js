@@ -27,6 +27,7 @@ import {
 import { currentWorkspace } from "./js/selectors.js";
 import { isEventStreamNearTop } from "./js/scrollPosition.js";
 import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSettingsPayload, groupSettingsPayload } from "./js/adminPermissions.js";
+import { renderPaymentNotice } from "./js/paymentNotice.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 let activeChatStream = null;
@@ -52,6 +53,7 @@ export function renderDynamic() {
   renderFileExplorer();
   renderOperationProgress();
   renderRechargeHistory();
+  if (state.rechargeOrder) renderRechargeOrderStatus(state.rechargeOrder);
   renderPanelState();
   renderAdmin();
   renderWorkers();
@@ -863,6 +865,7 @@ function closeRechargeQrModal() {
 }
 
 function renderRechargeOrderStatus(order) {
+  renderPaymentNotice(document, order);
   const key = `recharge.order.${order?.status || "pending"}`;
   const translated = t(key);
   document.querySelector("#recharge-order-status").textContent = translated === key ? order?.status || "" : translated;
@@ -872,6 +875,7 @@ async function pollRechargeOrder(orderId) {
   if (state.rechargeOrder?.id !== orderId) return;
   try {
     const result = await api(`/api/recharge/orders/${encodeURIComponent(orderId)}`);
+    if (state.rechargeOrder?.id !== orderId) return;
     state.rechargeOrder = result.order;
     renderRechargeOrderStatus(result.order);
     if (result.order.status === "applied") {
@@ -896,15 +900,19 @@ async function openRechargeQrModal(amount) {
   const missing = document.querySelector("#recharge-qr-missing");
   window.clearTimeout(rechargeOrderPollTimer);
   const generation = ++rechargeOrderGeneration;
+  state.rechargeOrder = null;
+  renderPaymentNotice(document, null);
   document.querySelector("#recharge-qr-amount").textContent = `¥${Number(product.amountCny).toFixed(0)}`;
   document.querySelector("#recharge-order-status").textContent = t("recharge.orderCreating");
   image.classList.add("hidden");
   missing.classList.add("hidden");
   image.onload = () => {
+    if (generation !== rechargeOrderGeneration || ["paid", "crediting", "applied"].includes(state.rechargeOrder?.status)) return;
     image.classList.remove("hidden");
     missing.classList.add("hidden");
   };
   image.onerror = () => {
+    if (generation !== rechargeOrderGeneration || ["paid", "crediting", "applied"].includes(state.rechargeOrder?.status)) return;
     image.classList.add("hidden");
     missing.classList.remove("hidden");
   };

@@ -13,6 +13,16 @@ The Recharge (`充值`) view is available to every authenticated user alongside 
 
 The API key is returned only by the authenticated `GET /api/recharge` endpoint for the current account. It is not included in public user or administrator account-list responses, and it is not written to the audit log.
 
+The three standard amounts use matching option cards with a clear amount and
+WeChat Pay action; the debug amount appears in a separate compact row. Cards
+stack on small screens and retain keyboard focus and disabled-payment states.
+When an order reaches `paid` or `crediting`, its dialog replaces the QR code with
+a large, persistent payment confirmation and the original amount paid. Only
+`applied` reports that the balance has updated. Pending, failed, expired, and
+review-required orders retain their ordinary status feedback. Closing or opening
+another order resets the confirmation; stale responses and late QR image events
+cannot restore an old order's display.
+
 ## WeChat Pay Native Orders
 
 `POST /api/recharge/orders` creates a unique 15-minute Native Pay order for the

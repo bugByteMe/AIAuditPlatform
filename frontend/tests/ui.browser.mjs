@@ -6,6 +6,7 @@ import { createServer } from "node:http";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { resolve, extname } from "node:path";
+import { tmpdir } from "node:os";
 
 const { chromium } = await import(process.env.PLAYWRIGHT_MODULE ? pathToFileURL(process.env.PLAYWRIGHT_MODULE).href : "playwright");
 const root = fileURLToPath(new URL("../", import.meta.url));
@@ -152,4 +153,48 @@ test("workspace page title uses a safe fallback while loading and when no group 
       await page.unroute("**/api/session");
     }
   } finally { await page.close(); }
+});
+
+test("recharge cards align and paid orders display a large persistent confirmation", async () => {
+  for (const width of [1280, 390]) {
+    const { page } = await openApp("user", { width, height: 900 });
+    let status = "pending";
+    const order = () => ({ id: "example-payment", amountCny: "50.00", status, qrCodeUrl: "/api/recharge/orders/example-payment/qr" });
+    await page.route("**/api/recharge**", async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path.endsWith("/qr")) {
+        await route.fulfill({ contentType: "image/svg+xml", body: '<svg xmlns="http://www.w3.org/2000/svg" width="200" height="200"><rect width="200" height="200" fill="white"/></svg>' });
+      } else if (path === "/api/recharge") {
+        await route.fulfill({ json: { paymentReady: true, products: [1, 50, 100, 200].map(amountCny => ({ amountCny: String(amountCny) })), history: [] } });
+      } else await route.fulfill({ json: { order: order() } });
+    });
+    try {
+      await page.locator('[data-view="recharge"]').click();
+      await page.waitForFunction(() => !document.querySelector('[data-recharge-amount="50"]').disabled);
+      const cards = await page.locator(".recharge-product").all();
+      assert.equal(cards.length, 3);
+      const boxes = await Promise.all(cards.map(card => card.boundingBox()));
+      assert.ok(boxes.every(box => Math.abs(box.height - boxes[0].height) < 1));
+      if (width === 1280) assert.ok(boxes.every(box => box.y === boxes[0].y));
+      assert.equal(await page.locator('.recharge-products [data-recharge-amount="1"]').count(), 0);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+      if (width === 1280) await page.screenshot({ path: resolve(tmpdir(), "audit-recharge-cards.png"), fullPage: true });
+      await cards[0].click();
+      await page.waitForFunction(() => !document.querySelector("#recharge-qr-image").classList.contains("hidden"));
+      status = "paid";
+      await page.waitForFunction(() => document.querySelector("#recharge-payment-notice-title").textContent === "支付成功");
+      assert.equal(await page.locator("#recharge-qr-image").isVisible(), false);
+      assert.equal(await page.locator("#recharge-payment-notice-amount").textContent(), "¥50.00");
+      assert.ok((await page.locator("#recharge-payment-notice").boundingBox()).height > 240);
+      status = "applied";
+      await page.waitForFunction(() => document.querySelector("#recharge-payment-notice-title").textContent === "充值成功");
+      assert.equal(await page.locator("#recharge-payment-notice-detail").textContent(), "充值成功，余额已更新。");
+      await page.screenshot({ path: resolve(tmpdir(), `audit-recharge-success-${width}.png`) });
+      await page.locator('#recharge-qr-modal [data-close-recharge-qr]').first().click();
+      status = "pending";
+      await cards[0].click();
+      assert.equal(await page.locator("#recharge-payment-notice").isVisible(), false);
+      await page.waitForFunction(() => !document.querySelector("#recharge-qr-image").classList.contains("hidden"));
+    } finally { await page.close(); }
+  }
 });
