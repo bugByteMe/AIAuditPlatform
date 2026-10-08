@@ -13,6 +13,11 @@ from checkpoint_delta import stat_fields
 from config import SETTINGS
 from workspace_store import StorageError, UploadedFile, ensure_under_root, normalize_relative_path
 
+
+class UploadStreamTimeout(RuntimeError):
+  """Raised when an upload request stops delivering client data."""
+
+
 def _atomic_json(path: Path, payload: dict) -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
   temporary = path.with_suffix(path.suffix + ".tmp")

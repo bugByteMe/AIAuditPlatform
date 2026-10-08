@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 from compute_nodes import WorkerUnavailable
 from upload_store import UploadManager, WorkerUploadStore
+from worker_upload import UploadStreamTimeout
 from workspace_store import StorageError, UploadedFile, WorkspaceStore
 
 
@@ -21,6 +22,7 @@ def settings(**overrides):
     "upload_stream_buffer_bytes": 64 * 1024,
     "upload_max_concurrent_streams": 2,
     "upload_session_ttl_seconds": 3600,
+    "upload_session_idle_timeout_seconds": 60,
     "upload_reservation_idle_seconds": 60,
     "upload_chunk_bytes": 128 * 1024,
     "upload_reservation_cpus": 0.25,
@@ -286,6 +288,34 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(manager.collect_garbage()["deleted"], 1)
     self.assertIsNone(manager.database.get(upload["id"]))
     manager.shutdown()
+
+  def test_status_polling_does_not_keep_an_upload_session_alive(self):
+    manager = UploadManager(self.store, settings=settings(upload_session_ttl_seconds=1))
+    upload = manager.create(USER, {"mode": "create", "files": [{"path": "stale.txt", "size": 3}]})
+    session = manager.database.get(upload["id"])
+    session["updatedAt"] = time.time() - 10
+    manager.database.save(session)
+
+    self.assertEqual(manager.status(upload["id"], USER)["status"], "uploading")
+    self.assertEqual(manager.collect_garbage()["expired"], 1)
+    self.assertEqual(manager.database.get(upload["id"])["status"], "expired")
+    manager.shutdown()
+
+  def test_stalled_chunk_expires_session_and_releases_append_lock(self):
+    workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
+    upload = self.manager.create(USER, {
+      "mode": "append", "workspaceId": workspace["id"], "files": [{"path": "a.txt", "size": 3}],
+    })
+
+    class StalledReader:
+      def read(self, _size=-1):
+        raise UploadStreamTimeout("upload stopped because no data was received before the timeout")
+
+    with self.assertRaisesRegex(StorageError, "no data was received") as raised:
+      self.manager.receive_chunk(upload["id"], USER, 0, 0, StalledReader(), 3)
+    self.assertEqual(raised.exception.code, "upload_session_expired")
+    self.assertEqual(self.manager.database.get(upload["id"])["status"], "expired")
+    self.assertFalse(self.store.get_workspace(workspace["id"], USER)["locked"])
 
   def test_worker_orphan_gc_never_removes_workspace_or_blob_data(self):
     worker = WorkerUploadStore(self.store.root)

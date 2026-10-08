@@ -40,7 +40,7 @@
       "tls_cert_file": "/etc/ai-audit/worker-01.crt",
       "tls_key_file": "/etc/ai-audit/worker-01.key",
       "enabled": true,
-      "upload_slots": 4
+      "upload_slots": 8
     }
   ],
   "local_run_capacity": 1,
@@ -50,6 +50,7 @@
   "max_workspace_bytes": 5368709120,
   "upload_chunk_bytes": 67108864,
   "upload_chunk_timeout_seconds": 300,
+  "upload_session_idle_timeout_seconds": 300,
   "upload_stream_buffer_bytes": 8388608,
   "upload_session_ttl_seconds": 86400,
   "upload_terminal_retention_seconds": 86400,

@@ -5,6 +5,7 @@ import io
 import json
 import logging
 import threading
+from concurrent.futures import TimeoutError as FutureTimeoutError
 from contextlib import asynccontextmanager
 from http import HTTPStatus
 from pathlib import Path
@@ -23,6 +24,7 @@ from server_recharge import reconcile_wechat_orders
 from server_transport import RequestStopped, SSE_BROKER
 from server_utils import ascii_download_filename, static_content_type
 from server_workloads import WorkloadBusy, WorkloadPools, classify_request
+from worker_upload import UploadStreamTimeout
 from workspace_store import StorageError, parse_query
 
 
@@ -108,8 +110,9 @@ class AsyncRequestReader:
 
   _EOF = object()
 
-  def __init__(self, loop: asyncio.AbstractEventLoop, max_chunks: int = 2):
+  def __init__(self, loop: asyncio.AbstractEventLoop, idle_timeout: float, max_chunks: int = 2):
     self.loop = loop
+    self.idle_timeout = idle_timeout
     self.queue: asyncio.Queue = asyncio.Queue(maxsize=max_chunks)
     self.remainder = b""
 
@@ -124,7 +127,12 @@ class AsyncRequestReader:
     if self.remainder:
       block, self.remainder = self.remainder, b""
     else:
-      item = asyncio.run_coroutine_threadsafe(self.queue.get(), self.loop).result()
+      pending = asyncio.run_coroutine_threadsafe(self.queue.get(), self.loop)
+      try:
+        item = pending.result(timeout=self.idle_timeout)
+      except (TimeoutError, FutureTimeoutError) as exc:
+        pending.cancel()
+        raise UploadStreamTimeout("upload stopped because no data was received before the timeout") from exc
       if item is self._EOF:
         return b""
       if isinstance(item, BaseException):
@@ -147,7 +155,7 @@ def dispatch_request(request: Request, body) -> Response:
 
 async def dispatch_streaming_upload(request: Request) -> Response:
   loop = asyncio.get_running_loop()
-  reader = AsyncRequestReader(loop)
+  reader = AsyncRequestReader(loop, SETTINGS.upload_session_idle_timeout_seconds)
   dispatch_task = asyncio.create_task(workload_pools().upload.run(dispatch_request, request, reader))
 
   async def pump() -> None:
@@ -294,7 +302,7 @@ async def application_route(request: Request, request_path: str) -> Response:
   except WorkloadBusy as exc:
     LOGGER.warning("workload_rejected workload=%s route=%s", exc.workload, route_label)
     return Response(
-      content=json.dumps({"error": "server_busy", "message": "server is busy; retry shortly"}),
+      content=json.dumps({"error": "server_busy", "workload": exc.workload, "message": "server is busy; retry shortly"}),
       status_code=HTTPStatus.SERVICE_UNAVAILABLE,
       headers={**cors_headers(request), "Content-Type": "application/json; charset=utf-8", "Retry-After": "2", "Cache-Control": "no-store"},
     )

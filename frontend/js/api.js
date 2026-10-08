@@ -1,3 +1,5 @@
+import { t } from "./i18n.js";
+
 const API_BASE_KEY = "aiAuditApiBase";
 const SESSION_TOKEN_KEY = "aiAuditSessionToken";
 const DEFAULT_BACKEND_BASE = "http://127.0.0.1:8765";
@@ -43,6 +45,14 @@ function rememberSessionToken(path, payload) {
   }
 }
 
+function responseErrorMessage(payload) {
+  if (payload.error === "server_busy") {
+    const workload = ["file", "upload", "external"].includes(payload.workload) ? payload.workload : "generic";
+    return t(`errors.serverBusy.${workload}`);
+  }
+  return payload.message || payload.error || "request_failed";
+}
+
 async function fetchJson(path, options, base) {
   const headers = { ...(options.headers || {}) };
   if (!(options.body instanceof FormData)) {
@@ -70,9 +80,10 @@ async function fetchJson(path, options, base) {
   }
   const payload = await response.json().catch(() => ({}));
   if (!response.ok) {
-    const error = new Error(payload.message || payload.error || "request_failed");
+    const error = new Error(responseErrorMessage(payload));
     error.status = response.status;
     error.code = payload.error || "request_failed";
+    error.workload = payload.workload || "";
     throw error;
   }
   rememberSessionToken(path, payload);
@@ -126,8 +137,10 @@ function xhrBinary(path, body, base, onProgress, signal) {
       if (!contentType.includes("application/json")) return reject(Object.assign(new Error("api_not_json"), { retryable: true, status: xhr.status }));
       const payload = JSON.parse(xhr.responseText || "{}");
       if (xhr.status < 200 || xhr.status >= 300) {
-        const error = new Error(payload.message || payload.error || "request_failed");
+        const error = new Error(responseErrorMessage(payload));
         error.status = xhr.status;
+        error.code = payload.error || "request_failed";
+        error.workload = payload.workload || "";
         error.retryable = xhr.status === 429 || xhr.status >= 500;
         return reject(error);
       }

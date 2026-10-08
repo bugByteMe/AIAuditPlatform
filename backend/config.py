@@ -185,6 +185,9 @@ class Settings:
     self.upload_chunk_bytes = _int("upload_chunk_bytes", "AI_AUDIT_UPLOAD_CHUNK_BYTES", 8 * 1024 * 1024)
     self.upload_stream_buffer_bytes = _int("upload_stream_buffer_bytes", "AI_AUDIT_UPLOAD_STREAM_BUFFER_BYTES", 1024 * 1024)
     self.upload_chunk_timeout_seconds = _float("upload_chunk_timeout_seconds", "AI_AUDIT_UPLOAD_CHUNK_TIMEOUT_SECONDS", 300)
+    self.upload_session_idle_timeout_seconds = _float(
+      "upload_session_idle_timeout_seconds", "AI_AUDIT_UPLOAD_SESSION_IDLE_TIMEOUT_SECONDS", 300
+    )
     self.upload_session_ttl_seconds = _int("upload_session_ttl_seconds", "AI_AUDIT_UPLOAD_SESSION_TTL_SECONDS", 24 * 60 * 60)
     self.upload_terminal_retention_seconds = _int("upload_terminal_retention_seconds", "AI_AUDIT_UPLOAD_TERMINAL_RETENTION_SECONDS", 24 * 60 * 60)
     self.upload_gc_interval_seconds = _int("upload_gc_interval_seconds", "AI_AUDIT_UPLOAD_GC_INTERVAL_SECONDS", 5 * 60)
@@ -214,6 +217,8 @@ class Settings:
     for name in ["file_work_queue", "upload_request_queue", "external_request_queue"]:
       if getattr(self, name) < 0:
         raise ValueError(f"{name} must be non-negative")
+    if self.upload_session_idle_timeout_seconds <= 0:
+      raise ValueError("upload_session_idle_timeout_seconds must be positive")
     self.sse_wait_timeout_seconds = _float("sse_wait_timeout_seconds", "AI_AUDIT_SSE_WAIT_TIMEOUT_SECONDS", 5)
     self.sse_max_idle_rounds = _int("sse_max_idle_rounds", "AI_AUDIT_SSE_MAX_IDLE_ROUNDS", 24)
     self.sse_retry_ms = _int("sse_retry_ms", "AI_AUDIT_SSE_RETRY_MS", 2_000)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sys
+import asyncio
 import io
 import threading
 import unittest
@@ -16,6 +17,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import server
 from server import Handler, app
 from server_workloads import BoundedExecutor, WorkloadBusy
+from worker_upload import UploadStreamTimeout
 
 
 class FakeChatRuntime:
@@ -92,7 +94,7 @@ class ServerStreamingTest(unittest.TestCase):
         headers={"Origin": "https://audit.example"},
       )
     self.assertEqual(response.status_code, 503)
-    self.assertEqual(response.json(), {"error": "server_busy", "message": "server is busy; retry shortly"})
+    self.assertEqual(response.json(), {"error": "server_busy", "workload": "file", "message": "server is busy; retry shortly"})
     self.assertEqual(response.headers["retry-after"], "2")
     self.assertEqual(response.headers["cache-control"], "no-store")
     self.assertEqual(response.headers["access-control-allow-origin"], "https://audit.example")
@@ -215,6 +217,13 @@ class ServerStreamingTest(unittest.TestCase):
     self.assertIs(manager.source, handler.rfile)
     self.assertEqual(handler.rfile.tell(), 0)
     self.assertEqual(responses[0]["upload"]["offsets"], [3])
+
+
+class AsyncRequestReaderTest(unittest.IsolatedAsyncioTestCase):
+  async def test_read_times_out_when_client_stops_sending_data(self) -> None:
+    reader = server.server_asgi.AsyncRequestReader(asyncio.get_running_loop(), 0.01)
+    with self.assertRaisesRegex(UploadStreamTimeout, "no data was received"):
+      await asyncio.to_thread(reader.read, 1)
 
 
 if __name__ == "__main__":

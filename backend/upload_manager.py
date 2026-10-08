@@ -8,7 +8,7 @@ from chat_common import KeyedLockPool
 from compute_nodes import WorkerUnavailable
 from config import SETTINGS
 from upload_database import TERMINAL_UPLOAD_STATES, UploadDatabase
-from worker_upload import TrackedReader, WorkerUploadStore
+from worker_upload import TrackedReader, UploadStreamTimeout, WorkerUploadStore
 from workspace_store import StorageError, generated_id, normalize_relative_path
 
 ACTIVE_UPLOAD_STATES = {"uploading", "processing", "committing"}
@@ -167,7 +167,7 @@ class UploadManager:
     if not replacement:
       self.database.save(session)
       raise StorageError("no_upload_worker", "no compute worker has upload capacity")
-    session.update({"workerId": replacement, "reservationHeld": True, "updatedAt": time.time()})
+    session.update({"workerId": replacement, "reservationHeld": True})
     self.database.save(session)
     client = self.worker_registry.client(replacement)
     try:
@@ -180,7 +180,7 @@ class UploadManager:
   def _release_failed_reservation(self, session: dict, error: Exception) -> None:
     if self.worker_registry:
       self.worker_registry.release(session.get("workerId"), session["id"])
-    session.update({"reservationHeld": False, "updatedAt": time.time(), "error": str(error)})
+    session.update({"reservationHeld": False, "error": str(error)})
     self.database.save(session)
 
   def receive_chunk(self, upload_id: str, user: dict, index: int, offset: int, source, length: int) -> dict:
@@ -192,6 +192,9 @@ class UploadManager:
       tracked = TrackedReader(source)
       try:
         status = client.stream_upload_chunk(upload_id, index, offset, tracked, length, self.settings.upload_stream_buffer_bytes) if self.worker_registry else self.local_worker.write_chunk(upload_id, index, offset, tracked, length)
+      except UploadStreamTimeout as exc:
+        self._terminal(session, "expired", str(exc))
+        raise StorageError("upload_session_expired", str(exc)) from exc
       except WorkerUnavailable as exc:
         remaining = max(0, length - tracked.bytes_read)
         while remaining:
@@ -222,7 +225,10 @@ class UploadManager:
     except WorkerUnavailable as exc:
       self._release_failed_reservation(session, exc)
       raise StorageError("upload_worker_unavailable", str(exc)) from exc
-    session.update({"status": worker_status["status"], "updatedAt": time.time()})
+    previous_status = session.get("status")
+    session["status"] = worker_status["status"]
+    if worker_status["status"] != "uploading" or previous_status != "uploading":
+      session["updatedAt"] = time.time()
     if worker_status["status"] == "failed":
       self._terminal(session, "failed", worker_status.get("error") or "upload processing failed")
     elif worker_status["status"] == "ready":
@@ -299,7 +305,9 @@ class UploadManager:
     self.database.save(session)
 
   def _gc_loop(self) -> None:
-    interval = max(1, int(getattr(self.settings, "upload_gc_interval_seconds", 300)))
+    configured_interval = int(getattr(self.settings, "upload_gc_interval_seconds", 300))
+    idle_timeout = int(getattr(self.settings, "upload_session_idle_timeout_seconds", configured_interval))
+    interval = max(1, min(configured_interval, idle_timeout))
     while not self.gc_stop.wait(interval):
       try:
         self.collect_garbage()
@@ -309,7 +317,8 @@ class UploadManager:
   def collect_garbage(self) -> dict:
     now = time.time()
     batch = max(1, int(getattr(self.settings, "upload_gc_batch_size", 100)))
-    cutoff = now - int(self.settings.upload_session_ttl_seconds)
+    idle_timeout = float(getattr(self.settings, "upload_session_idle_timeout_seconds", self.settings.upload_session_ttl_seconds))
+    cutoff = now - min(idle_timeout, float(self.settings.upload_session_ttl_seconds))
     expired = 0
     for candidate in self.database.stale_active(cutoff, {"uploading"}, batch):
       with self.session_locks.hold(candidate["id"]), self.store.coordination_locks.hold(f"workspace:{candidate['workspaceId']}"):

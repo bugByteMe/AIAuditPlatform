@@ -54,6 +54,7 @@ class ConfigurationTest(unittest.TestCase):
       "worker_unhealthy_after_seconds",
       "upload_chunk_bytes",
       "upload_chunk_timeout_seconds",
+      "upload_session_idle_timeout_seconds",
       "upload_stream_buffer_bytes",
       "upload_session_ttl_seconds",
       "upload_terminal_retention_seconds",
@@ -88,6 +89,7 @@ class ConfigurationTest(unittest.TestCase):
     self.assertTrue(SETTINGS.blocked_upload_suffixes)
     self.assertGreater(SETTINGS.upload_chunk_bytes, SETTINGS.upload_stream_buffer_bytes)
     self.assertGreater(SETTINGS.upload_chunk_timeout_seconds, 0)
+    self.assertGreater(SETTINGS.upload_session_idle_timeout_seconds, 0)
     self.assertGreater(SETTINGS.file_work_workers, 0)
     self.assertGreaterEqual(SETTINGS.file_work_queue, 0)
     self.assertGreater(SETTINGS.upload_request_workers, 0)
@@ -122,4 +124,7 @@ class ConfigurationTest(unittest.TestCase):
         Settings()
     with patch.dict(os.environ, {"AI_AUDIT_EXTERNAL_REQUEST_QUEUE": "-1"}):
       with self.assertRaisesRegex(ValueError, "external_request_queue must be non-negative"):
+        Settings()
+    with patch.dict(os.environ, {"AI_AUDIT_UPLOAD_SESSION_IDLE_TIMEOUT_SECONDS": "0"}):
+      with self.assertRaisesRegex(ValueError, "upload_session_idle_timeout_seconds must be positive"):
         Settings()

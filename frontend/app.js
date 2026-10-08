@@ -1708,7 +1708,10 @@ async function runResumableUpload({ items, mode, workspaceId = "", name = "", sh
     upload = (await api(`/api/uploads/${encodeURIComponent(upload.id)}/complete`, { method: "POST", body: JSON.stringify({}) })).upload;
   }
   while (upload.status !== "committed") {
-    if (upload.status === "failed") throw new Error(upload.error || "Upload processing failed");
+    if (!["uploading", "processing", "committing"].includes(upload.status)) {
+      window.localStorage.removeItem(PENDING_UPLOAD_KEY);
+      throw new Error(upload.error || "Upload processing failed");
+    }
     if (signal?.aborted && upload.status === "uploading") throw new DOMException("Upload aborted", "AbortError");
     setOperationProgress(t(upload.phase === "committing" ? "progress.committingUpload" : "progress.processingUpload"), 90, true);
     await new Promise((resolve) => window.setTimeout(resolve, 500));

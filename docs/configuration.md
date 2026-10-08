@@ -30,14 +30,14 @@ that proxy.
 - `session_cookie`, `session_ttl_seconds`, `pbkdf2_iterations`, and `audit_log_limit` configure authentication persistence and audit retention.
 - `max_file_bytes`, `max_workspace_bytes`, `max_file_count`, `max_text_preview_bytes`, `blocked_upload_suffixes`, and `office_preview_timeout_seconds` configure upload and preview limits.
 - `upload_chunk_bytes` sets the resumable boundary exposed to browsers; `upload_stream_buffer_bytes` bounds each control/worker copy operation; `upload_chunk_timeout_seconds` bounds control-plane forwarding of one chunk to a worker.
-- `upload_session_ttl_seconds` controls abandoned-session retention, `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
+- `upload_session_idle_timeout_seconds` stops an in-flight upload request and expires the session when the client sends no file data for the configured period, including pauses between chunk requests. Status polling does not extend it. The older `upload_session_ttl_seconds` remains a backward-compatible upper bound on inactivity. `upload_reservation_idle_seconds` releases idle worker reservations without deleting resumable state, and `upload_max_concurrent_streams` caps simultaneous control-plane streams.
 - `upload_gc_interval_seconds` controls the control-plane and worker staging sweeps, `upload_terminal_retention_seconds` retains terminal coordination records for reconnect diagnostics, `upload_gc_batch_size` bounds each control-plane collection pass, and `upload_worker_orphan_ttl_seconds` controls worker staging cleanup.
 - `blob_gc_interval_seconds` controls deferred blob-candidate checks and `blob_gc_grace_seconds` (default one hour) prevents a blob displaced by an overlapping checkpoint from being deleted immediately. Every deletion rechecks database references; a periodic aged full scan recovers candidates after restart.
 - `upload_reservation_cpus` and `upload_reservation_memory` reserve worker capacity during active upload sessions. Each compute node may set `upload_slots` (default `1`).
 - `file_work_workers` and `file_work_queue` bound ZIP creation, file hashing, Office conversion, artifact refresh, forks, and filesystem-heavy deletion. The production default is one worker so file work cannot consume both CPUs on the current control node.
 - `upload_request_workers` and `upload_request_queue` isolate upload forwarding and upload-session worker calls from ordinary HTTP and SSE work.
 - `external_request_workers` and `external_request_queue` isolate synchronous MicuAPI, WeChat Pay, and related provider-facing request paths.
-- When a dedicated executor and its queue are full, the control plane returns `503 server_busy` with `Retry-After: 2`; clients should retry with backoff.
+- When a dedicated executor and its queue are full, the control plane returns `503 server_busy` with the affected `file`, `upload`, or `external` workload and `Retry-After: 2`; the browser shows a localized queue-specific notification and clients should retry with backoff.
 
 ## Chat Streaming
 
