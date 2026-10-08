@@ -23,6 +23,46 @@ set its idle timeout above the configured SSE keepalive interval. TLS,
 connection limits, and request-header limits should normally be enforced at
 that proxy.
 
+## Control-plane Docker image
+
+Build the server image from the repository root:
+
+```bash
+docker build -f docker/control-plane/Dockerfile -t ai-audit-control-plane:latest .
+```
+
+The checked-in configuration uses `/mnt/workspace_storage` and a remote compute
+worker. Create a writable host directory that is the same shared filesystem
+mounted by the compute worker, and keep the worker CA certificate and environment
+file outside source control:
+
+```bash
+sudo install -d -o 10001 -g 10001 /srv/ai-audit/workspace_storage
+chmod 600 /secure/path/ai-audit.env
+```
+
+The environment file must provide `AI_AUDIT_WORKER_AUTH_TOKEN`. Add
+`AI_AUDIT_MICU_MANAGEMENT_TOKEN` when managed-account provisioning is enabled,
+and `AI_AUDIT_DATABASE_URL` when using PostgreSQL. Start the control plane with:
+
+```bash
+docker run -d \
+  --name ai-audit-control-plane \
+  --restart unless-stopped \
+  -p 8000:8000 \
+  --env-file /secure/path/ai-audit.env \
+  --mount type=bind,src=/srv/ai-audit/workspace_storage,dst=/mnt/workspace_storage \
+  --mount type=bind,src="$(pwd)/config/ai_audit.json",dst=/app/config/ai_audit.json,readonly \
+  --mount type=bind,src="$(pwd)/cert/cluster-ca.crt",dst=/etc/ai-audit/cluster-ca.crt,readonly \
+  ai-audit-control-plane:latest
+```
+
+Replace the host storage and certificate paths as needed. The control-plane
+container runs as UID/GID `10001`, so the storage mount must be writable by that
+identity. The image serves the bundled frontend and exposes `/api/health` as its
+Docker health check. Put the existing Nginx configuration in front of port 8000
+for public TLS, streaming uploads, and SSE.
+
 ## Service and Storage
 
 - `host`, `port`, `frontend_dir`, and `workspace_storage_dir` configure the HTTP service and managed data paths.
