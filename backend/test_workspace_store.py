@@ -306,6 +306,16 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertTrue(detail["detailLoaded"])
     self.assertTrue(detail["files"])
 
+  def test_workspace_summary_includes_session_count_without_loading_detail(self) -> None:
+    workspace = self.create_workspace(shared=True)
+    stored = self.store.get_workspace(workspace["id"], OWNER)
+    stored["sessions"] = [{"id": "chat-1"}, {"id": "chat-2"}]
+    self.store.save_workspace_lifecycle(stored)
+
+    summary = next(item for item in self.store.list_workspaces(OWNER) if item["id"] == workspace["id"])
+    self.assertEqual(summary["sessionCount"], 2)
+    self.assertEqual(summary["sessions"], [])
+
   def test_workspace_mutation_does_not_load_or_rewrite_unrelated_catalog(self) -> None:
     changed = self.create_workspace(shared=True)
     untouched = self.create_workspace(shared=True)

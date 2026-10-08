@@ -317,6 +317,24 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(self.manager.database.get(upload["id"])["status"], "expired")
     self.assertFalse(self.store.get_workspace(workspace["id"], USER)["locked"])
 
+  def test_expired_session_cannot_reclaim_worker_or_accept_completion(self):
+    registry = RemoteUploadRegistry(self.store.root)
+    manager = UploadManager(self.store, worker_registry=registry, settings=settings())
+    upload = manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
+    session = manager.database.get(upload["id"])
+    manager._terminal(session, "expired", "idle timeout")
+    self.assertEqual(registry.reservations, set())
+
+    with self.assertRaises(StorageError) as chunk_error:
+      manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)
+    self.assertEqual(chunk_error.exception.code, "upload_session_expired")
+    with self.assertRaises(StorageError) as complete_error:
+      manager.complete(upload["id"], USER)
+    self.assertEqual(complete_error.exception.code, "upload_session_expired")
+    self.assertEqual(registry.reservations, set())
+    self.assertFalse(manager.local_worker.directory(upload["id"]).exists())
+    manager.shutdown()
+
   def test_worker_orphan_gc_never_removes_workspace_or_blob_data(self):
     worker = WorkerUploadStore(self.store.root)
     upload = worker.initialize({"id": "upload_orphan", "workspaceId": "ws_keep", "mode": "create", "files": [], "parentFiles": {}, "snapshotId": "snap_1"})

@@ -165,6 +165,8 @@ class WorkspaceDatabase:
       "sourceWorkspaceId": row["source_workspace_id"], "sourceSnapshotId": row["source_snapshot_id"],
       "sessions": [],
     }
+    if "session_count" in row.keys():
+      workspace["sessionCount"] = int(row["session_count"] or 0)
     if row["active_run_id"]:
       workspace["activeRunId"] = row["active_run_id"]
     if row["active_upload_id"]:
@@ -178,11 +180,12 @@ class WorkspaceDatabase:
 
   def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool) -> list[dict]:
     with closing(self.connect()) as connection:
+      columns = "w.*, (SELECT COUNT(*) FROM workspace_sessions ws WHERE ws.workspace_id = w.id) AS session_count"
       if system_admin:
-        rows = connection.execute("SELECT * FROM workspaces ORDER BY updated DESC")
+        rows = connection.execute(f"SELECT {columns} FROM workspaces w ORDER BY w.updated DESC")
       else:
         rows = connection.execute(
-          "SELECT * FROM workspaces WHERE owner = ? OR (shared = 1 AND group_name <> '' AND group_name = ?) ORDER BY updated DESC",
+          f"SELECT {columns} FROM workspaces w WHERE w.owner = ? OR (w.shared = 1 AND w.group_name <> '' AND w.group_name = ?) ORDER BY w.updated DESC",
           (username, group_name),
         )
       return [self._workspace_entry(row) for row in rows]

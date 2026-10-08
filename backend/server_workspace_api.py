@@ -19,7 +19,7 @@ from workspace_store import StorageError, parse_query, parse_urlencoded_paths
 class WorkspaceHandlerMixin:
   def list_workspaces(self) -> None:
     user = self.require_user()
-    self.write_json({"workspaces": WORKSPACE_STORE.list_workspaces(user)})
+    self.write_json({"workspaces": WORKSPACE_STORE.list_workspaces(user), "resources": CHAT_RUNTIME.resource_status()})
 
   def upload_api(self, method: str, path: str, query: str) -> None:
     user = self.require_user()
@@ -68,7 +68,7 @@ class WorkspaceHandlerMixin:
       return
     if method == "GET" and not action:
       workspace = WORKSPACE_STORE.get_workspace(workspace_id, user)
-      self.write_json({"workspace": WORKSPACE_STORE.public_workspace(workspace)})
+      self.write_json({"workspace": WORKSPACE_STORE.public_workspace(workspace), "resources": CHAT_RUNTIME.resource_status()})
     elif method == "PATCH" and not action:
       workspace = WORKSPACE_STORE.update_workspace(workspace_id, user, self.read_json())
       add_audit(user["username"], "workspace updated", workspace_id)

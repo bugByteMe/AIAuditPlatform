@@ -18,9 +18,13 @@ import server
 from server import Handler, app
 from server_workloads import BoundedExecutor, WorkloadBusy
 from worker_upload import UploadStreamTimeout
+from workspace_store import StorageError
 
 
 class FakeChatRuntime:
+  def resource_status(self):
+    return {"cpuTotal": 4, "cpuAvailable": 3, "memoryTotalBytes": 8_000, "memoryAvailableBytes": 6_000}
+
   def events(self, workspace_id, session_id, after, user):
     return []
 
@@ -217,6 +221,11 @@ class ServerStreamingTest(unittest.TestCase):
     self.assertIs(manager.source, handler.rfile)
     self.assertEqual(handler.rfile.tell(), 0)
     self.assertEqual(responses[0]["upload"]["offsets"], [3])
+
+  def test_expired_upload_is_non_retryable(self) -> None:
+    handler = object.__new__(Handler)
+    status = handler.status_for_storage_error(StorageError("upload_session_expired", "expired"))
+    self.assertEqual(status, 408)
 
 
 class AsyncRequestReaderTest(unittest.IsolatedAsyncioTestCase):

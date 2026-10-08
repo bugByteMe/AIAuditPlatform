@@ -206,4 +206,6 @@ The API key is write-only through the backend API and is never returned in publi
 
 The chat header shows available/total CPU and memory for the assigned worker. While a run is queued it shows the aggregate capacity of healthy workers. The system-admin view exposes all configured nodes, heartbeat state, reservations, and the same resource meters through `GET /api/workers`.
 
+The resource labels explicitly identify available capacity. Aggregate capacity is returned with workspace catalog/detail responses so a workspace with no chat sessions still shows current CPU and memory availability. Queued sessions report how many earlier queued jobs remain; heartbeat reconciliation refreshes both the queue count and resource availability. Send is disabled while a session is queued, starting, running, or stopping, and Stop is disabled once stopping has begun.
+
 Docker is not required for unit tests. Tests use a fake runner so lifecycle, lock, budget, and event behavior can be validated on machines where Docker is unavailable or broken.

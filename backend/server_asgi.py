@@ -223,6 +223,8 @@ async def sse_response(request: Request) -> Response:
             "sessionId": session_id,
             "latestEventId": last_id,
             "sessionStatus": public_session.get("status"),
+            "queueAhead": public_session.get("queueAhead"),
+            "resources": public_session.get("resources"),
           }
           yield f"event: heartbeat\ndata: {json.dumps(heartbeat, ensure_ascii=False)}\n\n".encode("utf-8")
           if public_session.get("status") in {"completed", "stopped", "failed"}:

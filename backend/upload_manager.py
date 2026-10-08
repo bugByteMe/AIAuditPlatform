@@ -154,7 +154,17 @@ class UploadManager:
       raise StorageError("forbidden", "upload session access denied")
     return session
 
+  @staticmethod
+  def _assert_active(session: dict, *, writable: bool = False) -> None:
+    status = str(session.get("status") or "")
+    if status == "expired":
+      raise StorageError("upload_session_expired", "upload session expired; start the upload again")
+    allowed = {"uploading"} if writable else ACTIVE_UPLOAD_STATES
+    if status not in allowed:
+      raise StorageError("upload_not_writable", "upload session is no longer accepting data")
+
   def _ensure_worker(self, session: dict):
+    self._assert_active(session)
     if not self.worker_registry:
       return None
     node_id = session.get("workerId")
@@ -188,6 +198,7 @@ class UploadManager:
       raise StorageError("bad_request", "invalid upload chunk size")
     with self.stream_slots, self.session_locks.hold(upload_id):
       session = self._session(upload_id, user)
+      self._assert_active(session, writable=True)
       client = self._ensure_worker(session)
       tracked = TrackedReader(source)
       try:
@@ -251,6 +262,7 @@ class UploadManager:
       session = self._session(upload_id, user)
       if session["status"] == "committed":
         return self.public(session, {"status": "committed"})
+      self._assert_active(session)
       client = self._ensure_worker(session)
       try:
         result = client.complete_upload(upload_id) if self.worker_registry else self.local_worker.complete(upload_id)

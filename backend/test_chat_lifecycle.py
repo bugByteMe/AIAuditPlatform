@@ -4,6 +4,26 @@ from chat_runtime_test_support import *
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def test_queued_session_reports_number_of_prior_jobs(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    first = runtime.create_session(workspace["id"], self.users["li.review"], "First")
+    second = runtime.create_session(workspace["id"], self.users["li.review"], "Second")
+    for index, session in enumerate([first, second], start=1):
+      run_id = f"run-queue-{index}"
+      stored = runtime.chat_store.get_session(session["id"])
+      stored.update({"status": "queued", "latestRunId": run_id})
+      runtime.chat_store.save_session(stored)
+      runtime.chat_store.save_run({
+        "id": run_id, "workspaceId": workspace["id"], "sessionId": session["id"],
+        "groupId": "", "status": "queued", "created": f"2026-01-01 00:00:0{index}",
+        "updated": f"2026-01-01 00:00:0{index}", "requestedCpu": 1,
+        "requestedMemoryBytes": 1024, "container": "",
+      })
+
+    self.assertEqual(runtime.public_session(first["id"], include_events=False)["queueAhead"], 0)
+    self.assertEqual(runtime.public_session(second["id"], include_events=False)["queueAhead"], 1)
+
   def test_run_completes_and_releases_workspace_lock(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())

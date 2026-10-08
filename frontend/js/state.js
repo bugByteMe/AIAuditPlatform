@@ -4,6 +4,7 @@ export const state = {
   accounts: [],
   groups: [],
   workers: [],
+  resourceStatus: {},
   createdInvites: [],
   auditLogs: [],
   recharge: null,

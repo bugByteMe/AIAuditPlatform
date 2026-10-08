@@ -156,7 +156,20 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('id="worker-grid"', html)
         self.assertIn('api("/api/workers")', app_source)
         self.assertIn("export function renderWorkers", render_source)
+        self.assertIn('t("chat.available")', render_source)
+        self.assertIn("state.resourceStatus", render_source)
+        self.assertIn("queueAhead", render_source)
+        self.assertIn("sessionCount ?? workspace.sessions.length", render_source)
         self.assertNotRegex(html, r'<header class="topbar">\s*<div[^>]+>\s*<h1')
+
+    def test_registration_and_chat_controls_preserve_async_form_and_run_state(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        self.assertIn("const formElement = event.currentTarget", app_source)
+        self.assertIn("formElement.reset()", app_source)
+        self.assertNotIn("event.currentTarget.reset()", app_source)
+        self.assertIn("ACTIVE_CHAT_STATES.has(status)", render_source)
+        self.assertIn('!["queued", "starting", "running"].includes(status)', render_source)
 
     def test_resumable_upload_uses_chunk_and_processing_phases(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

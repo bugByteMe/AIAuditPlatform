@@ -290,6 +290,7 @@ async function refreshWorkspaceById(workspaceId) {
   if (!workspaceId) return null;
   try {
     const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}`);
+    state.resourceStatus = result.resources || state.resourceStatus;
     initializeEventCursors([result.workspace], state.chatLastEventIds);
     replaceWorkspace(result.workspace);
     renderDynamic();
@@ -334,8 +335,10 @@ async function pollChatEvents(workspaceId, sessionId, generation, reschedule = t
     session.status = serverStatus;
     if (result.session) {
       session.resources = result.session.resources;
+      session.queueAhead = result.session.queueAhead;
       session.workerId = result.session.workerId;
       session.container = result.session.container;
+      state.resourceStatus = result.session.resources || state.resourceStatus;
     }
     if (changed || statusChanged || result.session) renderDynamic();
     if (TERMINAL_CHAT_STATES.has(serverStatus)) {
@@ -420,8 +423,13 @@ function openChatStream(workspaceId, sessionId, generation) {
       const session = findSessionById(state.workspaces, workspaceId, sessionId);
       if (session && heartbeat.sessionStatus && session.status !== heartbeat.sessionStatus) {
         session.status = heartbeat.sessionStatus;
-        renderDynamic();
       }
+      if (session) {
+        session.queueAhead = heartbeat.queueAhead;
+        session.resources = heartbeat.resources || session.resources;
+      }
+      state.resourceStatus = heartbeat.resources || state.resourceStatus;
+      renderDynamic();
       if (TERMINAL_CHAT_STATES.has(heartbeat.sessionStatus)) {
         stopChatStream();
         refreshWorkspaceById(workspaceId);
@@ -541,6 +549,7 @@ async function loadWorkspaces() {
   try {
     const result = await api("/api/workspaces");
     state.workspaces = result.workspaces || [];
+    state.resourceStatus = result.resources || state.resourceStatus;
     initializeEventCursors(state.workspaces, state.chatLastEventIds);
     state.workspacesLoaded = true;
     state.selectedWorkspace = Math.min(state.selectedWorkspace, Math.max(state.workspaces.length - 1, 0));
@@ -1206,7 +1215,7 @@ async function copySession(index) {
     result.session.events = result.session.events?.length ? result.session.events : copiedEvents;
     const sessions = [...(workspace.sessions || [])];
     sessions.splice(index + 1, 0, result.session);
-    state.workspaces[workspaceIndex] = { ...workspace, sessions };
+    state.workspaces[workspaceIndex] = { ...workspace, sessions, sessionCount: sessions.length };
     state.selectedSession = index + 1;
     state.chatLastEventIds[result.session.id] = sessionEventCursor(result.session);
     renderDynamic();
@@ -1231,7 +1240,7 @@ async function deleteSession(index) {
     const selectedSessionId = latestWorkspace.sessions?.[state.selectedSession]?.id;
     const removedIndex = (latestWorkspace.sessions || []).findIndex((item) => item.id === session.id);
     const sessions = (latestWorkspace.sessions || []).filter((item) => item.id !== session.id);
-    state.workspaces[workspaceIndex] = { ...latestWorkspace, sessions };
+    state.workspaces[workspaceIndex] = { ...latestWorkspace, sessions, sessionCount: sessions.length };
     delete state.chatLastEventIds[session.id];
     const retainedSelection = sessions.findIndex((item) => item.id === selectedSessionId);
     state.selectedSession = retainedSelection >= 0
@@ -1256,7 +1265,7 @@ async function createNewChatSession() {
     const workspaceIndex = workspaceIndexById(workspace.id);
     if (workspaceIndex >= 0) {
       const sessions = [result.session, ...(workspace.sessions || [])];
-      state.workspaces[workspaceIndex] = { ...workspace, sessions };
+      state.workspaces[workspaceIndex] = { ...workspace, sessions, sessionCount: sessions.length };
       state.selectedSession = 0;
     }
     routeToView("chat");
@@ -1979,9 +1988,10 @@ function bindForms() {
     event.preventDefault();
     if (registrationSubmitting) return;
     registrationSubmitting = true;
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     const registerError = document.querySelector("#register-error");
-    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
+    const submitButton = formElement.querySelector('button[type="submit"]');
     const buttonLabel = submitButton?.querySelector(".button-label");
     registerError.textContent = t("auth.registering");
     if (submitButton) {
@@ -1995,7 +2005,7 @@ function bindForms() {
         method: "POST",
         body: JSON.stringify({ inviteToken: form.get("inviteToken"), username: form.get("username"), password: form.get("password") }),
       });
-      event.currentTarget.reset();
+      formElement.reset();
       if (!result.sessionToken) {
         setAuthMode("login");
         document.querySelector("#login-error").textContent = result.sessionError === "account_disabled"
@@ -2157,7 +2167,7 @@ function bindForms() {
         const existingIndex = sessions.findIndex((item) => item.id === result.session.id);
         if (existingIndex >= 0) sessions[existingIndex] = result.session;
         else sessions.unshift(result.session);
-        state.workspaces[workspaceIndex] = { ...workspace, locked: true, sessions };
+        state.workspaces[workspaceIndex] = { ...workspace, locked: true, sessions, sessionCount: sessions.length };
         state.selectedSession = Math.max(0, sessions.findIndex((item) => item.id === result.session.id));
       }
       state.chatLastEventIds[result.session.id] = sessionEventCursor(result.session);
@@ -2265,13 +2275,16 @@ function bindInputs() {
     const session = currentSessionObject();
     const runId = session?.latestRunId;
     if (!runId) return;
+    const previousStatus = session.status;
+    session.status = "stopping";
+    renderDynamic();
     try {
       await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
-      session.status = "stopping";
-      renderDynamic();
       startChatStreamForSession(workspace.id, session.id);
       showToast(t("toast.stop"));
     } catch (error) {
+      session.status = previousStatus;
+      renderDynamic();
       showToast(error.message);
     }
   });

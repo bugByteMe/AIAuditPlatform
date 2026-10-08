@@ -305,7 +305,7 @@ class ChatExecutionMixin:
     stored = self.chat_store.get_session(session_id)
     run = self.chat_store.get_run(str(stored.get("latestRunId") or "")) if stored else None
     if not run:
-      session["resources"] = self.worker_registry.aggregate_status() if self.worker_registry else self.local_resource_status()
+      session["resources"] = self.resource_status()
       return session
     node_id = str(run.get("workerId") or "")
     worker = self.worker_registry.node_status(node_id) if self.worker_registry and node_id else None
@@ -319,7 +319,16 @@ class ChatExecutionMixin:
     session["container"] = str(run.get("container") or "")
     session["requestedCpu"] = float(run.get("requestedCpu") or self.requested_cpu)
     session["requestedMemoryBytes"] = int(run.get("requestedMemoryBytes") or self.requested_memory_bytes)
+    if run.get("status") == "queued":
+      queued = sorted(
+        (item for item in self.chat_store.active_runs() if item.get("status") == "queued"),
+        key=lambda item: (str(item.get("created") or ""), str(item.get("id") or "")),
+      )
+      session["queueAhead"] = next((index for index, item in enumerate(queued) if item.get("id") == run.get("id")), 0)
     return session
+
+  def resource_status(self) -> dict:
+    return self.worker_registry.aggregate_status() if self.worker_registry else self.local_resource_status()
 
   def local_resource_status(self) -> dict:
     active = len(self.active_runs)

@@ -259,6 +259,7 @@ class WorkspaceCoreMixin:
       "updated": workspace["updated"], "shared": bool(workspace.get("shared")),
       "locked": bool(workspace.get("locked")), "runLockEnabled": bool(workspace.get("runLockEnabled")),
       "activeRunCount": 1 if workspace.get("activeRunId") else 0,
+      "sessionCount": int(workspace.get("sessionCount") or 0),
       "latestSnapshotId": workspace.get("latestSnapshotId"),
       "sessions": [], "artifacts": [], "files": [], "detailLoaded": False,
     }
@@ -283,6 +284,7 @@ class WorkspaceCoreMixin:
       "locked": bool(workspace.get("locked")),
       "runLockEnabled": bool(workspace.get("runLockEnabled")),
       "activeRunCount": active_run_count,
+      "sessionCount": len(sessions),
       "latestSnapshotId": workspace.get("latestSnapshotId"),
       "sessions": sessions,
       "artifacts": self.workspace_artifacts(workspace_id, metadata),

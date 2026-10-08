@@ -195,7 +195,9 @@ class BaseHandler(BaseHTTPRequestHandler):
       return HTTPStatus.SERVICE_UNAVAILABLE
     if exc.code in {"codex_auth_required", "no_compatible_worker", "no_upload_worker"}:
       return HTTPStatus.PRECONDITION_REQUIRED
-    if exc.code in {"upload_worker_unavailable", "upload_session_expired"}:
+    if exc.code == "upload_session_expired":
+      return HTTPStatus.REQUEST_TIMEOUT
+    if exc.code == "upload_worker_unavailable":
       return HTTPStatus.SERVICE_UNAVAILABLE
     if exc.code in {"file_too_large", "workspace_too_large", "too_many_files", "group_disk_quota_exceeded"}:
       return HTTPStatus.REQUEST_ENTITY_TOO_LARGE

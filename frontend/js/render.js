@@ -37,6 +37,14 @@ function statusLabel(status) {
   return t(`chat.${status}`) || status;
 }
 
+function runStatusLabel(session) {
+  if (session?.status !== "queued") return statusLabel(session?.status || "stopped");
+  const ahead = Math.max(0, Number(session.queueAhead || 0));
+  return ahead
+    ? `${statusLabel("queued")} · ${t("chat.queueAhead").replace("{count}", ahead.toLocaleString())}`
+    : `${statusLabel("queued")} · ${t("chat.queueNext")}`;
+}
+
 function escapeHtml(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
 }
@@ -244,7 +252,7 @@ export function renderWorkspaces() {
               <span>${workspace.fileCount.toLocaleString()} files</span>
               <span>${safeSize}</span>
               <span>${safeUpdated}</span>
-              <span>${workspace.sessions.length} ${state.lang === "zh" ? "个会话" : "sessions"}</span>
+              <span>${Number(workspace.sessionCount ?? workspace.sessions.length).toLocaleString()} ${state.lang === "zh" ? "个会话" : "sessions"}</span>
               <span class="pill blue">${visibility}</span>
               ${lock}
             </div>
@@ -304,6 +312,9 @@ export function renderPanelState() {
 export function renderChatSessions() {
   const workspace = currentWorkspace();
   const session = currentSession();
+  const status = session?.status || "stopped";
+  document.querySelector('#composer button[type="submit"]').disabled = ACTIVE_CHAT_STATES.has(status);
+  document.querySelector("#stop-run").disabled = !["queued", "starting", "running"].includes(status);
   if (!workspace || !session) {
     document.querySelector("#chat-workspace-name").innerHTML = workspace
       ? editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace))
@@ -314,29 +325,19 @@ export function renderChatSessions() {
     document.querySelector("#chat-worker-id").textContent = "-";
     document.querySelector("#chat-container-id").textContent = "-";
     document.querySelector("#chat-lock-label").textContent = "-";
-    document.querySelector("#chat-cpu-label").textContent = "CPU 0 / 0";
-    document.querySelector("#chat-memory-label").textContent = `${t("chat.memory")} 0 / 0`;
-    document.querySelector("#chat-cpu-meter").style.width = "0%";
-    document.querySelector("#chat-memory-meter").style.width = "0%";
+    renderChatResources(state.resourceStatus);
     document.querySelector("#chat-session-list").innerHTML = "";
     return;
   }
   document.querySelector("#chat-workspace-name").innerHTML = editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace));
   document.querySelector("#chat-session-title").innerHTML = editableName("session", session.id, session.title, `chat-session-current:${session.id}`);
   document.querySelector("#token-count").textContent = session.tokens;
-  document.querySelector("#run-state-label").textContent = statusLabel(session.status);
+  document.querySelector("#run-state-label").textContent = runStatusLabel(session);
   document.querySelector("#chat-worker-id").textContent = session.workerId || "-";
   document.querySelector("#chat-container-id").textContent = session.container || "-";
   document.querySelector("#chat-lock-label").textContent = workspace.locked ? t("chat.locked") : t("chat.unlocked");
-  const resources = session.resources || {};
-  const cpuTotal = Number(resources.cpuTotal || 0);
-  const cpuAvailable = Number(resources.cpuAvailable || 0);
-  const memoryTotal = Number(resources.memoryTotalBytes || 0);
-  const memoryAvailable = Number(resources.memoryAvailableBytes || 0);
-  document.querySelector("#chat-cpu-label").textContent = `CPU ${cpuAvailable.toLocaleString()} / ${cpuTotal.toLocaleString()}`;
-  document.querySelector("#chat-memory-label").textContent = `${t("chat.memory")} ${formatResourceBytes(memoryAvailable)} / ${formatResourceBytes(memoryTotal)}`;
-  document.querySelector("#chat-cpu-meter").style.width = `${cpuTotal ? Math.max(0, Math.min(100, (cpuAvailable / cpuTotal) * 100)) : 0}%`;
-  document.querySelector("#chat-memory-meter").style.width = `${memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0}%`;
+  renderChatResources(session.resources || state.resourceStatus);
+  state.resourceStatus = session.resources || state.resourceStatus;
   document.querySelector(".status-dot").classList.toggle("running", session.status === "running");
   document.querySelector(".status-dot").classList.toggle("stopped", session.status !== "running");
   const canDeleteSessions = canRenameWorkspace(workspace);
@@ -346,7 +347,7 @@ export function renderChatSessions() {
         <article class="session-item ${index === state.selectedSession ? "active" : ""}">
           <div class="session-main" data-session="${index}">
             <strong>${editableName("session", item.id, item.title, `chat-session-list:${item.id}`)}</strong>
-            <span>${statusLabel(item.status)} · ${item.updated}</span>
+            <span>${runStatusLabel(item)} · ${item.updated}</span>
           </div>
           <div class="session-actions">
             <button class="session-action-btn" data-session-action="copy" data-session-index="${index}">${t("chat.copy")}</button>
@@ -356,6 +357,17 @@ export function renderChatSessions() {
       `,
     )
     .join("");
+}
+
+function renderChatResources(resources = {}) {
+  const cpuTotal = Number(resources.cpuTotal || 0);
+  const cpuAvailable = Number(resources.cpuAvailable || 0);
+  const memoryTotal = Number(resources.memoryTotalBytes || 0);
+  const memoryAvailable = Number(resources.memoryAvailableBytes || 0);
+  document.querySelector("#chat-cpu-label").textContent = `CPU ${t("chat.available")} ${cpuAvailable.toLocaleString()} / ${cpuTotal.toLocaleString()}`;
+  document.querySelector("#chat-memory-label").textContent = `${t("chat.memory")} ${t("chat.available")} ${formatResourceBytes(memoryAvailable)} / ${formatResourceBytes(memoryTotal)}`;
+  document.querySelector("#chat-cpu-meter").style.width = `${cpuTotal ? Math.max(0, Math.min(100, (cpuAvailable / cpuTotal) * 100)) : 0}%`;
+  document.querySelector("#chat-memory-meter").style.width = `${memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0}%`;
 }
 
 export function renderEvents() {

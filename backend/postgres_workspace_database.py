@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, and_, create_engine, delete, insert, or_, select, text, update
+from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, and_, create_engine, delete, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
 
@@ -93,6 +93,8 @@ class PostgresWorkspaceDatabase:
       "initialSnapshotId": row["initial_snapshot_id"], "sourceWorkspaceId": row["source_workspace_id"],
       "sourceSnapshotId": row["source_snapshot_id"], "sessions": [],
     }
+    if "session_count" in row:
+      item["sessionCount"] = int(row["session_count"] or 0)
     if row["active_run_id"]:
       item["activeRunId"] = row["active_run_id"]
     if row["active_upload_id"]:
@@ -105,7 +107,10 @@ class PostgresWorkspaceDatabase:
       return self._workspace_entry(row) if row else None
 
   def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool) -> list[dict]:
-    statement = select(self.workspaces)
+    session_count = select(func.count()).where(
+      self.workspace_sessions.c.workspace_id == self.workspaces.c.id
+    ).correlate(self.workspaces).scalar_subquery().label("session_count")
+    statement = select(self.workspaces, session_count)
     if not system_admin:
       statement = statement.where(or_(
         self.workspaces.c.owner == username,

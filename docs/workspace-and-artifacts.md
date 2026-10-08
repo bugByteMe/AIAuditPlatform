@@ -7,7 +7,7 @@ A workspace is a managed directory on the shared filesystem. It contains the fil
 ## File Tree Loading
 
 The workspace list response contains summary rows only: identity, ownership,
-sharing/lock state, current size/count, update time, and latest snapshot ID. It
+sharing/lock state, current file/session counts, update time, and latest snapshot ID. It
 does not include session references, artifacts, or file-tree nodes. After a
 workspace is selected, the browser requests that workspace's detail by ID; the
 backend loads only its current metadata and returns the first three levels of
@@ -42,6 +42,8 @@ The public upload lifecycle is:
 5. `DELETE /api/uploads/<id>` cancels a session before finalization begins.
 
 Network progress and server processing are separate phases. The UI reports completion only after the worker result and authoritative metadata commit are complete. A browser reload requires the user to reselect the same folder; path, size, and modification time are matched to the persisted session. Expired pre-commit sessions release their quota and workspace reservations.
+
+Expired, cancelled, failed, and committed sessions reject subsequent chunk or completion requests before worker assignment. Session expiry returns a non-retryable request-timeout response so an automatic browser retry cannot recreate staging data or reclaim an upload slot.
 
 ## Storage Model
 
