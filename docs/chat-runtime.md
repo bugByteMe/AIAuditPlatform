@@ -161,6 +161,9 @@ anchor across refreshes.
 
 Workspace responses contain chat-session summaries rather than embedded
 transcripts. The browser fetches the latest selected-session page separately.
+History pages and SSE events omit stored `raw` runner payloads, including large
+command outputs, while retaining event IDs, messages, status, and tool-call IDs.
+The original payload remains persisted for internal processing and diagnostics.
 Event reads are indexed by session and event ID, accept `after` or `before`, and
 are bounded to at most 500 rows. Production chat metadata is stored in
 PostgreSQL; development and isolated tests use the same normalized schema in

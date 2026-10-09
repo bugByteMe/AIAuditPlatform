@@ -7,6 +7,11 @@ RUNNING_STATES = {"queued", "starting", "running", "stopping"}
 TERMINAL_STATES = {"completed", "stopped", "failed"}
 
 
+def browser_event(event: dict) -> dict:
+  """Keep stored runner details off chat history and live browser responses."""
+  return {key: value for key, value in event.items() if key != "raw"}
+
+
 class KeyedLockPool:
   def __init__(self):
     self.guard = threading.Lock()
@@ -33,4 +38,3 @@ class KeyedLockPool:
           self.entries[key]["references"] -= 1
           if self.entries[key]["references"] == 0:
             self.entries.pop(key, None)
-

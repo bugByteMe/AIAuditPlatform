@@ -10,6 +10,7 @@ from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 from urllib.parse import quote, unquote, urlparse
 
+from chat_common import browser_event
 from server_state import *
 from server_utils import static_content_type
 from wechat_pay import WechatPayError
@@ -244,7 +245,7 @@ class BaseHandler(BaseHTTPRequestHandler):
       idle_rounds = 0
       for event in events:
         last_id = int(event["id"])
-        payload = json.dumps(event, ensure_ascii=False)
+        payload = json.dumps(browser_event(event), ensure_ascii=False)
         try:
           self.wfile.write(f"id: {last_id}\nevent: {event['type']}\ndata: {payload}\n\n".encode("utf-8"))
           self.wfile.flush()

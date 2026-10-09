@@ -45,6 +45,23 @@ class TerminalChatRuntime(FakeChatRuntime):
     return [{"id": 1, "type": "completed", "message": "Run completed.", "runId": "run-1"}]
 
 
+class RawTerminalChatRuntime(FakeChatRuntime):
+  def __init__(self):
+    self.stored_events = [
+      {
+        "id": 1, "type": "command", "message": "Run command", "runId": "run-1",
+        "status": "completed", "toolCallId": "call-1", "raw": {"item": {"aggregated_output": "large output"}},
+      },
+      {"id": 2, "type": "completed", "message": "Run completed.", "runId": "run-1"},
+    ]
+
+  def events(self, workspace_id, session_id, after, user, *, before=None, limit=500, latest=False):
+    return [event for event in self.stored_events if event["id"] > after]
+
+  def wait_events(self, workspace_id, session_id, after, user, timeout=15):
+    return self.events(workspace_id, session_id, after, user)
+
+
 class FakeUploadManager:
   def __init__(self):
     self.source = None
@@ -149,6 +166,32 @@ class ServerStreamingTest(unittest.TestCase):
     self.assertIn("retry:", response.text)
     self.assertIn("id: 1\nevent: completed\n", response.text)
 
+  def test_fastapi_sse_omits_stored_raw_command_output(self) -> None:
+    runtime = RawTerminalChatRuntime()
+    with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch(
+      "server.CHAT_RUNTIME", runtime
+    ):
+      response = client.get("/api/workspaces/workspace-1/chat/stream?sessionId=chat-1&after=0")
+    self.assertIn('id: 1\nevent: command\ndata: {"id": 1', response.text)
+    self.assertIn('"toolCallId": "call-1"', response.text)
+    self.assertNotIn('"raw"', response.text)
+    self.assertEqual(runtime.stored_events[0]["raw"]["item"]["aggregated_output"], "large output")
+
+  def test_legacy_sse_omits_stored_raw_command_output(self) -> None:
+    handler = object.__new__(Handler)
+    handler.headers = {}
+    handler.wfile = io.BytesIO()
+    handler.send_response = lambda *_args: None
+    handler.send_header = lambda *_args: None
+    handler.end_headers = lambda: None
+    runtime = RawTerminalChatRuntime()
+    with patch("server.CHAT_RUNTIME", runtime):
+      Handler.write_sse(handler, "workspace-1", "chat-1", 0, {"username": "user"})
+    stream = handler.wfile.getvalue().decode("utf-8")
+    self.assertIn('id: 1\nevent: command\ndata: {"id": 1', stream)
+    self.assertNotIn('"raw"', stream)
+    self.assertIn("raw", runtime.stored_events[0])
+
   def test_fastapi_sse_emits_terminal_heartbeat_without_polling(self) -> None:
     with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch(
       "server.CHAT_RUNTIME", FakeChatRuntime()
@@ -207,6 +250,22 @@ class ServerStreamingTest(unittest.TestCase):
         "latestEventId": 9, "hasMore": False,
       }],
     )
+
+  def test_history_response_omits_raw_without_changing_stored_events(self) -> None:
+    handler = object.__new__(Handler)
+    handler.require_user = lambda: {"username": "user", "role": "user", "group": "Audit"}
+    responses = []
+    handler.write_json = lambda payload, status=200, headers=None: responses.append(payload)
+    runtime = RawTerminalChatRuntime()
+    with patch("server.CHAT_RUNTIME", runtime):
+      Handler.chat_api(handler, "GET", "workspace-1", "events", "", "sessionId=chat-1&latest=true&limit=200")
+    command = responses[0]["events"][0]
+    self.assertEqual((command["id"], command["type"], command["message"], command["status"], command["toolCallId"]),
+                     (1, "command", "Run command", "completed", "call-1"))
+    self.assertNotIn("raw", command)
+    self.assertEqual(responses[0]["latestEventId"], 2)
+    self.assertFalse(responses[0]["hasMore"])
+    self.assertIn("raw", runtime.stored_events[0])
 
   def test_upload_chunk_passes_request_stream_without_reading_it_into_memory(self) -> None:
     handler = object.__new__(Handler)

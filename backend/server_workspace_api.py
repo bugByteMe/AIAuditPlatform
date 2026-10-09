@@ -8,6 +8,7 @@ from decimal import Decimal
 from http import HTTPStatus
 from urllib.parse import unquote, urlparse
 
+from chat_common import browser_event
 from micu_api import MicuApiError, parse_cny
 from recharge_import import MAX_WORKBOOK_BYTES, parse_recharge_workbook, payment_key
 from server_recharge import apply_wechat_transaction, public_recharge_order, reconcile_wechat_order
@@ -189,7 +190,7 @@ class WorkspaceHandlerMixin:
       public_session = CHAT_RUNTIME.public_session(session_id, include_events=False)
       latest_event_id = int(events[-1]["id"]) if events else after
       self.write_json({
-        "events": events, "sessionStatus": public_session.get("status"), "session": public_session,
+        "events": [browser_event(event) for event in events], "sessionStatus": public_session.get("status"), "session": public_session,
         "latestEventId": latest_event_id, "hasMore": len(events) == limit,
       })
     elif method == "GET" and action == "stream" and not tail:

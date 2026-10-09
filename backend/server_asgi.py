@@ -17,6 +17,7 @@ from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
 
+from chat_common import browser_event
 from config import SETTINGS
 from server_api import Handler
 from server_state import CHAT_RUNTIME, FRONTEND_DIR, UPLOAD_MANAGER, WECHAT_RECONCILE_STOP, reconcile_micu_accounts
@@ -235,7 +236,7 @@ async def sse_response(request: Request) -> Response:
       idle_rounds = 0
       for event in events:
         last_id = int(event["id"])
-        payload = json.dumps(event, ensure_ascii=False)
+        payload = json.dumps(browser_event(event), ensure_ascii=False)
         yield f"id: {last_id}\nevent: {event['type']}\ndata: {payload}\n\n".encode("utf-8")
       if events[-1]["type"] in {"completed", "stopped", "failed"}:
         return

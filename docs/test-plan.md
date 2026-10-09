@@ -111,6 +111,7 @@
 - Tool call events are streamed and persisted.
 - Token usage and budget warnings are streamed.
 - Page reload can reconstruct chat history from persisted events.
+- History pages and live SSE events omit stored `raw` command output while preserving the visible message, event IDs, status, tool-call IDs, and pagination cursors; persisted events retain the original payload.
 - Scrolling to the top loads older event pages without moving the live-event cursor, changing the current session status, or replacing newer tool results.
 - Chat deletion is limited to the workspace owner, a system administrator, or a platform administrator; it rejects active runs, permits an empty workspace, and removes terminal run, event, Codex-home, and fork-checkpoint state without deleting independent forks.
 - Live event refreshes follow the bottom only when the reader is already there and preserve position while older history is being read.
