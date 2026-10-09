@@ -18,6 +18,7 @@ class CodexRunnerTest(ChatRuntimeTestBase):
     codex_home = runner.prepare_codex_home(run)
     self.assertEqual(codex_home, runner.codex_home_root / "li.review" / "chat_1")
     self.assertIn('base_url = "https://codex.example/v1"', (codex_home / "config.toml").read_text(encoding="utf-8"))
+    self.assertIn('model_reasoning_effort = "high"', (codex_home / "config.toml").read_text(encoding="utf-8"))
     self.assertIn('"OPENAI_API_KEY": "sk-test"', (codex_home / "auth.json").read_text(encoding="utf-8"))
 
   def test_docker_runner_copies_configured_skill_path_into_codex_home(self) -> None:

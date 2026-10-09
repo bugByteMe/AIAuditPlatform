@@ -352,6 +352,7 @@ class WorkspaceLifecycleMixin:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       source = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.require_collaboration_access(user, source)
       if source.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
       self.assert_group_quota(user, int(source.get("sizeBytes") or 0), metadata)

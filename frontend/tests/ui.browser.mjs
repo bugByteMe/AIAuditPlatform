@@ -27,10 +27,10 @@ test.after(async () => { await browser.close(); await new Promise((done) => serv
 async function openApp(role = "platform_admin", viewport = { width: 1280, height: 900 }) {
   const page = await browser.newPage({ viewport });
   const requests = [];
-  const user = { id: "actor", username: "example.actor", role, groupId: "team", group: "示例小组", budget: {} };
+  const user = { id: "actor", username: "example.actor", role, groupId: "team", group: "示例小组", budget: { source: "micu", remainingPercent: 42.5 } };
   const member = { id: "member", username: "example.member", role: "user", groupId: "team", status: "active", enabled: true };
   const group = { id: "team", name: "示例小组", userCount: 2, liveRunLimit: 1 };
-  const session = { id: "session", title: "Example chat", status: "completed", events: [], tokens: 0, historyLoaded: true };
+  const session = { id: "session", title: "Example chat", createdBy: "example.member", status: "completed", events: [], tokens: 0, historyLoaded: true };
   const workspace = { id: "workspace", name: "Example workspace", owner: user.username, fileCount: 0, sizeBytes: 0, files: [], artifacts: [], sessions: [session], detailLoaded: true };
   await page.route("**/api/**", async (route) => {
     const request = route.request();
@@ -84,6 +84,18 @@ test("administrator settings expose and submit only each role's permitted fields
       }
     } finally { await page.close(); }
   }
+});
+
+test("chat cards show their creator and recharge highlights remaining usage", async () => {
+  const { page } = await openApp("platform_admin");
+  try {
+    await page.locator('[data-view="chat"]').click();
+    assert.match(await page.locator("#chat-session-list").innerText(), /example\.member/);
+    assert.deepEqual(await page.locator('#composer [name="model"] option').evaluateAll((options) => options.map((option) => option.value)),
+      ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol"]);
+    await page.locator('[data-view="recharge"]').click();
+    assert.equal(await page.locator("#recharge-remaining-percent").innerText(), "42.5%");
+  } finally { await page.close(); }
 });
 
 test("native composer drag respects height bounds, multiline submission and disabled input on desktop and narrow screens", async () => {

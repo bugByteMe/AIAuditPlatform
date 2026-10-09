@@ -289,6 +289,12 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual([item["id"] for item in self.store.list_workspaces(SAME_GROUP)], [shared["id"]])
     self.assertEqual(self.store.list_workspaces(OTHER_GROUP), [])
     self.assertEqual(len(self.store.list_workspaces(ADMIN)), 2)
+    platform_admin = {"username": "platform.admin", "role": "platform_admin", "group": ""}
+    self.assertEqual(len(self.store.list_workspaces(platform_admin)), 2)
+    self.assertEqual(self.store.get_workspace(private["id"], platform_admin)["id"], private["id"])
+    with self.assertRaises(StorageError) as context:
+      self.store.fork_workspace(private["id"], platform_admin)
+    self.assertEqual(context.exception.code, "forbidden")
     with self.assertRaises(StorageError):
       self.store.get_workspace(private["id"], SAME_GROUP)
 

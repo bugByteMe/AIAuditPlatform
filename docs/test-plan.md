@@ -5,6 +5,7 @@
 - A user cannot open, chat against, or download artifacts from another user's private workspace.
 - A group member can access a group-shared workspace.
 - A user outside the group cannot access a group-shared workspace.
+- A platform admin can list/open private workspaces in other groups and read their chat sessions and events, but cannot create, change, stop, or fork chats there; the session summary identifies the creator.
 - A disabled user cannot start or resume a chat.
 
 ## Budget Enforcement

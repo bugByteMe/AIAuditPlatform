@@ -35,6 +35,7 @@ When a user starts a chat:
 6. Backend persists events and fans them out to the frontend.
 
 Users can select model and reasoning effort before starting a run. These settings are stored on the run record.
+The composer offers `gpt-5.6-sol`, `gpt-6-astra`, `gpt-6-sol`, and `gpt-6.1-sol`, with high or medium reasoning effort. The runner writes the selected effort to the session-scoped Codex `config.toml` as `model_reasoning_effort` for each run. Chat-session cards show the session creator, which remains distinct from the user initiating any later run.
 
 The group live-run limit counts runs in `queued`, `starting`, `running`, and `stopping` states across every workspace owned or used by group members. Run creation and the limit check share the chat lifecycle lock, so simultaneous requests cannot exceed the configured limit. Lowering a limit does not terminate existing work; it prevents new runs until the live count falls below the limit.
 

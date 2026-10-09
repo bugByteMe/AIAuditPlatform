@@ -73,11 +73,16 @@ function canRenameWorkspace(workspace) {
   return Boolean(workspace && state.user && (state.user.role === "system_admin" || workspace.owner === state.user.username));
 }
 
+function canCollaborateInWorkspace(workspace) {
+  return !workspace || state.user?.role !== "platform_admin" || workspace.owner === state.user.username ||
+    Boolean(workspace.shared && workspace.group && workspace.group === state.user.group);
+}
+
 function editableName(kind, id, value, location, editable = true) {
   const editor = state.nameEditor;
   const safeId = escapeHtml(id || "");
   const safeLocation = escapeHtml(location);
-  if (editor?.kind === kind && editor.id === id && editor.location === location) {
+  if (editable && editor?.kind === kind && editor.id === id && editor.location === location) {
     return `<input class="inline-name-input" data-name-editor data-name-kind="${kind}" data-name-id="${safeId}" data-editor-location="${safeLocation}" value="${escapeHtml(editor.draft)}" maxlength="200" aria-label="${t("actions.rename")}" />`;
   }
   if (!editable) return `<span class="inline-name-static">${escapeHtml(value)}</span>`;
@@ -258,15 +263,15 @@ export function renderWorkspaces() {
             </div>
           </div>
           <div class="toolbar-actions">
-            <button type="button" class="btn icon-btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${shareTitle}" title="${shareTitle}">
+            ${canRenameWorkspace(workspace) ? `<button type="button" class="btn icon-btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${shareTitle}" title="${shareTitle}">
               <span aria-hidden="true">${shareIcon}</span>
-            </button>
-            <button type="button" class="btn icon-btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.fork")}" title="${t("workspace.fork")}">
+            </button>` : ""}
+            ${canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn icon-btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.fork")}" title="${t("workspace.fork")}">
               <span aria-hidden="true">⧉</span>
-            </button>
-            <button type="button" class="btn icon-btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.delete")}" title="${t("workspace.delete")}">
+            </button>` : ""}
+            ${canRenameWorkspace(workspace) ? `<button type="button" class="btn icon-btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.delete")}" title="${t("workspace.delete")}">
               <span aria-hidden="true">🗑</span>
-            </button>
+            </button>` : ""}
             <button type="button" class="btn icon-btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.open")}" title="${t("workspace.open")}">
               <span aria-hidden="true">▶</span>
             </button>
@@ -313,8 +318,11 @@ export function renderChatSessions() {
   const workspace = currentWorkspace();
   const session = currentSession();
   const status = session?.status || "stopped";
-  document.querySelector('#composer button[type="submit"]').disabled = ACTIVE_CHAT_STATES.has(status);
-  document.querySelector("#stop-run").disabled = !["queued", "starting", "running"].includes(status);
+  const canCollaborate = canCollaborateInWorkspace(workspace);
+  document.querySelector('#composer button[type="submit"]').disabled = !canCollaborate || ACTIVE_CHAT_STATES.has(status);
+  document.querySelector("#composer textarea").disabled = !canCollaborate;
+  document.querySelector("#new-chat-button").disabled = !canCollaborate;
+  document.querySelector("#stop-run").disabled = !canCollaborate || !["queued", "starting", "running"].includes(status);
   if (!workspace || !session) {
     document.querySelector("#chat-workspace-name").innerHTML = workspace
       ? editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace))
@@ -330,7 +338,7 @@ export function renderChatSessions() {
     return;
   }
   document.querySelector("#chat-workspace-name").innerHTML = editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace));
-  document.querySelector("#chat-session-title").innerHTML = editableName("session", session.id, session.title, `chat-session-current:${session.id}`);
+  document.querySelector("#chat-session-title").innerHTML = editableName("session", session.id, session.title, `chat-session-current:${session.id}`, canCollaborate);
   document.querySelector("#token-count").textContent = session.tokens;
   document.querySelector("#run-state-label").textContent = runStatusLabel(session);
   document.querySelector("#chat-worker-id").textContent = session.workerId || "-";
@@ -346,11 +354,12 @@ export function renderChatSessions() {
       (item, index) => `
         <article class="session-item ${index === state.selectedSession ? "active" : ""}">
           <div class="session-main" data-session="${index}">
-            <strong>${editableName("session", item.id, item.title, `chat-session-list:${item.id}`)}</strong>
+            <strong>${editableName("session", item.id, item.title, `chat-session-list:${item.id}`, canCollaborate)}</strong>
             <span>${runStatusLabel(item)} · ${item.updated}</span>
+            <span>${t("chat.createdBy")}: ${escapeHtml(item.createdBy || t("chat.creatorUnknown"))}</span>
           </div>
           <div class="session-actions">
-            <button class="session-action-btn" data-session-action="copy" data-session-index="${index}">${t("chat.copy")}</button>
+            ${canCollaborate ? `<button class="session-action-btn" data-session-action="copy" data-session-index="${index}">${t("chat.copy")}</button>` : ""}
             ${canDeleteSessions ? `<button class="session-action-btn" data-session-action="delete" data-session-index="${index}">${t("chat.delete")}</button>` : ""}
           </div>
         </article>
@@ -439,6 +448,15 @@ export function renderOperationProgress() {
 }
 
 export function renderRechargeHistory() {
+  const percentage = document.querySelector("#recharge-remaining-percent");
+  if (percentage) {
+    const budget = state.user?.budget || {};
+    percentage.textContent = budget.source === "custom"
+      ? t("session.customProvider")
+      : budget.remainingPercent === null || budget.remainingPercent === undefined
+        ? t("session.balanceUnavailable")
+        : `${Number(budget.remainingPercent).toFixed(1).replace(/\.0$/, "")}%`;
+  }
   const container = document.querySelector("#recharge-history");
   if (!container) return;
   const adjustments = state.recharge?.adjustments || [];

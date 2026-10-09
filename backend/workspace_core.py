@@ -229,17 +229,27 @@ class WorkspaceCoreMixin:
         shutil.rmtree(workspace_previews / digest, ignore_errors=True)
 
   def user_can_access(self, user: dict, workspace: dict) -> bool:
-    if user["role"] == "system_admin":
+    if user["role"] in {"system_admin", "platform_admin"}:
       return True
     if workspace["owner"] == user["username"]:
       return True
     return bool(workspace.get("shared")) and workspace.get("group") and workspace.get("group") == user.get("group")
 
+  def user_can_collaborate(self, user: dict, workspace: dict) -> bool:
+    return user.get("role") != "platform_admin" or (
+      workspace.get("owner") == user.get("username") or
+      bool(workspace.get("shared") and workspace.get("group") and workspace.get("group") == user.get("group"))
+    )
+
+  def require_collaboration_access(self, user: dict, workspace: dict) -> None:
+    if not self.user_can_collaborate(user, workspace):
+      raise StorageError("forbidden", "platform administrator has read-only access to this workspace")
+
   def list_workspaces(self, user: dict) -> list[dict]:
     workspaces = self.database.list_workspace_headers(
       username=str(user.get("username") or ""),
       group_name=str(user.get("group") or ""),
-      system_admin=user.get("role") == "system_admin",
+      system_admin=user.get("role") in {"system_admin", "platform_admin"},
     )
     return [self.public_workspace_summary(workspace) for workspace in workspaces]
 

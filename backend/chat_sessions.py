@@ -58,6 +58,7 @@ class ChatSessionMixin:
       metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.store.require_collaboration_access(user, workspace)
       timestamp = now_string()
       session = {
         "id": generated_id("chat"),
@@ -82,6 +83,7 @@ class ChatSessionMixin:
       metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.store.require_collaboration_access(user, workspace)
       session_refs = workspace.get("sessions", [])
       source_index = next((index for index, item in enumerate(session_refs) if str(item.get("id") or "") == session_id), -1)
       source = self.chat_store.get_session(session_id)
@@ -153,6 +155,7 @@ class ChatSessionMixin:
       metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.store.require_collaboration_access(user, workspace)
       if not any(str(item.get("id") or "") == session_id for item in workspace.get("sessions", [])):
         raise StorageError("not_found", "chat session not found")
       session = self.chat_store.get_session(session_id)
@@ -211,6 +214,8 @@ class ChatSessionMixin:
     prompt = str(payload.get("prompt") or "").strip()
     if not prompt:
       raise StorageError("bad_request", "prompt is required")
+    if user.get("role") == "platform_admin":
+      self.store.require_collaboration_access(user, self.store.get_workspace(workspace_id, user))
     if str(user.get("providerMode") or "legacy") == "micu":
       if not self.budget_checker:
         raise StorageError("budget_provider_unavailable", "MicuAPI budget provider is not configured")
@@ -226,6 +231,7 @@ class ChatSessionMixin:
       metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.store.require_collaboration_access(user, workspace)
       quota_owner = self.store.workspace_quota_owner(workspace, user)
       self.store.assert_group_quota(quota_owner, metadata=metadata, require_available=True)
       session_id = str(payload.get("sessionId") or "")
@@ -338,7 +344,8 @@ class ChatSessionMixin:
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}", f"run:{run_id}"):
       metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
-      self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
+      self.store.require_collaboration_access(user, workspace)
       run = self.chat_store.get_run(run_id)
       if not run or run["workspaceId"] != workspace_id:
         raise StorageError("not_found", "run not found")

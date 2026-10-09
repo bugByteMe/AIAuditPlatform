@@ -584,6 +584,24 @@ td.code {
   gap: 12px;
 }
 
+.recharge-balance {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 18px;
+  padding: 16px 20px;
+  border-radius: 8px;
+  background: #eef8f9;
+  color: var(--text);
+}
+
+.recharge-balance strong {
+  font-size: clamp(32px, 4vw, 48px);
+  line-height: 1;
+  color: var(--primary);
+}
+
 .recharge-product {
   display: grid;
   gap: 20px;

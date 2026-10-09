@@ -187,6 +187,27 @@ class ChatLifecycleTest(ChatRuntimeTestBase):
     runtime.delete_session(workspace["id"], session["id"], administrator)
     self.assertIsNone(runtime.chat_store.get_session(session["id"]))
 
+  def test_platform_admin_can_read_private_chat_but_not_delete_it(self) -> None:
+    workspace = self.create_workspace()
+    self.store.update_workspace(workspace["id"], self.users["li.review"], {"shared": False})
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Private")
+    runtime.append_event(session["id"], "assistant", "Private transcript", None)
+    platform_admin = {"username": "platform.admin", "role": "platform_admin", "group": ""}
+
+    listed = runtime.list_sessions(workspace["id"], platform_admin)
+    self.assertEqual(listed[0]["createdBy"], "li.review")
+    self.assertEqual(runtime.events(workspace["id"], session["id"], 0, platform_admin)[0]["message"], "Private transcript")
+    with self.assertRaises(StorageError) as context:
+      runtime.create_session(workspace["id"], platform_admin, "Not allowed")
+    self.assertEqual(context.exception.code, "forbidden")
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(workspace["id"], platform_admin, {"prompt": "Change private chat", "sessionId": session["id"]})
+    self.assertEqual(context.exception.code, "forbidden")
+    with self.assertRaises(StorageError) as context:
+      runtime.delete_session(workspace["id"], session["id"], platform_admin)
+    self.assertEqual(context.exception.code, "forbidden")
+
   def test_delete_session_rejects_active_run_without_mutation(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())

@@ -16,6 +16,7 @@ The API key is returned only by the authenticated `GET /api/recharge` endpoint f
 The three standard amounts use matching option cards with a clear amount and
 WeChat Pay action; the debug amount appears in a separate compact row. Cards
 stack on small screens and retain keyboard focus and disabled-payment states.
+The Recharge panel shows the signed-in account's remaining managed-budget percentage in a prominent block above the payment choices; custom providers and unavailable balances show an explanatory label instead of a number.
 When an order reaches `paid` or `crediting`, its dialog replaces the QR code with
 a large, persistent payment confirmation and the original amount paid. Only
 `applied` reports that the balance has updated. Pending, failed, expired, and

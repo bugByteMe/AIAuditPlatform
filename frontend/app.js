@@ -591,7 +591,10 @@ function switchView(view) {
   document.querySelectorAll(".view").forEach((section) => {
     section.classList.toggle("active", section.id === `${nextView}-view`);
   });
-  if (nextView === "recharge" && state.user && !state.recharge) loadRechargeData();
+  if (nextView === "recharge" && state.user) {
+    if (!state.recharge) loadRechargeData();
+    else refreshCurrentUser().then(renderRechargeHistory);
+  }
 }
 
 function routeToView(view, { replace = false } = {}) {
@@ -758,6 +761,7 @@ async function loadRechargeData() {
   const error = document.querySelector("#recharge-error");
   error.textContent = t("recharge.loading");
   try {
+    await refreshCurrentUser();
     const result = await api("/api/recharge");
     state.recharge = result;
     document.querySelector("#recharge-base-url").value = result.baseUrl || "";

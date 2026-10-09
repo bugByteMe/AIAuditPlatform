@@ -233,8 +233,9 @@
                     <span data-i18n="chat.model">模型</span>
                     <select name="model">
                       <option value="gpt-5.6-sol">GPT-5.6 Sol</option>
-                      <option value="gpt-5-codex">GPT-5 Codex</option>
-                      <option value="gpt-5-mini">GPT-5 Mini</option>
+                      <option value="gpt-6-astra">GPT-6 Astra</option>
+                      <option value="gpt-6-sol">GPT-6 Sol</option>
+                      <option value="gpt-6.1-sol">GPT-6.1 Sol</option>
                     </select>
                   </label>
                   <label>
@@ -305,6 +306,10 @@
                   <h2 data-i18n="recharge.productsTitle">选择充值金额</h2>
                   <p data-i18n="recharge.productsHelp">点击金额后显示付款二维码。</p>
                 </div>
+              </div>
+              <div class="recharge-balance" role="status">
+                <span data-i18n="recharge.remaining">剩余用量</span>
+                <strong id="recharge-remaining-percent">—</strong>
               </div>
               <div class="recharge-products">
                 <button type="button" class="recharge-product" data-recharge-amount="50"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥50</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
