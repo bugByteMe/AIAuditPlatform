@@ -5,7 +5,8 @@
 - A user cannot open, chat against, or download artifacts from another user's private workspace.
 - A group member can access a group-shared workspace.
 - A user outside the group cannot access a group-shared workspace.
-- A platform admin can list/open private workspaces in other groups and read their chat sessions and events, but cannot create, change, stop, or fork chats there; the session summary identifies the creator.
+- A platform admin can list/open private workspaces in other groups, rename, fork, share/unshare, delete, edit files, and create/update/run/fork/delete chats there; the session summary identifies the creator.
+- Cross-group file changes obey the workspace owner's group quota, run-lock setting changes remain owner-only, and active-run locks still block incompatible workspace mutations.
 - A disabled user cannot start or resume a chat.
 
 ## Budget Enforcement
@@ -111,7 +112,7 @@
 - Token usage and budget warnings are streamed.
 - Page reload can reconstruct chat history from persisted events.
 - Scrolling to the top loads older event pages without moving the live-event cursor, changing the current session status, or replacing newer tool results.
-- Chat deletion is limited to the workspace owner or a system administrator, rejects active runs, permits an empty workspace, and removes terminal run, event, Codex-home, and fork-checkpoint state without deleting independent forks.
+- Chat deletion is limited to the workspace owner, a system administrator, or a platform administrator; it rejects active runs, permits an empty workspace, and removes terminal run, event, Codex-home, and fork-checkpoint state without deleting independent forks.
 - Live event refreshes follow the bottom only when the reader is already there and preserve position while older history is being read.
 
 ## Artifacts

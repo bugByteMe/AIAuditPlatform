@@ -123,14 +123,19 @@ test("workspace search, secondary actions and modal focus remain usable", async 
   } finally { await page.close(); }
 });
 
-test("private workspaces stay read-only for platform administrators while transcripts and runtime details remain accessible", async () => {
+test("platform administrators can manage workspaces and chats outside their group", async () => {
   const { page, requests } = await openApp("platform_admin", { width: 1280, height: 900 }, { owner: "another.owner", shared: false });
   try {
-    assert.equal(await page.locator(".workspace-more").count(), 0);
+    await page.locator(".workspace-more > summary").click();
+    for (const action of ["share", "fork", "delete"]) {
+      assert.equal(await page.locator(`.workspace-more [data-action="${action}"]`).isVisible(), true);
+    }
+    assert.ok(await page.locator('[data-edit-name][data-name-kind="workspace"]').count() > 0);
     await page.locator('[data-action="open"]').click();
     assert.match(await page.locator("#chat-session-list").innerText(), /example\.member/);
-    assert.equal(await page.locator("#new-chat-button").isDisabled(), true);
-    assert.equal(await page.locator("#composer textarea").isDisabled(), true);
+    assert.equal(await page.locator("#new-chat-button").isDisabled(), false);
+    assert.equal(await page.locator("#composer textarea").isDisabled(), false);
+    assert.equal(await page.locator('[data-session-action="delete"]').isVisible(), true);
     assert.equal(await page.locator(".runtime-details").evaluate((element) => element.open), false);
     await page.locator(".runtime-details > summary").click();
     assert.equal(await page.locator("#chat-cpu-label").isVisible(), true);

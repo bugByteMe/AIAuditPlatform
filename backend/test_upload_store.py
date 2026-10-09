@@ -204,6 +204,16 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(result["status"], "committed")
     self.assertEqual((self.store.workspace_path(result["workspaceId"]) / "a.txt").read_bytes(), b"abc")
 
+  def test_platform_admin_can_start_append_upload_in_private_other_group_workspace(self):
+    workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
+    platform_admin = {"username": "platform.admin", "role": "platform_admin", "group": "Other", "groupId": "group-2"}
+    upload = self.manager.create(platform_admin, {
+      "mode": "append", "workspaceId": workspace["id"], "files": [{"path": "b.txt", "size": 3}],
+    })
+    self.assertTrue(self.store.get_workspace(workspace["id"], USER)["locked"])
+    self.manager.cancel(upload["id"], platform_admin)
+    self.assertFalse(self.store.get_workspace(workspace["id"], USER)["locked"])
+
   def test_append_upload_locks_workspace_and_cancel_releases_it(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
     upload = self.manager.create(USER, {"mode": "append", "workspaceId": workspace["id"], "files": [{"path": "a.txt", "size": 3}]})

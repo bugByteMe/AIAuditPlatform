@@ -92,8 +92,13 @@ class WorkspaceLifecycleMixin:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
-      if workspace["owner"] != user["username"] and user["role"] != "system_admin":
-        raise StorageError("forbidden", "only the owner or system admin can update workspace settings")
+      is_owner = workspace["owner"] == user["username"]
+      is_system_admin = user["role"] == "system_admin"
+      is_platform_admin = user["role"] == "platform_admin"
+      if not (is_owner or is_system_admin or is_platform_admin):
+        raise StorageError("forbidden", "only the owner or an administrator can update workspace settings")
+      if is_platform_admin and not is_owner and (not payload or payload.keys() - {"shared", "name"}):
+        raise StorageError("forbidden", "platform administrators may only rename or change sharing on workspaces they do not own")
       if "name" in payload:
         name = str(payload["name"]).strip()
         if not name:
@@ -114,7 +119,7 @@ class WorkspaceLifecycleMixin:
       return self.public_workspace(workspace, metadata)
 
   def user_can_mutate_workspace(self, user: dict, workspace: dict) -> bool:
-    return user["role"] == "system_admin" or workspace["owner"] == user["username"]
+    return user["role"] in {"system_admin", "platform_admin"} or workspace["owner"] == user["username"]
 
   def add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
@@ -139,7 +144,7 @@ class WorkspaceLifecycleMixin:
     metadata = self.load_workspace_metadata(workspace_id)
     workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
     if not self.user_can_mutate_workspace(user, workspace):
-      raise StorageError("forbidden", "only the owner or system admin can add files")
+      raise StorageError("forbidden", "only the owner or an administrator can add files")
     if workspace.get("locked"):
       raise StorageError("workspace_locked", "workspace has an active write lock")
 
@@ -177,7 +182,7 @@ class WorkspaceLifecycleMixin:
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if not self.user_can_mutate_workspace(user, workspace):
-        raise StorageError("forbidden", "only the owner or system admin can delete files")
+        raise StorageError("forbidden", "only the owner or an administrator can delete files")
       if workspace.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
 
@@ -403,8 +408,8 @@ class WorkspaceLifecycleMixin:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
-      if workspace["owner"] != user["username"] and user["role"] != "system_admin":
-        raise StorageError("forbidden", "only the owner or system admin can delete a workspace")
+      if workspace["owner"] != user["username"] and user["role"] not in {"system_admin", "platform_admin"}:
+        raise StorageError("forbidden", "only the owner or an administrator can delete a workspace")
       if workspace.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
 

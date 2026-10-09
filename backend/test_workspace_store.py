@@ -292,11 +292,30 @@ class WorkspaceStoreTest(unittest.TestCase):
     platform_admin = {"username": "platform.admin", "role": "platform_admin", "group": ""}
     self.assertEqual(len(self.store.list_workspaces(platform_admin)), 2)
     self.assertEqual(self.store.get_workspace(private["id"], platform_admin)["id"], private["id"])
-    with self.assertRaises(StorageError) as context:
-      self.store.fork_workspace(private["id"], platform_admin)
-    self.assertEqual(context.exception.code, "forbidden")
+    fork = self.store.fork_workspace(private["id"], platform_admin)
+    self.assertEqual(fork["owner"], platform_admin["username"])
+    self.assertEqual(fork["sourceWorkspaceId"], private["id"])
     with self.assertRaises(StorageError):
       self.store.get_workspace(private["id"], SAME_GROUP)
+
+  def test_platform_admin_can_manage_private_other_group_workspace_without_changing_run_lock(self) -> None:
+    workspace = self.create_workspace(shared=False)
+    platform_admin = {"username": "platform.admin", "role": "platform_admin", "group": "审计二组"}
+    updated = self.store.update_workspace(workspace["id"], platform_admin, {"shared": True})
+    self.assertTrue(updated["shared"])
+    updated = self.store.update_workspace(workspace["id"], platform_admin, {"name": "Changed", "shared": False})
+    self.assertEqual(updated["name"], "Changed")
+    self.assertFalse(updated["shared"])
+    for payload in ({"runLockEnabled": True}, {"shared": True, "runLockEnabled": True}, {"unknown": True}):
+      with self.subTest(payload=payload), self.assertRaises(StorageError) as context:
+        self.store.update_workspace(workspace["id"], platform_admin, payload)
+      self.assertEqual(context.exception.code, "forbidden")
+    self.assertEqual(self.store.get_workspace(workspace["id"], OWNER)["name"], "Changed")
+    added = self.store.add_files_to_workspace(workspace["id"], platform_admin, [UploadedFile("extra.txt", b"extra")])
+    self.assertTrue(any(item["path"] == "extra.txt" for item in added["files"]))
+    deleted_path = self.store.delete_workspace_path(workspace["id"], platform_admin, "extra.txt")
+    self.assertFalse(any(item["path"] == "extra.txt" for item in deleted_path["files"]))
+    self.assertEqual(self.store.delete_workspace(workspace["id"], platform_admin)["id"], workspace["id"])
 
   def test_workspace_list_is_summary_only_and_detail_is_loaded_by_id(self) -> None:
     workspace = self.create_workspace(shared=True)

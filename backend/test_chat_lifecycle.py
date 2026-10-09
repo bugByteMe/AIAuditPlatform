@@ -187,26 +187,25 @@ class ChatLifecycleTest(ChatRuntimeTestBase):
     runtime.delete_session(workspace["id"], session["id"], administrator)
     self.assertIsNone(runtime.chat_store.get_session(session["id"]))
 
-  def test_platform_admin_can_read_private_chat_but_not_delete_it(self) -> None:
+  def test_platform_admin_can_manage_private_chat_across_groups(self) -> None:
     workspace = self.create_workspace()
     self.store.update_workspace(workspace["id"], self.users["li.review"], {"shared": False})
     runtime = ChatRuntime(self.store, self.users, FakeRunner())
     session = runtime.create_session(workspace["id"], self.users["li.review"], "Private")
     runtime.append_event(session["id"], "assistant", "Private transcript", None)
-    platform_admin = {"username": "platform.admin", "role": "platform_admin", "group": ""}
+    platform_admin = {**deepcopy(OWNER), "username": "platform.admin", "role": "platform_admin", "group": "审计二组"}
+    self.users[platform_admin["username"]] = platform_admin
 
     listed = runtime.list_sessions(workspace["id"], platform_admin)
     self.assertEqual(listed[0]["createdBy"], "li.review")
     self.assertEqual(runtime.events(workspace["id"], session["id"], 0, platform_admin)[0]["message"], "Private transcript")
-    with self.assertRaises(StorageError) as context:
-      runtime.create_session(workspace["id"], platform_admin, "Not allowed")
-    self.assertEqual(context.exception.code, "forbidden")
-    with self.assertRaises(StorageError) as context:
-      runtime.start_run(workspace["id"], platform_admin, {"prompt": "Change private chat", "sessionId": session["id"]})
-    self.assertEqual(context.exception.code, "forbidden")
-    with self.assertRaises(StorageError) as context:
-      runtime.delete_session(workspace["id"], session["id"], platform_admin)
-    self.assertEqual(context.exception.code, "forbidden")
+    self.assertEqual(runtime.update_session(workspace["id"], session["id"], platform_admin, "Reviewed")["title"], "Reviewed")
+    created = runtime.create_session(workspace["id"], platform_admin, "New task")
+    fork = runtime.fork_session(workspace["id"], created["id"], platform_admin)
+    self.assertEqual(fork["createdBy"], platform_admin["username"])
+    runtime.start_run(workspace["id"], platform_admin, {"prompt": "Change private chat", "sessionId": created["id"]})
+    self.wait_for_status(runtime, workspace["id"], created["id"], "completed", platform_admin)
+    self.assertEqual(runtime.delete_session(workspace["id"], session["id"], platform_admin)["id"], session["id"])
 
   def test_delete_session_rejects_active_run_without_mutation(self) -> None:
     workspace = self.create_workspace()

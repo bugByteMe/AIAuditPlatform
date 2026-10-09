@@ -70,12 +70,16 @@ function formatResourceBytes(value) {
 }
 
 function canRenameWorkspace(workspace) {
-  return Boolean(workspace && state.user && (state.user.role === "system_admin" || workspace.owner === state.user.username));
+  return Boolean(workspace && state.user && (["system_admin", "platform_admin"].includes(state.user.role) || workspace.owner === state.user.username));
+}
+
+function canAdministerWorkspace(workspace) {
+  return Boolean(workspace && state.user && (canRenameWorkspace(workspace) || state.user.role === "platform_admin"));
 }
 
 function canCollaborateInWorkspace(workspace) {
-  return !workspace || state.user?.role !== "platform_admin" || workspace.owner === state.user.username ||
-    Boolean(workspace.shared && workspace.group && workspace.group === state.user.group);
+  return !workspace || Boolean(state.user && (["system_admin", "platform_admin"].includes(state.user.role) ||
+    workspace.owner === state.user.username || (workspace.shared && workspace.group && workspace.group === state.user.group)));
 }
 
 function editableName(kind, id, value, location, editable = true) {
@@ -268,12 +272,12 @@ export function renderWorkspaces() {
             </div>
           </div>
           <div class="toolbar-actions workspace-card-actions">
-            ${canRenameWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<details class="action-menu workspace-more">
+            ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<details class="action-menu workspace-more">
               <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}</summary>
               <div class="action-menu-items">
-                ${canRenameWorkspace(workspace) ? `<button type="button" class="btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${shareTitle} <span aria-hidden="true">${shareIcon}</span></button>` : ""}
-                ${canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
-                ${canRenameWorkspace(workspace) ? `<button type="button" class="btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.delete")}</button>` : ""}
+                ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${shareTitle} <span aria-hidden="true">${shareIcon}</span></button>` : ""}
+                ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
+                ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.delete")}</button>` : ""}
               </div>
             </details>` : ""}
             <button type="button" class="btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}">

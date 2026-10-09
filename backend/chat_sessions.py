@@ -174,8 +174,8 @@ class ChatSessionMixin:
       metadata = self.store.load_workspace_metadata(workspace_id)
       self.ensure_chat_metadata(metadata)
       workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
-      if workspace.get("owner") != user.get("username") and user.get("role") != "system_admin":
-        raise StorageError("forbidden", "only the workspace owner or system admin can delete a chat session")
+      if workspace.get("owner") != user.get("username") and user.get("role") not in {"system_admin", "platform_admin"}:
+        raise StorageError("forbidden", "only the workspace owner or an administrator can delete a chat session")
       session_refs = workspace.get("sessions", [])
       if not any(str(item.get("id") or "") == session_id for item in session_refs):
         raise StorageError("not_found", "chat session not found")

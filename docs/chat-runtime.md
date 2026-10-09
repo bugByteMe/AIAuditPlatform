@@ -87,7 +87,7 @@ Persisted application events are copied in one atomic linear pass. Appending a n
 
 ## Deleting a Chat
 
-Workspace owners and system administrators may permanently delete a chat whose runs are all terminal. Deletion removes the workspace session reference, persisted transcript, run records, session-scoped Codex homes, and stale fork checkpoints. Active or queued runs must be stopped first. Deleting the last chat leaves a valid empty workspace, and independently persisted forks remain available.
+Workspace owners, system administrators, and platform administrators may permanently delete a chat whose runs are all terminal. Deletion removes the workspace session reference, persisted transcript, run records, session-scoped Codex homes, and stale fork checkpoints. Active or queued runs must be stopped first. Deleting the last chat leaves a valid empty workspace, and independently persisted forks remain available.
 
 ## Completion
 

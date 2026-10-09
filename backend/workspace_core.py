@@ -236,14 +236,11 @@ class WorkspaceCoreMixin:
     return bool(workspace.get("shared")) and workspace.get("group") and workspace.get("group") == user.get("group")
 
   def user_can_collaborate(self, user: dict, workspace: dict) -> bool:
-    return user.get("role") != "platform_admin" or (
-      workspace.get("owner") == user.get("username") or
-      bool(workspace.get("shared") and workspace.get("group") and workspace.get("group") == user.get("group"))
-    )
+    return self.user_can_access(user, workspace)
 
   def require_collaboration_access(self, user: dict, workspace: dict) -> None:
     if not self.user_can_collaborate(user, workspace):
-      raise StorageError("forbidden", "platform administrator has read-only access to this workspace")
+      raise StorageError("forbidden", "workspace collaboration access denied")
 
   def list_workspaces(self, user: dict) -> list[dict]:
     workspaces = self.database.list_workspace_headers(

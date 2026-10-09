@@ -89,7 +89,7 @@ Workspaces can be:
 - Forked by a user with access.
 
 Group-shared workspaces support collaborative access. Users with access can inspect files, start chats, and download artifacts.
-Platform administrators may list and open every workspace, including private workspaces outside their group, and read its chat sessions and transcripts. That additional access does not permit starting or modifying chats or forking the workspace; normal owner/group-shared access continues to allow collaboration.
+Platform administrators may list and open every workspace, including private workspaces outside their group, and rename, fork, share, delete, upload/delete files, and create or modify chats there. A fork belongs to the administrator and uses their own group quota; edits to an existing workspace use its owner's group quota. Active-run locks and the owner-only exclusive run-lock setting still apply. Normal owner/group-shared access continues to allow collaboration.
 
 The owner controls an exclusive run lock while the workspace is idle. It is disabled by default. When enabled, only one mutating Codex run may be active. When disabled, runs from different chat sessions may share the live workspace after the initiating user confirms an overwrite and artifact-attribution warning. A chat session still permits only one active run.
 

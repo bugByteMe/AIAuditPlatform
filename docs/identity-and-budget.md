@@ -13,7 +13,7 @@ The system should support these roles:
 - User: can create workspaces, use chat, access permitted shared workspaces, fork workspaces, and download permitted artifacts.
 - Group admin: can inspect group usage and manage group workspace access if enabled.
 - System admin: can create users and groups, set budgets, disable accounts or groups, inspect usage, and view audit logs.
-- Platform admin (`platform_admin`): can list users/groups, assign user group membership, create/delete groups, and edit group names and concurrent live-run limits. Platform admins can list and read all workspaces and their chat histories, including private ones; access outside their own or group-shared workspaces is read-only. This role does not inherit system-admin workspace mutation, budget, invitation, worker, or audit-log privileges.
+- Platform admin (`platform_admin`): can list users/groups, assign user group membership, create/delete groups, and edit group names and concurrent live-run limits. Platform admins can list, open, rename, fork, share, delete, and edit files and chats in every workspace, including private ones outside their group. The owner's exclusive run-lock setting remains owner-only. Platform admins do not gain system-admin budget, invitation, worker, or audit-log privileges.
 
 ### Administration permissions
 

@@ -93,7 +93,7 @@ class UploadManager:
         metadata = self.store.load_workspace_metadata(workspace_id)
         workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
         if not self.store.user_can_mutate_workspace(user, workspace):
-          raise StorageError("forbidden", "only the owner or system admin can add files")
+          raise StorageError("forbidden", "only the owner or an administrator can add files")
         if workspace.get("locked"):
           raise StorageError("workspace_locked", "workspace has an active write lock")
         parent = metadata.get("snapshots", {}).get(workspace.get("latestSnapshotId")) or {"files": {}}
