@@ -1,13 +1,15 @@
 FROM python:3.12-slim-bookworm
 
-ARG PIP_INDEX_URL=https://pypi.org/simple
+ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
+ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_DISABLE_PIP_VERSION_CHECK=1 \
     AI_AUDIT_CONFIG=/app/config/ai_audit.json
 
-RUN apt-get update \
+RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/debian#g; s#http://deb.debian.org/debian-security#http://mirrors.cloud.aliyuncs.com/debian-security#g' /etc/apt/sources.list.d/debian.sources \
+  && apt-get update \
   && apt-get install -y --no-install-recommends \
     ca-certificates \
     fonts-noto-cjk \
