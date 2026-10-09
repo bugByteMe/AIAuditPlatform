@@ -123,6 +123,20 @@ test("workspace search, secondary actions and modal focus remain usable", async 
   } finally { await page.close(); }
 });
 
+test("workspace and admin user rows stay dense on desktop without overflowing narrow screens", async () => {
+  for (const width of [1280, 390]) {
+    const { page } = await openApp("platform_admin", { width, height: 900 });
+    try {
+      const workspace = await page.locator(".workspace-item").first().boundingBox();
+      if (width === 1280) assert.ok(workspace.height <= 72, `workspace row is ${workspace.height}px tall`);
+      await page.locator("#admin-nav-button").click();
+      const user = await page.locator(".admin-user-item").first().boundingBox();
+      if (width === 1280) assert.ok(user.height <= 72, `user row is ${user.height}px tall`);
+      assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+    } finally { await page.close(); }
+  }
+});
+
 test("platform administrators can manage workspaces and chats outside their group", async () => {
   const { page, requests } = await openApp("platform_admin", { width: 1280, height: 900 }, { owner: "another.owner", shared: false });
   try {
