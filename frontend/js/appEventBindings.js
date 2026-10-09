@@ -646,6 +646,39 @@ export function createEventBindings(context) {
 
   function bindInputs() {
     manageModalFocus();
+    const composerHandle = document.querySelector("#composer-resize-handle");
+    const composerInput = document.querySelector("#composer textarea");
+    const resizeComposer = (height) => {
+      const maxHeight = Math.max(82, Math.min(320, window.innerHeight * 0.35));
+      composerInput.style.height = `${clamp(height, 82, maxHeight)}px`;
+    };
+    composerHandle.addEventListener("pointerdown", (event) => {
+      if (event.button !== 0) return;
+      event.preventDefault();
+      const startY = event.clientY;
+      const startHeight = composerInput.getBoundingClientRect().height;
+      composerHandle.setPointerCapture(event.pointerId);
+      const onMove = (moveEvent) => {
+        resizeComposer(startHeight + startY - moveEvent.clientY);
+      };
+      const onEnd = () => {
+        composerHandle.removeEventListener("pointermove", onMove);
+        composerHandle.removeEventListener("pointerup", onEnd);
+        composerHandle.removeEventListener("pointercancel", onEnd);
+      };
+      composerHandle.addEventListener("pointermove", onMove);
+      composerHandle.addEventListener("pointerup", onEnd);
+      composerHandle.addEventListener("pointercancel", onEnd);
+    });
+    composerHandle.addEventListener("keydown", (event) => {
+      const height = composerInput.getBoundingClientRect().height;
+      if (event.key === "ArrowUp") resizeComposer(height + 20);
+      else if (event.key === "ArrowDown") resizeComposer(height - 20);
+      else if (event.key === "Home") resizeComposer(82);
+      else if (event.key === "End") resizeComposer(320);
+      else return;
+      event.preventDefault();
+    });
     document.querySelector("#workspace-search").addEventListener("input", (event) => {
       state.workspaceQuery = event.target.value;
       renderWorkspaces();

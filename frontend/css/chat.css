@@ -598,9 +598,45 @@
 }
 
 .composer {
+  position: relative;
   flex-shrink: 0;
   padding: 10px 12px;
   border-top: 1px solid var(--line);
+}
+
+.composer-resize-handle {
+  position: absolute;
+  z-index: 1;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 10px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  cursor: ns-resize;
+  touch-action: none;
+}
+
+.composer-resize-handle::after {
+  content: "";
+  position: absolute;
+  top: 3px;
+  left: calc(50% - 24px);
+  width: 48px;
+  height: 3px;
+  border-radius: 3px;
+  background: var(--line-strong);
+}
+
+.composer-resize-handle:hover::after,
+.composer-resize-handle:focus-visible::after {
+  background: var(--primary);
+}
+
+.composer-resize-handle:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
 }
 
 .composer textarea {

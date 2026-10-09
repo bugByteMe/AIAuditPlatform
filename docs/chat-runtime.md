@@ -2,8 +2,10 @@
 
 ## Session Model
 
-The chat composer retains its native vertical mouse resize handle and multiline
-editing/submission behavior. Its height is bounded between 82px and the smaller
+The chat composer has a top-edge grip for dragging upward to expand the input,
+keyboard resize controls (Up/Down by 20px, Home/End for bounds), and the native
+vertical textarea resize handle. Multiline editing/submission is unchanged.
+Its height is bounded between 82px and the smaller
 of 320px or 35% of the viewport (never below 82px). Resizing affects layout only,
 does not persist across sessions, and leaves the send controls outside the input.
 

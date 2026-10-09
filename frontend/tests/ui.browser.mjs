@@ -157,12 +157,13 @@ test("platform administrators can manage workspaces and chats outside their grou
   } finally { await page.close(); }
 });
 
-test("native composer drag respects height bounds, multiline submission and disabled input on desktop and narrow screens", async () => {
+test("composer top grip and keyboard resize respect height bounds, multiline submission and disabled input", async () => {
   for (const width of [1280, 390]) {
     const { page, requests } = await openApp("user", { width, height: 900 });
     try {
       await page.locator('[data-view="chat"]').click();
       const input = page.locator("#composer textarea");
+      const handle = page.locator("#composer-resize-handle");
       await input.fill("First line");
       await input.press("Enter");
       await input.pressSequentially("Second line");
@@ -170,17 +171,17 @@ test("native composer drag respects height bounds, multiline submission and disa
       assert.equal(requests.some((req) => req.path.endsWith("/chat/runs")), false);
       const initial = await input.boundingBox();
       const drag = async (delta) => {
-        await input.scrollIntoViewIfNeeded();
-        const box = await input.boundingBox();
-        await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3);
+        await handle.scrollIntoViewIfNeeded();
+        const box = await handle.boundingBox();
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
         await page.mouse.down();
-        await page.mouse.move(box.x + box.width - 3, box.y + box.height - 3 + delta, { steps: 10 });
+        await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 - delta, { steps: 10 });
         await page.mouse.up();
       };
       await drag(120);
       const expanded = await input.boundingBox();
-      assert.ok(expanded.height > initial.height, "mouse dragging must increase input height");
-      await drag(1000);
+      assert.ok(expanded.height > initial.height, "dragging upward must increase input height");
+      await drag(200);
       const max = await input.boundingBox();
       assert.ok(Math.abs(max.height - 315) < 1, `maximum height at width ${width}: ${max.height}`);
       await page.locator('#composer button[type="submit"]').scrollIntoViewIfNeeded();
@@ -188,8 +189,15 @@ test("native composer drag respects height bounds, multiline submission and disa
         const box = node.getBoundingClientRect();
         return box.bottom <= window.innerHeight && document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2) === node;
       }), "resizing must keep the send button accessible");
-      await drag(-1000);
+      await drag(-300);
       assert.equal(Math.round((await input.boundingBox()).height), 82, `minimum height at width ${width}`);
+      await handle.focus();
+      await handle.press("ArrowUp");
+      assert.equal(Math.round((await input.boundingBox()).height), 102);
+      await handle.press("Home");
+      assert.equal(Math.round((await input.boundingBox()).height), 82);
+      await handle.press("End");
+      assert.ok(Math.abs((await input.boundingBox()).height - 315) < 1);
       assert.equal(await input.inputValue(), "First line\nSecond line");
       await page.locator('#composer button[type="submit"]').click();
       await page.waitForFunction(() => document.querySelector("#toast").textContent === "Example permission error");

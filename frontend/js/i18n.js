@@ -144,6 +144,7 @@ const dictionaries = {
     "chat.retryHistory": "重试",
     "chat.historyStart": "会话开始",
     "chat.placeholder": "输入审计任务，例如：检查收入确认底稿并生成异常清单",
+    "chat.resizeComposer": "向上拖动扩大输入框，方向键调整高度",
     "chat.model": "模型",
     "chat.reasoning": "推理强度",
     "chat.reasoning.high": "高",
@@ -476,6 +477,7 @@ const dictionaries = {
     "chat.retryHistory": "Retry",
     "chat.historyStart": "Start of conversation",
     "chat.placeholder": "Enter an audit task, for example: review revenue workpapers and list exceptions",
+    "chat.resizeComposer": "Drag up to expand the input, or use arrow keys to resize",
     "chat.model": "Model",
     "chat.reasoning": "Reasoning",
     "chat.reasoning.high": "High",
@@ -681,6 +683,9 @@ export function applyLocale() {
   });
   document.querySelectorAll("[data-i18n-title]").forEach((node) => {
     node.title = t(node.dataset.i18nTitle);
+  });
+  document.querySelectorAll("[data-i18n-aria-label]").forEach((node) => {
+    node.setAttribute("aria-label", t(node.dataset.i18nAriaLabel));
   });
   document.querySelectorAll("[data-lang]").forEach((button) => {
     button.classList.toggle("active", button.dataset.lang === state.lang);
