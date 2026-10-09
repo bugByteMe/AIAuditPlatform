@@ -1,3 +1,8 @@
+import { createChatStream } from "./js/appChatStream.js";
+import { createAdminRecharge } from "./js/appAdminRecharge.js";
+import { createWorkspaceActions } from "./js/appWorkspaceActions.js";
+import { createEventBindings } from "./js/appEventBindings.js";
+import { createUploadActions } from "./js/appUploads.js";
 import { api, apiUrl, authenticatedApiUrl, uploadChunkApi } from "./js/api.js";
 import {
   LIVE_CHAT_STATES,
@@ -30,18 +35,6 @@ import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSetting
 import { renderPaymentNotice } from "./js/paymentNotice.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
-let activeChatStream = null;
-let activePollTimer = null;
-let activeStreamWatchdog = null;
-let activeReconnectTimer = null;
-let activeStreamLastActivity = 0;
-let activeReconnectAttempts = 0;
-let fallbackPollingActive = false;
-let activeStreamGeneration = 0;
-let workerStatusLoading = false;
-let registrationSubmitting = false;
-let rechargeOrderPollTimer = null;
-let rechargeOrderGeneration = 0;
 
 export function renderDynamic() {
   renderCurrentUser();
@@ -77,21 +70,6 @@ function clamp(value, min, max) {
 
 function escapeMarkup(value) {
   return String(value).replace(/[&<>"']/g, (char) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[char]);
-}
-
-function stopChatStream() {
-  activeStreamGeneration += 1;
-  if (activeChatStream) activeChatStream.close();
-  activeChatStream = null;
-  if (activePollTimer) window.clearTimeout(activePollTimer);
-  activePollTimer = null;
-  if (activeStreamWatchdog) window.clearInterval(activeStreamWatchdog);
-  activeStreamWatchdog = null;
-  if (activeReconnectTimer) window.clearTimeout(activeReconnectTimer);
-  activeReconnectTimer = null;
-  activeStreamLastActivity = 0;
-  activeReconnectAttempts = 0;
-  fallbackPollingActive = false;
 }
 
 function sortTreeFiles(items) {
@@ -301,250 +279,6 @@ async function refreshWorkspaceById(workspaceId) {
   }
 }
 
-function currentSessionObject() {
-  const workspace = safeCurrentWorkspace();
-  return workspace?.sessions?.[state.selectedSession] || workspace?.sessions?.[0] || null;
-}
-
-function chatPollInterval() {
-  return Math.max(250, Number(state.runtimeConfig.chatPollIntervalMs) || 2_000);
-}
-
-function scheduleChatPoll(workspaceId, sessionId, generation, delay = chatPollInterval()) {
-  if (generation !== activeStreamGeneration || !fallbackPollingActive || activePollTimer) return;
-  activePollTimer = window.setTimeout(() => {
-    activePollTimer = null;
-    pollChatEvents(workspaceId, sessionId, generation);
-  }, delay);
-}
-
-async function pollChatEvents(workspaceId, sessionId, generation, reschedule = true) {
-  if (generation !== activeStreamGeneration) return;
-  const after = state.chatLastEventIds[sessionId] || 0;
-  try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({ sessionId, after }).toString()}`);
-    if (generation !== activeStreamGeneration) return;
-    const session = findSessionById(state.workspaces, workspaceId, sessionId);
-    if (!session) {
-      stopChatStream();
-      return;
-    }
-    const changed = mergeSessionEvents(session, result.events || [], state.chatLastEventIds);
-    const serverStatus = result.sessionStatus || session.status;
-    const statusChanged = serverStatus !== session.status;
-    session.status = serverStatus;
-    if (result.session) {
-      session.resources = result.session.resources;
-      session.queueAhead = result.session.queueAhead;
-      session.workerId = result.session.workerId;
-      session.container = result.session.container;
-      state.resourceStatus = result.session.resources || state.resourceStatus;
-    }
-    if (changed || statusChanged || result.session) renderDynamic();
-    if (TERMINAL_CHAT_STATES.has(serverStatus)) {
-      stopChatStream();
-      await Promise.all([refreshWorkspaceById(workspaceId), refreshCurrentUser()]);
-      return;
-    }
-  } catch (error) {
-    console.warn("Chat event reconciliation failed", error);
-  }
-  if (reschedule) scheduleChatPoll(workspaceId, sessionId, generation);
-}
-
-function markStreamHealthy(workspaceId, sessionId, generation) {
-  if (generation !== activeStreamGeneration) return;
-  activeStreamLastActivity = Date.now();
-  activeReconnectAttempts = 0;
-  fallbackPollingActive = false;
-  if (activePollTimer) window.clearTimeout(activePollTimer);
-  activePollTimer = null;
-  if (activeReconnectTimer) window.clearTimeout(activeReconnectTimer);
-  activeReconnectTimer = null;
-}
-
-function scheduleStreamReconnect(workspaceId, sessionId, generation) {
-  if (generation !== activeStreamGeneration || activeReconnectTimer || activeChatStream) return;
-  const base = Math.max(500, Number(state.runtimeConfig.sseRetryMs) || 2_000);
-  const delay = Math.min(30_000, base * (2 ** Math.min(activeReconnectAttempts, 4)));
-  activeReconnectAttempts += 1;
-  activeReconnectTimer = window.setTimeout(() => {
-    activeReconnectTimer = null;
-    openChatStream(workspaceId, sessionId, generation);
-  }, delay);
-}
-
-function activatePollingFallback(workspaceId, sessionId, generation) {
-  if (generation !== activeStreamGeneration) return;
-  fallbackPollingActive = true;
-  if (activeChatStream) activeChatStream.close();
-  activeChatStream = null;
-  scheduleChatPoll(workspaceId, sessionId, generation, 0);
-  scheduleStreamReconnect(workspaceId, sessionId, generation);
-}
-
-function openChatStream(workspaceId, sessionId, generation) {
-  if (generation !== activeStreamGeneration || activeChatStream) return;
-  const after = state.chatLastEventIds[sessionId] || 0;
-  const url = authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/stream?${new URLSearchParams({ sessionId, after }).toString()}`);
-  activeChatStream = new EventSource(url, { withCredentials: true });
-  activeChatStream.onopen = () => {
-    if (generation !== activeStreamGeneration) return;
-    markStreamHealthy(workspaceId, sessionId, generation);
-    pollChatEvents(workspaceId, sessionId, generation, false);
-  };
-  const handleEvent = (event) => {
-    if (generation !== activeStreamGeneration) return;
-    markStreamHealthy(workspaceId, sessionId, generation);
-    let payload;
-    try {
-      payload = JSON.parse(event.data);
-    } catch (error) {
-      console.warn("Invalid chat event payload", error);
-      return;
-    }
-    const session = findSessionById(state.workspaces, workspaceId, sessionId);
-    if (mergeSessionEvents(session, [payload], state.chatLastEventIds)) renderDynamic();
-    if (TERMINAL_CHAT_STATES.has(payload.type)) {
-      stopChatStream();
-      refreshWorkspaceById(workspaceId);
-      refreshCurrentUser();
-    }
-  };
-  activeChatStream.onmessage = handleEvent;
-  ["user", "queued", "starting", "running", "stopping", "assistant", "command", "websearch", "tool", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
-    activeChatStream.addEventListener(type, handleEvent);
-  });
-  activeChatStream.addEventListener("heartbeat", (event) => {
-    if (generation !== activeStreamGeneration) return;
-    markStreamHealthy(workspaceId, sessionId, generation);
-    try {
-      const heartbeat = JSON.parse(event.data);
-      const session = findSessionById(state.workspaces, workspaceId, sessionId);
-      if (session && heartbeat.sessionStatus && session.status !== heartbeat.sessionStatus) {
-        session.status = heartbeat.sessionStatus;
-      }
-      if (session) {
-        session.queueAhead = heartbeat.queueAhead;
-        session.resources = heartbeat.resources || session.resources;
-      }
-      state.resourceStatus = heartbeat.resources || state.resourceStatus;
-      renderDynamic();
-      if (TERMINAL_CHAT_STATES.has(heartbeat.sessionStatus)) {
-        stopChatStream();
-        refreshWorkspaceById(workspaceId);
-        refreshCurrentUser();
-      }
-    } catch (error) {
-      console.warn("Invalid chat heartbeat payload", error);
-    }
-  });
-  activeChatStream.onerror = () => {
-    if (generation !== activeStreamGeneration) return;
-    activatePollingFallback(workspaceId, sessionId, generation);
-  };
-}
-
-function startChatStreamForSession(workspaceId, sessionId) {
-  if (!workspaceId || !sessionId) return;
-  stopChatStream();
-  const generation = activeStreamGeneration;
-  activeStreamLastActivity = Date.now();
-  openChatStream(workspaceId, sessionId, generation);
-  activeStreamWatchdog = window.setInterval(() => {
-    if (generation !== activeStreamGeneration) return;
-    if (!fallbackPollingActive && Date.now() - activeStreamLastActivity > 15_000) {
-      activatePollingFallback(workspaceId, sessionId, generation);
-    }
-  }, 5_000);
-}
-
-async function loadLatestSessionHistory(workspaceId, session) {
-  if (!workspaceId || !session || session.historyLoaded) return;
-  session.historyLoading = true;
-  session.historyLoadingKind = "initial";
-  session.historyLoadError = false;
-  renderDynamic();
-  try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
-      sessionId: session.id,
-      latest: "true",
-      limit: "200",
-    }).toString()}`);
-    const events = result.events || [];
-    mergeSessionEvents(session, events, state.chatLastEventIds);
-    session.historyBefore = events.length ? Math.min(...events.map((event) => Number(event.id) || 0)) : 0;
-    session.historyHasMore = Boolean(result.hasMore && events.length);
-    session.historyLoaded = true;
-  } catch (error) {
-    session.historyLoadError = true;
-    throw error;
-  } finally {
-    session.historyLoading = false;
-    session.historyLoadingKind = "";
-    renderDynamic();
-  }
-}
-
-async function loadOlderSessionHistory() {
-  const workspace = safeCurrentWorkspace();
-  const session = currentSessionObject();
-  if (!workspace || !session?.historyLoaded || !session.historyHasMore || session.historyLoading) return;
-  const before = Number(session.historyBefore || 0);
-  if (before <= 1) {
-    session.historyHasMore = false;
-    return;
-  }
-  session.historyLoading = true;
-  session.historyLoadingKind = "older";
-  session.historyLoadError = false;
-  renderDynamic();
-  try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/events?${new URLSearchParams({
-      sessionId: session.id,
-      before,
-      limit: "200",
-    }).toString()}`);
-    const current = findSessionById(state.workspaces, workspace.id, session.id);
-    if (!current) return;
-    const events = result.events || [];
-    if (events.length) current.historyBefore = Math.min(...events.map((event) => Number(event.id) || before));
-    current.historyHasMore = Boolean(result.hasMore && events.length);
-    if (mergeHistoricalEvents(current, events)) renderDynamic();
-  } catch (error) {
-    const current = findSessionById(state.workspaces, workspace.id, session.id);
-    if (current) current.historyLoadError = true;
-    console.warn("Older chat history load failed", error);
-  } finally {
-    const current = findSessionById(state.workspaces, workspace.id, session.id);
-    if (current) {
-      current.historyLoading = false;
-      current.historyLoadingKind = "";
-    }
-    renderDynamic();
-  }
-}
-
-async function maybeStartChatStream() {
-  const workspace = safeCurrentWorkspace();
-  const session = currentSessionObject();
-  if (!workspace || !session) {
-    stopChatStream();
-    return;
-  }
-  try {
-    await loadLatestSessionHistory(workspace.id, session);
-    renderDynamic();
-  } catch (error) {
-    console.warn("Chat history load failed", error);
-  }
-  if (!LIVE_CHAT_STATES.has(session.status)) {
-    stopChatStream();
-    return;
-  }
-  startChatStreamForSession(workspace.id, session.id);
-}
-
 async function loadWorkspaces() {
   try {
     const result = await api("/api/workspaces");
@@ -620,6 +354,8 @@ function showAuthenticated(user) {
 
 function showLogin() {
   state.user = null;
+  state.workspaceQuery = "";
+  document.querySelector("#workspace-search").value = "";
   state.recharge = null;
   state.rechargeImport = null;
   document.querySelector("#recharge-base-url").value = "";
@@ -631,940 +367,6 @@ function showLogin() {
   document.querySelector("#auth-screen").classList.remove("hidden");
   document.querySelector("#app-shell").classList.add("hidden");
   setAuthMode("login");
-}
-
-async function loadAccountControlData() {
-  if (!canManageAccounts(state.user)) {
-    state.accounts = [];
-    state.groups = [];
-    state.workers = [];
-    renderAdmin();
-    renderWorkers();
-    return;
-  }
-  try {
-    const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), isSystemAdmin(state.user) ? api("/api/audit-logs") : { logs: [] }, isSystemAdmin(state.user) ? api("/api/workers") : { workers: [] }]);
-    state.accounts = accounts.accounts || [];
-    state.groups = accounts.groups || [];
-    const ownAccount = state.accounts.find((account) => account.id === state.user?.id);
-    if (ownAccount) {
-      state.user.groupId = ownAccount.groupId;
-      state.user.group = ownAccount.group;
-    }
-    state.auditLogs = logs.logs || [];
-    state.workers = workers.workers || [];
-  } catch {
-    state.accounts = [];
-    state.groups = [];
-    state.auditLogs = [];
-    state.workers = [];
-  }
-  renderAdmin();
-  renderWorkers();
-  renderWorkspaces();
-}
-
-async function refreshWorkerStatus() {
-  if (workerStatusLoading || state.user?.role !== "system_admin" || viewFromLocation() !== "admin") return;
-  workerStatusLoading = true;
-  try {
-    const result = await api("/api/workers");
-    state.workers = result.workers || [];
-    renderWorkers();
-  } catch (error) {
-    console.warn("Worker status refresh failed", error);
-  } finally {
-    workerStatusLoading = false;
-  }
-}
-
-async function loadRuntimeConfig() {
-  try {
-    const config = await api("/api/runtime-config");
-    state.runtimeConfig = { ...state.runtimeConfig, ...config };
-    document.querySelector('#register-form [name="password"]').minLength = state.runtimeConfig.registrationMinPasswordLength;
-    document.querySelector('#batch-account-form [name="count"]').max = state.runtimeConfig.batchInviteMaxCount;
-    document.querySelector('#batch-account-form [name="maxSessions"]').max = state.runtimeConfig.accountMaxSessionsLimit;
-  } catch (error) {
-    console.warn("Runtime configuration unavailable; using frontend defaults", error);
-  }
-}
-
-function setAuthMode(mode) {
-  const registering = mode === "register";
-  document.querySelector("#login-form").classList.toggle("hidden", registering);
-  document.querySelector("#register-form").classList.toggle("hidden", !registering);
-  document.querySelectorAll("[data-auth-mode]").forEach((button) => button.classList.toggle("active", button.dataset.authMode === mode));
-  const input = document.querySelector(registering ? '#register-form [name="inviteToken"]' : '#login-form [name="username"]');
-  input?.focus();
-}
-
-function setGroupMode(mode) {
-  const creating = mode === "new";
-  document.querySelector("#existing-group-field").classList.toggle("hidden", creating);
-  document.querySelector("#new-group-field").classList.toggle("hidden", !creating);
-  document.querySelector("#batch-group-select").disabled = creating;
-  document.querySelector("#batch-new-group").disabled = !creating;
-  document.querySelector("#batch-new-group").required = creating;
-  document.querySelectorAll("[data-group-mode]").forEach((button) => button.classList.toggle("active", button.dataset.groupMode === mode));
-}
-
-function renderGroupOptions() {
-  document.querySelector("#batch-group-select").innerHTML = state.groups
-    .map((group) => `<option value="${escapeMarkup(group.id)}">${escapeMarkup(group.name)}</option>`)
-    .join("");
-}
-
-function renderCreatedInvites() {
-  const results = document.querySelector("#invite-results");
-  results.classList.toggle("hidden", !state.createdInvites.length);
-  document.querySelector("#invite-result-list").innerHTML = state.createdInvites
-    .map(
-      (account) => `<div class="invite-result-row"><strong>${escapeMarkup(account.id)}</strong><code>${escapeMarkup(account.inviteToken)}</code><button type="button" class="btn" data-copy-invite="${escapeMarkup(account.inviteToken)}">${t("admin.copy")}</button></div>`,
-    )
-    .join("");
-}
-
-function openBatchAccountModal() {
-  if (state.user?.role !== "system_admin") return;
-  const form = document.querySelector("#batch-account-form");
-  form.reset();
-  state.createdInvites = [];
-  renderGroupOptions();
-  setGroupMode(state.groups.length ? "existing" : "new");
-  renderCreatedInvites();
-  document.querySelector("#batch-account-error").textContent = "";
-  document.querySelector("#batch-account-modal").classList.remove("hidden");
-}
-
-function closeBatchAccountModal() {
-  document.querySelector("#batch-account-modal").classList.add("hidden");
-}
-
-async function copyText(value, successKey = "toast.inviteCopied") {
-  if (navigator.clipboard?.writeText) {
-    await navigator.clipboard.writeText(value);
-  } else {
-    const textarea = document.createElement("textarea");
-    textarea.value = value;
-    textarea.style.position = "fixed";
-    textarea.style.opacity = "0";
-    document.body.appendChild(textarea);
-    textarea.select();
-    document.execCommand("copy");
-    textarea.remove();
-  }
-  showToast(t(successKey));
-}
-
-async function loadRechargeData() {
-  const error = document.querySelector("#recharge-error");
-  error.textContent = t("recharge.loading");
-  try {
-    await refreshCurrentUser();
-    const result = await api("/api/recharge");
-    state.recharge = result;
-    document.querySelector("#recharge-base-url").value = result.baseUrl || "";
-    document.querySelector("#recharge-api-key").value = result.apiKey || "";
-    document.querySelectorAll("[data-recharge-amount]").forEach((button) => {
-      button.disabled = !result.paymentReady;
-    });
-    error.textContent = result.paymentReady ? "" : result.paymentError || t("recharge.paymentDisabled");
-    renderRechargeHistory();
-  } catch (loadError) {
-    state.recharge = null;
-    error.textContent = loadError.message;
-    document.querySelectorAll("[data-recharge-amount]").forEach((button) => {
-      button.disabled = true;
-    });
-    renderRechargeHistory();
-  }
-}
-
-function rechargeImportStatus(status) {
-  const key = `admin.importStatus.${status}`;
-  const translated = t(key);
-  return translated === key ? status : translated;
-}
-
-function renderRechargeImport() {
-  const current = state.rechargeImport;
-  const modal = document.querySelector("#recharge-import-modal");
-  if (!current?.result) {
-    modal.classList.add("hidden");
-    return;
-  }
-  const result = current.result;
-  const summary = result.summary || {};
-  const parts = [
-    `${t("admin.importTargetSheets")} ${Number(result.targetSheetCount || 0)}`,
-    `${t("admin.importEligible")} ${Number(summary.eligible || 0)}`,
-    `${t("admin.importApplied")} ${Number(summary.applied || 0)}`,
-    `${t("admin.importDuplicate")} ${Number(summary.duplicate || 0)}`,
-    `${t("admin.importSkipped")} ${Number(summary.invalid || 0) + Number(summary.unmatched || 0)}`,
-    `${t("admin.importReview")} ${Number(summary.review_required || 0)}`,
-  ];
-  document.querySelector("#recharge-import-summary").textContent = parts.join(" · ");
-  document.querySelector("#recharge-import-rows").innerHTML = (result.records || [])
-    .map(
-      (record) => `
-        <tr>
-          <td>${escapeMarkup(record.sheet)}:${Number(record.row || 0)}<br><small>${escapeMarkup(record.paymentRef || "")}</small></td>
-          <td>${escapeMarkup(record.username || "-")}</td>
-          <td>${escapeMarkup(record.paidAt || "-")}</td>
-          <td>¥${escapeMarkup(record.amountCny || "0.00")} / ¥${escapeMarkup(record.creditCny || "0.00")}</td>
-          <td><span class="recharge-import-status">${escapeMarkup(rechargeImportStatus(record.status))}</span>${record.reason ? `<br><small>${escapeMarkup(record.reason)}</small>` : ""}</td>
-        </tr>
-      `,
-    )
-    .join("");
-  const confirm = document.querySelector("#recharge-import-confirm");
-  confirm.disabled = current.applying || !current.file || Number(summary.eligible || 0) === 0;
-  confirm.textContent = current.applying ? t("admin.importApplying") : t("admin.importConfirm");
-  modal.classList.remove("hidden");
-}
-
-function closeRechargeImport() {
-  state.rechargeImport = null;
-  document.querySelector("#recharge-import-input").value = "";
-  document.querySelector("#recharge-import-modal").classList.add("hidden");
-}
-
-async function previewRechargeImport(file) {
-  const form = new FormData();
-  form.append("file", file, file.name);
-  try {
-    const result = await api("/api/admin/recharge-imports/preview", { method: "POST", body: form });
-    state.rechargeImport = { file, result, applying: false };
-    document.querySelector("#recharge-import-error").textContent = "";
-    renderRechargeImport();
-  } catch (error) {
-    state.rechargeImport = null;
-    document.querySelector("#recharge-import-input").value = "";
-    showToast(error.message);
-  }
-}
-
-async function applyRechargeImport() {
-  const current = state.rechargeImport;
-  if (!current?.file || !current.result?.digest || current.applying) return;
-  current.applying = true;
-  document.querySelector("#recharge-import-error").textContent = "";
-  renderRechargeImport();
-  const form = new FormData();
-  form.append("file", current.file, current.file.name);
-  form.append("previewDigest", current.result.digest);
-  try {
-    current.result = await api("/api/admin/recharge-imports", { method: "POST", body: form });
-    current.file = null;
-    await loadAccountControlData();
-    if (state.recharge) await loadRechargeData();
-    showToast(t("toast.rechargeImported"));
-  } catch (error) {
-    document.querySelector("#recharge-import-error").textContent = error.message;
-  } finally {
-    current.applying = false;
-    renderRechargeImport();
-  }
-}
-
-function closeRechargeQrModal() {
-  rechargeOrderGeneration += 1;
-  window.clearTimeout(rechargeOrderPollTimer);
-  rechargeOrderPollTimer = null;
-  state.rechargeOrder = null;
-  document.querySelector("#recharge-qr-modal").classList.add("hidden");
-  document.querySelector("#recharge-qr-image").removeAttribute("src");
-}
-
-function renderRechargeOrderStatus(order) {
-  renderPaymentNotice(document, order);
-  const key = `recharge.order.${order?.status || "pending"}`;
-  const translated = t(key);
-  document.querySelector("#recharge-order-status").textContent = translated === key ? order?.status || "" : translated;
-}
-
-async function pollRechargeOrder(orderId) {
-  if (state.rechargeOrder?.id !== orderId) return;
-  try {
-    const result = await api(`/api/recharge/orders/${encodeURIComponent(orderId)}`);
-    if (state.rechargeOrder?.id !== orderId) return;
-    state.rechargeOrder = result.order;
-    renderRechargeOrderStatus(result.order);
-    if (result.order.status === "applied") {
-      await Promise.all([refreshCurrentUser(), loadRechargeData()]);
-      return;
-    }
-    if (["expired", "closed", "failed", "review_required"].includes(result.order.status)) return;
-  } catch (error) {
-    document.querySelector("#recharge-order-status").textContent = error.message;
-  }
-  rechargeOrderPollTimer = window.setTimeout(() => pollRechargeOrder(orderId), 2000);
-}
-
-async function openRechargeQrModal(amount) {
-  const product = state.recharge?.products?.find((item) => Number(item.amountCny) === Number(amount));
-  if (!product) {
-    showToast(t("recharge.notReady"));
-    if (!state.recharge) loadRechargeData();
-    return;
-  }
-  const image = document.querySelector("#recharge-qr-image");
-  const missing = document.querySelector("#recharge-qr-missing");
-  window.clearTimeout(rechargeOrderPollTimer);
-  const generation = ++rechargeOrderGeneration;
-  state.rechargeOrder = null;
-  renderPaymentNotice(document, null);
-  document.querySelector("#recharge-qr-amount").textContent = `¥${Number(product.amountCny).toFixed(0)}`;
-  document.querySelector("#recharge-order-status").textContent = t("recharge.orderCreating");
-  image.classList.add("hidden");
-  missing.classList.add("hidden");
-  image.onload = () => {
-    if (generation !== rechargeOrderGeneration || ["paid", "crediting", "applied"].includes(state.rechargeOrder?.status)) return;
-    image.classList.remove("hidden");
-    missing.classList.add("hidden");
-  };
-  image.onerror = () => {
-    if (generation !== rechargeOrderGeneration || ["paid", "crediting", "applied"].includes(state.rechargeOrder?.status)) return;
-    image.classList.add("hidden");
-    missing.classList.remove("hidden");
-  };
-  document.querySelector("#recharge-qr-modal").classList.remove("hidden");
-  try {
-    const result = await api("/api/recharge/orders", {
-      method: "POST",
-      body: JSON.stringify({ amountCny: product.amountCny }),
-    });
-    if (generation !== rechargeOrderGeneration) return;
-    state.rechargeOrder = result.order;
-    renderRechargeOrderStatus(result.order);
-    image.src = authenticatedApiUrl(result.order.qrCodeUrl);
-    pollRechargeOrder(result.order.id);
-  } catch (error) {
-    if (generation !== rechargeOrderGeneration) return;
-    state.rechargeOrder = null;
-    image.classList.add("hidden");
-    missing.classList.remove("hidden");
-    document.querySelector("#recharge-order-status").textContent = error.message;
-  }
-}
-
-async function revokeInvite(userId) {
-  try {
-    await api(`/api/accounts/${encodeURIComponent(userId)}/revoke-invite`, { method: "POST" });
-    closeAccountSettingsModal();
-    await loadAccountControlData();
-    showToast(t("toast.inviteRevoked"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-function openAccountSettingsModal(accountId) {
-  if (!canManageAccounts(state.user)) return;
-  const account = state.accounts.find((item) => item.id === accountId);
-  if (!account) return;
-  const form = document.querySelector("#account-settings-form");
-  form.elements.accountId.value = account.id;
-  form.elements.role.value = account.role || "user";
-  form.elements.maxSessions.value = String(account.maxSessions ?? 1);
-  form.elements.maxSessions.max = String(state.runtimeConfig.accountMaxSessionsLimit);
-  form.elements.amountCny.value = "0.00";
-  const groupSelect = form.elements.groupId;
-  groupSelect.innerHTML = [
-    `<option value="">${escapeMarkup(t("admin.ungroupedOption"))}</option>`,
-    ...state.groups.map((group) => `<option value="${escapeMarkup(group.id)}">${escapeMarkup(group.name)}</option>`),
-  ].join("");
-  groupSelect.value = account.groupId || "";
-  const balance = account.budget?.source === "custom"
-    ? t("admin.customProvider")
-    : account.budget?.remaining === null || account.budget?.remaining === undefined
-      ? t("admin.balanceUnavailable")
-      : `¥${account.budget.remaining}`;
-  document.querySelector("#account-settings-name").textContent = `${account.username || account.id} · ${balance}`;
-  document.querySelector("#account-settings-balance-field").classList.toggle("hidden", !isSystemAdmin(state.user) || !account.username || account.budget?.source === "custom");
-  document.querySelector("#account-settings-error").textContent = "";
-  const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
-  document.querySelector("#account-settings-delete").disabled = isCurrentUser;
-  const invitePanel = document.querySelector("#account-settings-invite");
-  invitePanel.classList.toggle("hidden", !isSystemAdmin(state.user) || !account.inviteToken);
-  document.querySelector("#account-settings-invite-token").textContent = account.inviteToken || "";
-  document.querySelector("#account-settings-copy-invite").dataset.copyInvite = account.inviteToken || "";
-  document.querySelector("#account-settings-revoke-invite").dataset.revokeInvite = account.inviteToken ? account.id : "";
-  document.querySelector("#account-settings-modal").classList.remove("hidden");
-}
-
-function closeAccountSettingsModal() {
-  document.querySelector("#account-settings-modal").classList.add("hidden");
-}
-
-function openGroupSettingsModal(groupId) {
-  if (!canManageAccounts(state.user)) return;
-  const group = state.groups.find((item) => item.id === groupId);
-  if (!group) return;
-  const form = document.querySelector("#group-settings-form");
-  form.elements.groupId.value = group.id;
-  form.elements.name.value = group.name || "";
-  form.elements.liveRunLimit.value = String(group.liveRunLimit ?? 1);
-  form.elements.diskLimitMib.value = group.diskLimitBytes === null || group.diskLimitBytes === undefined
-    ? ""
-    : String(Math.round(Number(group.diskLimitBytes) / (1024 * 1024)));
-  document.querySelector("#group-settings-summary").textContent = `${Number(group.userCount || 0)} ${t("admin.usersCount")}`;
-  document.querySelector("#group-settings-error").textContent = "";
-  const containsCurrentUser = state.accounts.some((account) =>
-    account.groupId === group.id && (account.id === state.user?.id || account.username === state.user?.username));
-  document.querySelector("#group-settings-delete").disabled = containsCurrentUser;
-  document.querySelector("#group-settings-modal").classList.remove("hidden");
-}
-
-function closeGroupSettingsModal() {
-  document.querySelector("#group-settings-modal").classList.add("hidden");
-}
-
-async function createAdminGroup() {
-  const name = window.prompt(t("admin.promptGroupName"));
-  if (name === null || !name.trim()) return;
-  try {
-    await api("/api/groups", { method: "POST", body: JSON.stringify({ name: name.trim() }) });
-    await loadAccountControlData();
-    showToast(t("toast.groupCreated"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function deleteAdminAccount(userId) {
-  if (!window.confirm(t("admin.confirmDeleteUser"))) return;
-  try {
-    await api(`/api/accounts/${encodeURIComponent(userId)}`, { method: "DELETE" });
-    closeAccountSettingsModal();
-    await loadAccountControlData();
-    showToast(t("toast.accountDeleted"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function deleteAdminGroup(groupId) {
-  if (!window.confirm(t("admin.confirmDeleteGroup"))) return;
-  try {
-    await api(`/api/groups/${encodeURIComponent(groupId)}`, { method: "DELETE" });
-    closeGroupSettingsModal();
-    await loadAccountControlData();
-    showToast(t("toast.groupDeleted"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function selectWorkspace(index) {
-  state.selectedWorkspace = Number(index);
-  state.selectedSession = 0;
-  stopChatStream();
-  const workspaceId = safeCurrentWorkspace()?.id;
-  renderDynamic();
-  if (workspaceId && !safeCurrentWorkspace()?.detailLoaded) await refreshWorkspaceById(workspaceId);
-  if (safeCurrentWorkspace()?.id !== workspaceId) return;
-  resetFileTreeState(safeCurrentWorkspace());
-  renderDynamic();
-  maybeStartChatStream();
-}
-
-function workspaceIndexById(id) {
-  if (!id) return -1;
-  return state.workspaces.findIndex((workspace) => workspace.id === id);
-}
-
-function resolveWorkspaceIndex(target) {
-  const workspaceId = target?.dataset?.workspaceId;
-  if (workspaceId) return workspaceIndexById(workspaceId);
-  if (target?.hasAttribute("data-index")) return Number(target.dataset.index);
-  if (target?.hasAttribute("data-workspace-card")) return Number(target.dataset.workspaceCard);
-  return state.selectedWorkspace;
-}
-
-function selectWorkspaceFromElement(target) {
-  const index = resolveWorkspaceIndex(target);
-  if (index < 0 || !workspaceAt(index)) {
-    showToast(t("toast.workspaceMissing"));
-    return;
-  }
-  selectWorkspace(index);
-}
-
-function openWorkspaceModal() {
-  state.selectedUploadFiles = [];
-  document.querySelector("#workspace-create-form").reset();
-  document.querySelector("#workspace-modal").classList.remove("hidden");
-  document.querySelector("#workspace-name-input").focus();
-  renderSelectedUploadFiles();
-}
-
-function closeWorkspaceModal() {
-  if (state.workspaceCreateUploadController) {
-    state.workspaceCreateUploadController.abort();
-    state.workspaceCreateUploadController = null;
-  }
-  document.querySelector("#workspace-modal").classList.add("hidden");
-}
-
-function closeCodexSettingsModal() {
-  document.querySelector("#codex-settings-modal").classList.add("hidden");
-}
-
-async function openCodexSettingsModal() {
-  const modal = document.querySelector("#codex-settings-modal");
-  const form = document.querySelector("#codex-settings-form");
-  const status = document.querySelector("#codex-settings-status");
-  form.reset();
-  modal.classList.remove("hidden");
-  try {
-    const result = await api("/api/codex-settings");
-    const settings = result.settings || {};
-    const mode = settings.mode || "micu";
-    const modeInput = form.querySelector(`[name="mode"][value="${mode}"]`);
-    if (modeInput) modeInput.checked = true;
-    document.querySelector("#codex-base-url-input").value = settings.baseUrl || "https://api.openai.com/v1";
-    const micuBudget = settings.micu?.budget || {};
-    const remaining = micuBudget.remainingPercent === null || micuBudget.remainingPercent === undefined
-      ? t("codex.balanceUnavailable")
-      : `${Number(micuBudget.remainingPercent).toFixed(1)}%`;
-    document.querySelector("#codex-micu-summary").textContent = `${t("codex.micuBalance")}: ${remaining} · ${settings.micu?.group || ""}`;
-    document.querySelector("#codex-custom-fields").classList.toggle("hidden", mode !== "custom");
-    status.textContent = mode === "micu" ? t("codex.usingMicu") : (settings.apiKeyConfigured ? t("codex.configured") : t("codex.missing"));
-  } catch (error) {
-    status.textContent = error.message;
-  }
-}
-
-function closePreviewModal() {
-  document.querySelector("#preview-modal").classList.add("hidden");
-  document.querySelector("#preview-content").innerHTML = "";
-  document.querySelector("#preview-download").dataset.downloadUrl = "";
-}
-
-function closeFileContextMenu() {
-  const menu = document.querySelector("#file-context-menu");
-  if (!menu) return;
-  menu.classList.add("hidden");
-  menu.dataset.filePath = "";
-  menu.dataset.fileType = "";
-}
-
-function uniqueTopFolder(rootName) {
-  const used = new Set(state.selectedUploadFiles.map((item) => item.path.split("/")[0]));
-  if (!used.has(rootName)) return rootName;
-  let index = 2;
-  while (used.has(`${rootName} (${index})`)) index += 1;
-  return `${rootName} (${index})`;
-}
-
-function addUploadFiles(files) {
-  const incoming = [...files];
-  if (!incoming.length) return;
-  const firstPath = incoming[0].webkitRelativePath || incoming[0].name;
-  const rootName = firstPath.includes("/") ? firstPath.split("/")[0] : "files";
-  const stagedRoot = uniqueTopFolder(rootName);
-  incoming.forEach((file) => {
-    const browserPath = file.webkitRelativePath || file.name;
-    const parts = browserPath.split("/");
-    const path = parts.length > 1 ? [stagedRoot, ...parts.slice(1)].join("/") : file.name;
-    state.selectedUploadFiles.push({ file, path });
-  });
-  document.querySelector("#workspace-upload-input").value = "";
-  renderSelectedUploadFiles();
-}
-
-function renderSelectedUploadFiles() {
-  const roots = new Map();
-  state.selectedUploadFiles.forEach((item) => {
-    const root = item.path.split("/")[0];
-    roots.set(root, (roots.get(root) || 0) + 1);
-  });
-  const summary = document.querySelector("#workspace-upload-summary");
-  summary.textContent = roots.size
-    ? `${roots.size} ${state.lang === "zh" ? "个文件夹" : "folders"} · ${state.selectedUploadFiles.length} ${state.lang === "zh" ? "个文件" : "files"}`
-    : t("workspace.noFolders");
-  document.querySelector("#selected-folder-list").innerHTML = [...roots.entries()]
-    .map(
-      ([folder, count]) => `
-        <div class="selected-folder-row">
-          <strong>${folder}</strong>
-          <span>${count} ${state.lang === "zh" ? "个文件" : "files"}</span>
-        </div>
-      `,
-    )
-    .join("");
-}
-
-async function copySession(index) {
-  const workspace = safeCurrentWorkspace();
-  if (!workspace) return;
-  const source = workspace.sessions[index];
-  if (!source) return;
-  try {
-    const result = await api(
-      `/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions/${encodeURIComponent(source.id)}/fork`,
-      {
-        method: "POST",
-        body: JSON.stringify({ title: `${source.title} ${state.lang === "zh" ? "副本" : "Copy"}` }),
-      },
-    );
-    const workspaceIndex = workspaceIndexById(workspace.id);
-    if (workspaceIndex < 0) return;
-    const activeSourceRunId = LIVE_CHAT_STATES.has(source.status) ? source.latestRunId : null;
-    const copiedEvents = (source.events || [])
-      .filter((event) => !activeSourceRunId || event[3] !== activeSourceRunId)
-      .map((event) => [...event]);
-    result.session.events = result.session.events?.length ? result.session.events : copiedEvents;
-    const sessions = [...(workspace.sessions || [])];
-    sessions.splice(index + 1, 0, result.session);
-    state.workspaces[workspaceIndex] = { ...workspace, sessions, sessionCount: sessions.length };
-    state.selectedSession = index + 1;
-    state.chatLastEventIds[result.session.id] = sessionEventCursor(result.session);
-    renderDynamic();
-    showToast(t("toast.copySession"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function deleteSession(index) {
-  const workspace = safeCurrentWorkspace();
-  if (!workspace) return;
-  const session = workspace.sessions[index];
-  if (!session || !window.confirm(t("chat.confirmDelete"))) return;
-  try {
-    await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions/${encodeURIComponent(session.id)}`, {
-      method: "DELETE",
-    });
-    const workspaceIndex = workspaceIndexById(workspace.id);
-    if (workspaceIndex < 0) return;
-    const latestWorkspace = state.workspaces[workspaceIndex];
-    const selectedSessionId = latestWorkspace.sessions?.[state.selectedSession]?.id;
-    const removedIndex = (latestWorkspace.sessions || []).findIndex((item) => item.id === session.id);
-    const sessions = (latestWorkspace.sessions || []).filter((item) => item.id !== session.id);
-    state.workspaces[workspaceIndex] = { ...latestWorkspace, sessions, sessionCount: sessions.length };
-    delete state.chatLastEventIds[session.id];
-    const retainedSelection = sessions.findIndex((item) => item.id === selectedSessionId);
-    state.selectedSession = retainedSelection >= 0
-      ? retainedSelection
-      : Math.max(0, Math.min(Math.max(removedIndex, 0), sessions.length - 1));
-    renderDynamic();
-    maybeStartChatStream();
-    showToast(t("toast.deleteSession"));
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-async function createNewChatSession() {
-  const workspace = safeCurrentWorkspace();
-  if (!workspace) return;
-  try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/sessions`, {
-      method: "POST",
-      body: JSON.stringify({ title: t("chat.newTitle") }),
-    });
-    const workspaceIndex = workspaceIndexById(workspace.id);
-    if (workspaceIndex >= 0) {
-      const sessions = [result.session, ...(workspace.sessions || [])];
-      state.workspaces[workspaceIndex] = { ...workspace, sessions, sessionCount: sessions.length };
-      state.selectedSession = 0;
-    }
-    routeToView("chat");
-    renderDynamic();
-    document.querySelector("#composer textarea")?.focus();
-  } catch (error) {
-    showToast(error.message);
-  }
-}
-
-function bindGlobalClicks() {
-  document.addEventListener("click", (event) => {
-    if (event.target.closest("[data-retry-chat-history]")) {
-      const session = currentSessionObject();
-      if (session) {
-        session.historyLoadError = false;
-        if (session.historyLoaded) loadOlderSessionHistory();
-        else maybeStartChatStream();
-      }
-      return;
-    }
-    const editableName = event.target.closest("[data-edit-name]");
-    if (editableName) {
-      event.preventDefault();
-      event.stopPropagation();
-      beginNameEdit(editableName);
-      return;
-    }
-
-    const authMode = event.target.closest("[data-auth-mode]");
-    if (authMode) {
-      setAuthMode(authMode.dataset.authMode);
-      return;
-    }
-
-    const groupMode = event.target.closest("[data-group-mode]");
-    if (groupMode) {
-      setGroupMode(groupMode.dataset.groupMode);
-      return;
-    }
-
-    if (event.target.closest("#batch-create-button")) {
-      openBatchAccountModal();
-      return;
-    }
-
-    if (event.target.closest("#recharge-import-button")) {
-      document.querySelector("#recharge-import-input").click();
-      return;
-    }
-
-    if (event.target.closest("#recharge-import-confirm")) {
-      applyRechargeImport();
-      return;
-    }
-
-    if (event.target.closest("[data-close-recharge-import]")) {
-      closeRechargeImport();
-      return;
-    }
-
-    if (event.target.closest("#create-group-button")) {
-      createAdminGroup();
-      return;
-    }
-
-    const accountSettings = event.target.closest("[data-open-account-settings]");
-    if (accountSettings) {
-      openAccountSettingsModal(accountSettings.dataset.openAccountSettings);
-      return;
-    }
-
-    const groupSettings = event.target.closest("[data-open-group-settings]");
-    if (groupSettings) {
-      event.preventDefault();
-      openGroupSettingsModal(groupSettings.dataset.openGroupSettings);
-      return;
-    }
-
-    if (event.target.closest("[data-close-account-settings]")) {
-      closeAccountSettingsModal();
-      return;
-    }
-
-    if (event.target.closest("[data-close-group-settings]")) {
-      closeGroupSettingsModal();
-      return;
-    }
-
-    if (event.target.closest("#account-settings-delete")) {
-      const accountId = document.querySelector('#account-settings-form [name="accountId"]').value;
-      if (accountId) deleteAdminAccount(accountId);
-      return;
-    }
-
-    if (event.target.closest("#group-settings-delete")) {
-      const groupId = document.querySelector('#group-settings-form [name="groupId"]').value;
-      if (groupId) deleteAdminGroup(groupId);
-      return;
-    }
-
-    if (event.target.closest("[data-close-batch-account]")) {
-      closeBatchAccountModal();
-      return;
-    }
-
-    const copyInvite = event.target.closest("[data-copy-invite]");
-    if (copyInvite) {
-      copyText(copyInvite.dataset.copyInvite).catch((error) => showToast(error.message));
-      return;
-    }
-
-    const revokeButton = event.target.closest("[data-revoke-invite]");
-    if (revokeButton) {
-      revokeInvite(revokeButton.dataset.revokeInvite);
-      return;
-    }
-
-    if (event.target.closest("#copy-all-invites")) {
-      const text = state.createdInvites.map((account) => `${account.id}\t${account.inviteToken}`).join("\n");
-      if (text) copyText(text).catch((error) => showToast(error.message));
-      return;
-    }
-
-    const nav = event.target.closest(".nav-item");
-    if (nav) {
-      if (nav.dataset.view === "admin" && !canManageAccounts(state.user)) return;
-      routeToView(nav.dataset.view);
-      if (nav.dataset.view === "admin") loadAccountControlData();
-      return;
-    }
-
-    const rechargeProduct = event.target.closest("[data-recharge-amount]");
-    if (rechargeProduct) {
-      openRechargeQrModal(rechargeProduct.dataset.rechargeAmount);
-      return;
-    }
-
-    const rechargeCopy = event.target.closest("[data-copy-recharge]");
-    if (rechargeCopy) {
-      const value = state.recharge?.[rechargeCopy.dataset.copyRecharge];
-      if (value) copyText(value, "toast.credentialCopied").catch((error) => showToast(error.message));
-      return;
-    }
-
-    if (event.target.closest("#recharge-key-visibility")) {
-      const input = document.querySelector("#recharge-api-key");
-      input.type = input.type === "password" ? "text" : "password";
-      event.target.closest("#recharge-key-visibility").textContent = t(input.type === "password" ? "recharge.show" : "recharge.hide");
-      return;
-    }
-
-    if (event.target.closest("[data-close-recharge-qr]")) {
-      closeRechargeQrModal();
-      return;
-    }
-
-    const langButton = event.target.closest("[data-lang]");
-    if (langButton) {
-      state.lang = langButton.dataset.lang;
-      applyLocale();
-      renderDynamic();
-      if (state.rechargeImport) renderRechargeImport();
-      return;
-    }
-
-    if (event.target.closest("#collapse-sidebar")) {
-      document.querySelector(".app-shell").classList.toggle("sidebar-collapsed");
-      return;
-    }
-
-    if (event.target.closest("[data-open-workspace-modal]")) {
-      openWorkspaceModal();
-      return;
-    }
-
-    if (event.target.closest("[data-close-workspace-modal]")) {
-      closeWorkspaceModal();
-      return;
-    }
-
-    if (event.target.closest("#codex-settings-button")) {
-      openCodexSettingsModal();
-      return;
-    }
-
-    if (event.target.closest("#new-chat-button")) {
-      createNewChatSession();
-      return;
-    }
-
-    if (event.target.closest("[data-close-codex-settings]")) {
-      closeCodexSettingsModal();
-      return;
-    }
-
-    if (event.target.closest("[data-close-preview-modal]")) {
-      closePreviewModal();
-      return;
-    }
-
-    if (!event.target.closest("#file-context-menu")) {
-      closeFileContextMenu();
-    }
-
-    const previewDownload = event.target.closest("#preview-download");
-    if (previewDownload) {
-      const url = previewDownload.dataset.downloadUrl;
-      if (url) startNativeDownload(url);
-      return;
-    }
-
-    if (event.target.matches("[data-artifact]")) {
-      return;
-    }
-
-    const folderRow = event.target.closest("[data-folder-path]");
-    if (folderRow) {
-      const path = folderRow.dataset.folderPath;
-      const collapsedSet = folderRow.dataset.tree === "artifacts" ? state.collapsedArtifactFolders : state.collapsedFileFolders;
-      const renderTree = folderRow.dataset.tree === "artifacts" ? renderArtifacts : renderFileExplorer;
-      if (collapsedSet.has(path)) expandWorkspaceFolder(path, collapsedSet, renderTree);
-      else {
-        collapsedSet.add(path);
-        renderTree();
-      }
-      return;
-    }
-
-    const panelToggle = event.target.closest("[data-toggle-panel]");
-    if (panelToggle) {
-      if (panelToggle.dataset.togglePanel === "sessions") state.isSessionPanelCollapsed = !state.isSessionPanelCollapsed;
-      if (panelToggle.dataset.togglePanel === "files") state.isFileExplorerCollapsed = !state.isFileExplorerCollapsed;
-      renderPanelState();
-      return;
-    }
-
-    const sessionAction = event.target.closest("[data-session-action]");
-    if (sessionAction) {
-      const index = Number(sessionAction.dataset.sessionIndex);
-      if (sessionAction.dataset.sessionAction === "copy") copySession(index);
-      if (sessionAction.dataset.sessionAction === "delete") deleteSession(index);
-      return;
-    }
-
-    const sessionButton = event.target.closest("[data-session]");
-    if (sessionButton) {
-      state.selectedSession = Number(sessionButton.dataset.session);
-      renderDynamic();
-      maybeStartChatStream();
-      return;
-    }
-
-    const actionButton = event.target.closest("button[data-action]");
-    if (actionButton) {
-      event.preventDefault();
-      event.stopPropagation();
-      const index = resolveWorkspaceIndex(actionButton);
-      if (index < 0 || !workspaceAt(index)) {
-        showToast(t("toast.workspaceMissing"));
-        return;
-      }
-      if (actionButton.dataset.action === "share") {
-        toggleWorkspaceSharing(index);
-        return;
-      }
-      if (actionButton.dataset.action === "fork") {
-        forkWorkspace(index);
-        return;
-      }
-      if (actionButton.dataset.action === "delete") {
-        deleteWorkspace(index);
-        return;
-      }
-      if (actionButton.dataset.action === "open") {
-        openWorkspace(index);
-        return;
-      }
-    }
-
-    const workspaceCard = event.target.closest("[data-workspace-card]");
-    if (workspaceCard) selectWorkspaceFromElement(workspaceCard);
-  });
-
-  document.addEventListener("contextmenu", (event) => {
-    const row = event.target.closest('[data-context-menu="artifact-file"]');
-    if (!row) return;
-    event.preventDefault();
-    const menu = document.querySelector("#file-context-menu");
-    menu.dataset.filePath = row.dataset.filePath;
-    menu.dataset.fileType = row.dataset.fileType;
-    menu.style.left = `${Math.min(event.clientX, window.innerWidth - 180)}px`;
-    menu.style.top = `${Math.min(event.clientY, window.innerHeight - 90)}px`;
-    menu.classList.remove("hidden");
-  });
 }
 
 function workspaceAt(index) {
@@ -1633,106 +435,6 @@ async function createWorkspaceFromModal(form) {
     submitButton.disabled = false;
     clearOperationProgress();
   }
-}
-
-const PENDING_UPLOAD_KEY = "aiAuditPendingUpload";
-
-function uploadFingerprint(items, mode, workspaceId = "", name = "", shared = false) {
-  return JSON.stringify({
-    mode,
-    workspaceId,
-    name,
-    shared,
-    files: items.map((item) => [item.path, item.file.size, item.file.lastModified]),
-  });
-}
-
-async function runResumableUpload({ items, mode, workspaceId = "", name = "", shared = false, signal, uploadLabel }) {
-  const fingerprint = uploadFingerprint(items, mode, workspaceId, name, shared);
-  let saved = null;
-  try {
-    saved = JSON.parse(window.localStorage.getItem(PENDING_UPLOAD_KEY) || "null");
-  } catch {
-    window.localStorage.removeItem(PENDING_UPLOAD_KEY);
-  }
-  let upload = null;
-  if (saved?.fingerprint === fingerprint && saved.uploadId) {
-    try {
-      upload = (await api(`/api/uploads/${encodeURIComponent(saved.uploadId)}`)).upload;
-    } catch {
-      window.localStorage.removeItem(PENDING_UPLOAD_KEY);
-    }
-  }
-  if (!upload || !["uploading", "processing", "committing"].includes(upload.status)) {
-    upload = (await api("/api/uploads", {
-      method: "POST",
-      body: JSON.stringify({
-        mode,
-        workspaceId: workspaceId || undefined,
-        name,
-        shared,
-        files: items.map((item) => ({ path: item.path, size: item.file.size, lastModified: item.file.lastModified })),
-      }),
-    })).upload;
-    window.localStorage.setItem(PENDING_UPLOAD_KEY, JSON.stringify({ fingerprint, uploadId: upload.id }));
-  }
-  const total = Math.max(1, Number(upload.totalBytes || items.reduce((sum, item) => sum + item.file.size, 0)));
-  const offsets = items.map((_, index) => Number(upload.offsets?.[index] || 0));
-  const inflight = new Map();
-  const renderBytes = () => {
-    const sent = offsets.reduce((sum, value) => sum + value, 0) + [...inflight.values()].reduce((sum, value) => sum + value, 0);
-    setOperationProgress(uploadLabel, Math.min(89, Math.floor((sent / total) * 89)));
-  };
-  if (upload.status === "uploading") {
-    let nextIndex = 0;
-    const sendFile = async () => {
-      while (nextIndex < items.length) {
-        const index = nextIndex++;
-        const file = items[index].file;
-        while (offsets[index] < file.size) {
-          if (signal?.aborted) throw new DOMException("Upload aborted", "AbortError");
-          const start = offsets[index];
-          const end = Math.min(file.size, start + Number(upload.chunkSizeBytes || state.runtimeConfig.uploadChunkBytes || 8 * 1024 * 1024));
-          let result;
-          let failures = 0;
-          while (!result) {
-            try {
-              result = await uploadChunkApi(
-                `/api/uploads/${encodeURIComponent(upload.id)}/files/${index}?offset=${start}`,
-                file.slice(start, end),
-                (loaded) => { inflight.set(index, loaded); renderBytes(); },
-                { signal },
-              );
-            } catch (error) {
-              inflight.delete(index);
-              renderBytes();
-              if (signal?.aborted || (!error.retryable && Number(error.status || 0) < 500) || failures >= 2) throw error;
-              failures += 1;
-              await new Promise((resolve) => window.setTimeout(resolve, failures * 750));
-            }
-          }
-          inflight.delete(index);
-          offsets[index] = Number(result.upload.offsets?.[index] ?? end);
-          renderBytes();
-        }
-      }
-    };
-    await Promise.all([sendFile(), sendFile()]);
-    upload = (await api(`/api/uploads/${encodeURIComponent(upload.id)}/complete`, { method: "POST", body: JSON.stringify({}) })).upload;
-  }
-  while (upload.status !== "committed") {
-    if (!["uploading", "processing", "committing"].includes(upload.status)) {
-      window.localStorage.removeItem(PENDING_UPLOAD_KEY);
-      throw new Error(upload.error || "Upload processing failed");
-    }
-    if (signal?.aborted && upload.status === "uploading") throw new DOMException("Upload aborted", "AbortError");
-    setOperationProgress(t(upload.phase === "committing" ? "progress.committingUpload" : "progress.processingUpload"), 90, true);
-    await new Promise((resolve) => window.setTimeout(resolve, 500));
-    upload = (await api(`/api/uploads/${encodeURIComponent(upload.id)}`)).upload;
-  }
-  window.localStorage.removeItem(PENDING_UPLOAD_KEY);
-  setOperationProgress(t("progress.committingUpload"), 100);
-  return upload.workspace;
 }
 
 function downloadCurrentWorkspace(mode) {
@@ -1964,439 +666,6 @@ async function deleteWorkspace(index = state.selectedWorkspace) {
   }
 }
 
-function bindForms() {
-  document.querySelector("#login-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const loginError = document.querySelector("#login-error");
-    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
-    loginError.textContent = state.lang === "zh" ? "正在登录..." : "Signing in...";
-    if (submitButton) submitButton.disabled = true;
-    try {
-      const result = await api("/api/login", {
-        method: "POST",
-        body: JSON.stringify({ username: form.get("username"), password: form.get("password") }),
-      });
-      loginError.textContent = state.lang === "zh" ? "登录成功，正在载入工作区..." : "Signed in. Loading workspaces...";
-      showAuthenticated(result.user);
-      await loadWorkspaces();
-      await loadAccountControlData();
-    } catch (error) {
-      loginError.textContent = `${t("auth.failed")} ${error.message || ""}`.trim();
-    } finally {
-      if (submitButton) submitButton.disabled = false;
-    }
-  });
-
-  document.querySelector("#register-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    if (registrationSubmitting) return;
-    registrationSubmitting = true;
-    const formElement = event.currentTarget;
-    const form = new FormData(formElement);
-    const registerError = document.querySelector("#register-error");
-    const submitButton = formElement.querySelector('button[type="submit"]');
-    const buttonLabel = submitButton?.querySelector(".button-label");
-    registerError.textContent = t("auth.registering");
-    if (submitButton) {
-      submitButton.disabled = true;
-      submitButton.classList.add("is-loading");
-      submitButton.setAttribute("aria-busy", "true");
-    }
-    if (buttonLabel) buttonLabel.textContent = t("auth.registering");
-    try {
-      const result = await api("/api/register", {
-        method: "POST",
-        body: JSON.stringify({ inviteToken: form.get("inviteToken"), username: form.get("username"), password: form.get("password") }),
-      });
-      formElement.reset();
-      if (!result.sessionToken) {
-        setAuthMode("login");
-        document.querySelector("#login-error").textContent = result.sessionError === "account_disabled"
-          ? t("auth.activationAccountDisabled")
-          : t("auth.activationSessionLimit");
-        return;
-      }
-      showAuthenticated(result.user);
-      try {
-        await loadWorkspaces();
-        await loadAccountControlData();
-      } catch (error) {
-        console.warn("Post-registration loading failed", error);
-        showToast(t("toast.workspaceLoadFailed"));
-      }
-    } catch (error) {
-      registerError.textContent = `${t("auth.registerFailed")} ${error.message || ""}`.trim();
-    } finally {
-      registrationSubmitting = false;
-      if (submitButton) {
-        submitButton.disabled = false;
-        submitButton.classList.remove("is-loading");
-        submitButton.removeAttribute("aria-busy");
-      }
-      if (buttonLabel) buttonLabel.textContent = t("auth.activate");
-    }
-  });
-
-  document.querySelector("#batch-account-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const creatingGroup = !document.querySelector("#batch-new-group").disabled;
-    const errorElement = document.querySelector("#batch-account-error");
-    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
-    const payload = {
-      groupId: creatingGroup ? "" : form.get("groupId"),
-      newGroupName: creatingGroup ? form.get("newGroupName") : "",
-      count: Number(form.get("count")),
-      budgetCny: String(form.get("budgetCny") || "0.00"),
-      maxSessions: Number(form.get("maxSessions")),
-    };
-    errorElement.textContent = "";
-    if (submitButton) submitButton.disabled = true;
-    try {
-      const result = await api("/api/accounts/batch", { method: "POST", body: JSON.stringify(payload) });
-      state.createdInvites = result.accounts || [];
-      await loadAccountControlData();
-      renderGroupOptions();
-      renderCreatedInvites();
-      showToast(t("toast.invitesCreated"));
-    } catch (error) {
-      errorElement.textContent = error.message;
-    } finally {
-      if (submitButton) submitButton.disabled = false;
-    }
-  });
-
-  document.querySelector("#account-settings-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const accountId = String(form.get("accountId") || "");
-    const maxSessions = Number(form.get("maxSessions"));
-    const amountCny = Number(form.get("amountCny") || 0);
-    const errorElement = document.querySelector("#account-settings-error");
-    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
-    errorElement.textContent = "";
-    if (!accountId || !Number.isInteger(maxSessions) || maxSessions < 0 || !Number.isFinite(amountCny) || amountCny < 0) return;
-    submitButton.disabled = true;
-    try {
-      await api(`/api/accounts/${encodeURIComponent(accountId)}`, {
-        method: "PATCH",
-        body: JSON.stringify(accountSettingsPayload(state.user, form)),
-      });
-      const account = state.accounts.find((item) => item.id === accountId);
-      if (isSystemAdmin(state.user) && amountCny > 0 && account?.username && account.budget?.source !== "custom") {
-        await api(`/api/accounts/${encodeURIComponent(accountId)}/reset-budget`, {
-          method: "POST",
-          body: JSON.stringify({ amountCny: amountCny.toFixed(2) }),
-        });
-      }
-      const session = await api("/api/session");
-      showAuthenticated(session.user);
-      await loadAccountControlData();
-      closeAccountSettingsModal();
-      showToast(t("toast.accountSettingsSaved"));
-    } catch (error) {
-      errorElement.textContent = error.message;
-    } finally {
-      submitButton.disabled = false;
-    }
-  });
-
-  document.querySelector("#group-settings-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const groupId = String(form.get("groupId") || "");
-    const name = String(form.get("name") || "").trim();
-    const liveRunLimit = Number(form.get("liveRunLimit"));
-    const rawDiskLimit = String(form.get("diskLimitMib") || "").trim();
-    const diskLimitMib = rawDiskLimit === "" ? null : Number(rawDiskLimit);
-    const errorElement = document.querySelector("#group-settings-error");
-    const submitButton = event.currentTarget.querySelector('button[type="submit"]');
-    errorElement.textContent = "";
-    if (!groupId || !name || !Number.isInteger(liveRunLimit) || liveRunLimit < 0 || (diskLimitMib !== null && (!Number.isFinite(diskLimitMib) || diskLimitMib < 0))) return;
-    submitButton.disabled = true;
-    try {
-      await api(`/api/groups/${encodeURIComponent(groupId)}`, {
-        method: "PATCH",
-        body: JSON.stringify(groupSettingsPayload(state.user, form)),
-      });
-      await loadAccountControlData();
-      closeGroupSettingsModal();
-      showToast(t("toast.groupSettingsSaved"));
-    } catch (error) {
-      errorElement.textContent = error.message;
-    } finally {
-      submitButton.disabled = false;
-    }
-  });
-
-  document.querySelector("#logout-button").addEventListener("click", async () => {
-    await api("/api/logout", { method: "POST" }).catch(() => null);
-    showLogin();
-    showToast(t("toast.logout"));
-  });
-
-  document.querySelector("#composer").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const workspace = safeCurrentWorkspace();
-    if (!workspace) return;
-    const textarea = event.currentTarget.querySelector("textarea");
-    if (!textarea.value.trim()) return;
-    const model = event.currentTarget.querySelector('[name="model"]').value;
-    const reasoning = event.currentTarget.querySelector('[name="reasoning"]').value;
-    const session = currentSessionObject();
-    const prompt = textarea.value.trim();
-    textarea.value = "";
-    try {
-      const request = { prompt, sessionId: session?.id, model, reasoning };
-      let result;
-      while (!result) {
-        try {
-          result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs`, {
-            method: "POST",
-            body: JSON.stringify(request),
-          });
-        } catch (error) {
-          if (error.code !== "concurrent_confirmation_required" || request.confirmConcurrent) throw error;
-          if (!window.confirm(t("chat.concurrentWarning"))) {
-            textarea.value = prompt;
-            return;
-          }
-          request.confirmConcurrent = true;
-        }
-      }
-      const workspaceIndex = workspaceIndexById(workspace.id);
-      if (workspaceIndex >= 0) {
-        const sessions = [...(workspace.sessions || [])];
-        const existingIndex = sessions.findIndex((item) => item.id === result.session.id);
-        if (existingIndex >= 0) sessions[existingIndex] = result.session;
-        else sessions.unshift(result.session);
-        state.workspaces[workspaceIndex] = { ...workspace, locked: true, sessions, sessionCount: sessions.length };
-        state.selectedSession = Math.max(0, sessions.findIndex((item) => item.id === result.session.id));
-      }
-      state.chatLastEventIds[result.session.id] = sessionEventCursor(result.session);
-      renderDynamic();
-      startChatStreamForSession(workspace.id, result.session.id);
-      showToast(t("toast.send"));
-    } catch (error) {
-      textarea.value = prompt;
-      showToast(error.message);
-    }
-  });
-
-  document.querySelector("#workspace-create-form").addEventListener("submit", (event) => {
-    event.preventDefault();
-    createWorkspaceFromModal(event.currentTarget);
-  });
-
-  document.querySelector("#codex-settings-form").addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const form = new FormData(event.currentTarget);
-    const apiKey = String(form.get("apiKey") || "").trim();
-    const clearCodexApiKey = form.get("clearCodexApiKey") === "on";
-    const mode = String(form.get("mode") || "micu");
-    const payload = {
-      mode,
-      baseUrl: form.get("baseUrl"),
-      clearCodexApiKey,
-    };
-    if (apiKey || clearCodexApiKey) payload.apiKey = apiKey;
-    try {
-      const result = await api("/api/codex-settings", {
-        method: "PATCH",
-        body: JSON.stringify(payload),
-      });
-      state.user = {
-        ...state.user,
-        providerMode: result.settings.mode,
-        budget: result.settings.budget,
-        codex: {
-          mode: result.settings.mode,
-          baseUrl: result.settings.baseUrl,
-          apiKeyConfigured: result.settings.apiKeyConfigured,
-        },
-      };
-      closeCodexSettingsModal();
-      renderCurrentUser();
-      showToast(t("toast.codexSettingsSaved"));
-    } catch (error) {
-      document.querySelector("#codex-settings-status").textContent = error.message;
-    }
-  });
-
-  document.querySelector("#codex-settings-form").addEventListener("change", (event) => {
-    if (!event.target.matches('[name="mode"]')) return;
-    document.querySelector("#codex-custom-fields").classList.toggle("hidden", event.target.value !== "custom");
-  });
-}
-
-function bindInputs() {
-  document.querySelector("#event-stream").addEventListener("scroll", (event) => {
-    if (isEventStreamNearTop(event.currentTarget)) loadOlderSessionHistory();
-  }, { passive: true });
-  document.querySelector("#recharge-import-input").addEventListener("change", (event) => {
-    const file = event.target.files?.[0];
-    if (file) previewRechargeImport(file);
-  });
-  document.addEventListener("input", (event) => {
-    if (event.target.matches("[data-name-editor]") && state.nameEditor) state.nameEditor.draft = event.target.value;
-  });
-
-  document.addEventListener("focusout", (event) => {
-    if (event.target.matches("[data-name-editor]")) commitNameEdit();
-  });
-
-  document.addEventListener("keydown", (event) => {
-    if (event.target.matches("[data-name-editor]")) {
-      if (event.key === "Enter") {
-        event.preventDefault();
-        commitNameEdit();
-      } else if (event.key === "Escape") {
-        event.preventDefault();
-        cancelNameEdit();
-      }
-      return;
-    }
-    if (event.key === "Escape") {
-      closePreviewModal();
-      closeWorkspaceModal();
-      closeCodexSettingsModal();
-      closeBatchAccountModal();
-      closeRechargeImport();
-      closeRechargeQrModal();
-      closeFileContextMenu();
-      return;
-    }
-    const workspaceCard = event.target.closest("[data-workspace-card]");
-    if (!workspaceCard || !["Enter", " "].includes(event.key)) return;
-    event.preventDefault();
-    selectWorkspaceFromElement(workspaceCard);
-  });
-
-  document.querySelector("#stop-run").addEventListener("click", async () => {
-    const workspace = safeCurrentWorkspace();
-    if (!workspace) return;
-    const session = currentSessionObject();
-    const runId = session?.latestRunId;
-    if (!runId) return;
-    const previousStatus = session.status;
-    session.status = "stopping";
-    renderDynamic();
-    try {
-      await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/runs/${encodeURIComponent(runId)}/stop`, { method: "POST" });
-      startChatStreamForSession(workspace.id, session.id);
-      showToast(t("toast.stop"));
-    } catch (error) {
-      session.status = previousStatus;
-      renderDynamic();
-      showToast(error.message);
-    }
-  });
-
-  document.querySelector("#artifact-tree").addEventListener("change", (event) => {
-    if (!event.target.matches("[data-artifact]")) return;
-    const workspace = safeCurrentWorkspace();
-    const path = event.target.dataset.artifact;
-    if (event.target.checked) {
-      [...state.selectedArtifacts]
-        .filter((selected) => selected === path || selected.startsWith(`${path}/`))
-        .forEach((selected) => state.selectedArtifacts.delete(selected));
-      state.selectedArtifacts.add(path);
-    } else {
-      deselectTreePath(workspace, path);
-    }
-    renderArtifacts();
-  });
-
-  document.querySelector("#select-all-artifacts").addEventListener("change", (event) => {
-    const workspace = safeCurrentWorkspace();
-    state.selectedArtifacts = event.target.checked
-      ? new Set(
-          (workspace?.files || [])
-            .filter((file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren))
-            .map((file) => file.path),
-        )
-      : new Set();
-    renderArtifacts();
-  });
-
-  document.querySelector("#workspace-run-lock-toggle").addEventListener("change", (event) => {
-    updateWorkspaceRunLock(event.target.checked);
-  });
-
-  document.querySelector("#download-selected").addEventListener("click", () => downloadCurrentWorkspace("changes"));
-  document.querySelector("#delete-selected-files").addEventListener("click", () => deleteSelectedWorkspacePaths());
-  document.querySelector("#workspace-upload-input").addEventListener("change", (event) => addUploadFiles(event.target.files));
-  document.querySelector("#add-folder-button").addEventListener("click", () => document.querySelector("#workspace-upload-input").click());
-  document.querySelector("#workspace-add-menu-button").addEventListener("click", () => {
-    document.querySelector("#workspace-add-menu").classList.toggle("hidden");
-  });
-  document.querySelector("#workspace-add-files-button").addEventListener("click", () => document.querySelector("#workspace-add-files-input").click());
-  document.querySelector("#workspace-add-folder-button").addEventListener("click", () => document.querySelector("#workspace-add-folder-input").click());
-  document.querySelector("#workspace-add-files-input").addEventListener("change", (event) => {
-    uploadFilesToCurrentWorkspace(event.target.files);
-    event.target.value = "";
-  });
-  document.querySelector("#workspace-add-folder-input").addEventListener("change", (event) => {
-    uploadFilesToCurrentWorkspace(event.target.files);
-    event.target.value = "";
-  });
-  document.querySelector("#file-context-menu").addEventListener("click", (event) => {
-    const action = event.target.closest("[data-file-menu-action]");
-    if (!action) return;
-    const menu = document.querySelector("#file-context-menu");
-    const workspace = safeCurrentWorkspace();
-    const path = menu.dataset.filePath;
-    const type = menu.dataset.fileType;
-    if (!workspace || !path) return;
-    if (action.dataset.fileMenuAction === "download") {
-      const url = workspaceFileDownloadUrl(workspace, path, type);
-      if (!url) {
-        showToast(t("toast.noFilesToDownload"));
-        closeFileContextMenu();
-        return;
-      }
-      startNativeDownload(url);
-      closeFileContextMenu();
-      return;
-    }
-    if (action.dataset.fileMenuAction === "delete") {
-      deleteCurrentWorkspacePath(path);
-    }
-  });
-  document.querySelector("#sync-folder").addEventListener("click", () => {
-    showToast("showDirectoryPicker" in window ? t("toast.download") : t("toast.syncUnavailable"));
-  });
-
-  document.addEventListener("dblclick", (event) => {
-    const row = event.target.closest("[data-file-path]");
-    if (!row || row.dataset.fileType !== "file") return;
-    openFilePreview(row.dataset.filePath);
-  });
-
-  document.addEventListener("pointerdown", (event) => {
-    const handle = event.target.closest("[data-resize-panel]");
-    if (!handle) return;
-    const panel = handle.dataset.resizePanel;
-    const startX = event.clientX;
-    const startWidth = panel === "sessions" ? state.sessionPanelWidth : state.filePanelWidth;
-    handle.classList.add("active");
-    const onMove = (moveEvent) => {
-      const delta = moveEvent.clientX - startX;
-      if (panel === "sessions") state.sessionPanelWidth = clamp(startWidth + delta, 200, 520);
-      if (panel === "files") state.filePanelWidth = clamp(startWidth - delta, 220, 560);
-      renderPanelState();
-    };
-    const onUp = () => {
-      handle.classList.remove("active");
-      document.removeEventListener("pointermove", onMove);
-      document.removeEventListener("pointerup", onUp);
-    };
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-  });
-}
-
 async function bootstrap() {
   applyLocale();
   await loadRuntimeConfig();
@@ -2420,6 +689,156 @@ function syncRouteFromLocation() {
   if (view === "admin" && state.user) loadAccountControlData();
 }
 
+const appContext = {
+  api,
+  apiUrl,
+  authenticatedApiUrl,
+  uploadChunkApi,
+  LIVE_CHAT_STATES,
+  TERMINAL_CHAT_STATES,
+  findSessionById,
+  initializeEventCursors,
+  mergeHistoricalEvents,
+  mergeSessionEvents,
+  sessionEventCursor,
+  applyLocale,
+  t,
+  state,
+  renderAdmin,
+  renderArtifacts,
+  renderChatSessions,
+  renderCurrentUser,
+  renderEvents,
+  renderFileExplorer,
+  renderOperationProgress,
+  renderPanelState,
+  renderRechargeHistory,
+  renderWorkspaceManagement,
+  renderWorkers,
+  renderWorkspaces,
+  currentWorkspace,
+  isEventStreamNearTop,
+  canManageAccounts,
+  isSystemAdmin,
+  applyAdminPermissions,
+  accountSettingsPayload,
+  groupSettingsPayload,
+  renderPaymentNotice,
+  VALID_VIEWS,
+  renderDynamic,
+  showToast,
+  safeCurrentWorkspace,
+  clamp,
+  escapeMarkup,
+  sortTreeFiles,
+  replaceWorkspace,
+  resetFileTreeState,
+  mergeWorkspaceTreeFiles,
+  expandWorkspaceFolder,
+  refreshCurrentUser,
+  nameEditorElement,
+  beginNameEdit,
+  cancelNameEdit,
+  commitNameEdit,
+  setOperationProgress,
+  clearOperationProgress,
+  refreshWorkspaceById,
+  loadWorkspaces,
+  startNativeDownload,
+  viewFromLocation,
+  switchView,
+  routeToView,
+  showAuthenticated,
+  showLogin,
+  workspaceAt,
+  openWorkspace,
+  forkWorkspace,
+  createWorkspaceFromModal,
+  downloadCurrentWorkspace,
+  fileUrl,
+  workspaceFileDownloadUrl,
+  selectedWorkspaceFilePaths,
+  directTreeChildren,
+  deselectTreePath,
+  openFilePreview,
+  toggleWorkspaceSharing,
+  updateWorkspaceRunLock,
+  uploadFilesToCurrentWorkspace,
+  deleteCurrentWorkspacePath,
+  deleteSelectedWorkspacePaths,
+  deleteWorkspace,
+  bootstrap,
+  syncRouteFromLocation,
+};
+Object.assign(appContext, createChatStream(appContext));
+Object.assign(appContext, createAdminRecharge(appContext));
+Object.assign(appContext, createWorkspaceActions(appContext));
+Object.assign(appContext, createEventBindings(appContext));
+Object.assign(appContext, createUploadActions(appContext));
+const {
+  stopChatStream,
+  currentSessionObject,
+  chatPollInterval,
+  scheduleChatPoll,
+  pollChatEvents,
+  markStreamHealthy,
+  scheduleStreamReconnect,
+  activatePollingFallback,
+  openChatStream,
+  startChatStreamForSession,
+  loadLatestSessionHistory,
+  loadOlderSessionHistory,
+  maybeStartChatStream,
+  loadAccountControlData,
+  refreshWorkerStatus,
+  loadRuntimeConfig,
+  setAuthMode,
+  setGroupMode,
+  renderGroupOptions,
+  renderCreatedInvites,
+  openBatchAccountModal,
+  closeBatchAccountModal,
+  copyText,
+  loadRechargeData,
+  rechargeImportStatus,
+  renderRechargeImport,
+  closeRechargeImport,
+  previewRechargeImport,
+  applyRechargeImport,
+  closeRechargeQrModal,
+  renderRechargeOrderStatus,
+  pollRechargeOrder,
+  openRechargeQrModal,
+  revokeInvite,
+  openAccountSettingsModal,
+  closeAccountSettingsModal,
+  openGroupSettingsModal,
+  closeGroupSettingsModal,
+  createAdminGroup,
+  deleteAdminAccount,
+  deleteAdminGroup,
+  selectWorkspace,
+  workspaceIndexById,
+  resolveWorkspaceIndex,
+  selectWorkspaceFromElement,
+  openWorkspaceModal,
+  closeWorkspaceModal,
+  closeCodexSettingsModal,
+  openCodexSettingsModal,
+  closePreviewModal,
+  closeFileContextMenu,
+  uniqueTopFolder,
+  addUploadFiles,
+  renderSelectedUploadFiles,
+  copySession,
+  deleteSession,
+  createNewChatSession,
+  bindGlobalClicks,
+  bindForms,
+  bindInputs,
+  uploadFingerprint,
+  runResumableUpload,
+} = appContext;
 window.addEventListener("hashchange", syncRouteFromLocation);
 window.addEventListener("popstate", syncRouteFromLocation);
 window.setInterval(refreshWorkerStatus, 5_000);

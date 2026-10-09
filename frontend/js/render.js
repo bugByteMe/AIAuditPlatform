@@ -232,12 +232,17 @@ export function renderCurrentUser() {
 export function renderWorkspaces() {
   renderWorkspaceTitle(document, state.user, state.groups);
   const items = workspaceList();
-  if (!items.length) {
-    document.querySelector("#workspace-list").innerHTML = `<div class="empty-state">${state.lang === "zh" ? "还没有工作区，请上传文件夹创建。" : "No workspaces yet. Upload files to create one."}</div>`;
+  const query = state.workspaceQuery.trim().toLocaleLowerCase();
+  const visible = items.map((workspace, index) => ({ workspace, index }))
+    .filter(({ workspace }) => !query || [workspace.name, workspace.owner].some((value) => String(value || "").toLocaleLowerCase().includes(query)));
+  document.querySelector("#workspace-results-count").textContent = t("workspace.resultsCount")
+    .replace("{shown}", visible.length.toLocaleString()).replace("{total}", items.length.toLocaleString());
+  if (!visible.length) {
+    document.querySelector("#workspace-list").innerHTML = `<div class="empty-state">${items.length ? t("workspace.noSearchResults") : (state.lang === "zh" ? "还没有工作区，请上传文件夹创建。" : "No workspaces yet. Upload files to create one.")}</div>`;
     return;
   }
-  document.querySelector("#workspace-list").innerHTML = items
-    .map((workspace, index) => {
+  document.querySelector("#workspace-list").innerHTML = visible
+    .map(({ workspace, index }) => {
       const safeWorkspaceId = escapeHtml(workspace.id || "");
       const safeOwner = escapeHtml(workspace.owner);
       const safeSize = escapeHtml(workspace.size);
@@ -262,18 +267,17 @@ export function renderWorkspaces() {
               ${lock}
             </div>
           </div>
-          <div class="toolbar-actions">
-            ${canRenameWorkspace(workspace) ? `<button type="button" class="btn icon-btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${shareTitle}" title="${shareTitle}">
-              <span aria-hidden="true">${shareIcon}</span>
-            </button>` : ""}
-            ${canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn icon-btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.fork")}" title="${t("workspace.fork")}">
-              <span aria-hidden="true">⧉</span>
-            </button>` : ""}
-            ${canRenameWorkspace(workspace) ? `<button type="button" class="btn icon-btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.delete")}" title="${t("workspace.delete")}">
-              <span aria-hidden="true">🗑</span>
-            </button>` : ""}
-            <button type="button" class="btn icon-btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}" aria-label="${t("workspace.open")}" title="${t("workspace.open")}">
-              <span aria-hidden="true">▶</span>
+          <div class="toolbar-actions workspace-card-actions">
+            ${canRenameWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<details class="action-menu workspace-more">
+              <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}</summary>
+              <div class="action-menu-items">
+                ${canRenameWorkspace(workspace) ? `<button type="button" class="btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${shareTitle} <span aria-hidden="true">${shareIcon}</span></button>` : ""}
+                ${canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
+                ${canRenameWorkspace(workspace) ? `<button type="button" class="btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.delete")}</button>` : ""}
+              </div>
+            </details>` : ""}
+            <button type="button" class="btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}">
+              ${t("workspace.open")} <span aria-hidden="true">→</span>
             </button>
           </div>
         </article>

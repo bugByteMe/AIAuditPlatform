@@ -13,6 +13,7 @@ export const state = {
   workspaces: [],
   workspacesLoaded: false,
   selectedWorkspace: 0,
+  workspaceQuery: "",
   selectedSession: 0,
   selectedArtifacts: new Set(),
   selectedUploadFiles: [],

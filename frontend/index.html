@@ -118,13 +118,11 @@
 
         <section class="view active" id="workspace-view">
           <div class="toolbar">
-            <div class="search">
+            <label class="search" for="workspace-search">
               <span aria-hidden="true">⌕</span>
-              <input type="search" data-i18n-placeholder="workspace.search" placeholder="搜索工作区、成员或文件" />
-            </div>
-            <div class="toolbar-actions">
-              <button class="btn" data-open-workspace-modal data-i18n="workspace.upload">上传文件夹</button>
-            </div>
+              <input id="workspace-search" type="search" data-i18n-placeholder="workspace.search" placeholder="搜索工作区或所有者" autocomplete="off" />
+            </label>
+            <span class="workspace-result-count" id="workspace-results-count" aria-live="polite"></span>
           </div>
 
           <div class="dashboard-grid workspace-overview-grid">
@@ -147,13 +145,18 @@
                 <h2 data-i18n="artifacts.title">成果文件</h2>
                 <p id="workspace-management-title">2026-Q3-收入测试</p>
               </div>
-              <div class="toolbar-actions">
+              <div class="toolbar-actions workspace-file-actions">
                 <button class="btn primary" id="download-selected" data-i18n="artifacts.downloadSelected">下载所选</button>
-                <button class="btn danger" id="delete-selected-files" data-i18n="artifacts.deleteSelected">删除所选</button>
-                <button class="btn ghost" id="sync-folder" data-i18n="artifacts.sync">同步到本地</button>
                 <button type="button" class="btn icon-btn primary" id="workspace-add-menu-button" data-i18n-title="files.add" title="添加文件">
                   <span aria-hidden="true">+</span>
                 </button>
+                <details class="action-menu workspace-file-more">
+                  <summary class="btn" data-i18n="actions.more">更多操作</summary>
+                  <div class="action-menu-items">
+                    <button class="btn ghost" id="sync-folder" data-i18n="artifacts.sync">同步到本地</button>
+                    <button class="btn danger" id="delete-selected-files" data-i18n="artifacts.deleteSelected">删除所选</button>
+                  </div>
+                </details>
               </div>
             </div>
             <label class="checkbox-row workspace-lock-setting" id="workspace-run-lock-setting">
@@ -211,18 +214,20 @@
                   <span class="status-dot running"></span>
                   <span id="run-state-label" data-i18n="chat.running">运行中</span>
                 </div>
-                <div class="chat-resource-status">
-                  <div class="resource-line"><span id="chat-cpu-label">CPU 可用 0 / 0</span><div class="meter"><span id="chat-cpu-meter" style="width: 0%"></span></div></div>
-                  <div class="resource-line"><span id="chat-memory-label">内存 可用 0 / 0</span><div class="meter green"><span id="chat-memory-meter" style="width: 0%"></span></div></div>
-                </div>
               </div>
 
-              <div class="runtime-strip" aria-label="Runtime details">
-                <span><strong data-i18n="chat.worker">节点</strong> <span id="chat-worker-id">-</span></span>
-                <span><strong data-i18n="chat.container">容器</strong> <span id="chat-container-id">-</span></span>
-                <span><strong data-i18n="chat.lock">工作区锁</strong> <span id="chat-lock-label">-</span></span>
-                <span><strong data-i18n="chat.tokens">本次消耗</strong> <span id="token-count">128,420</span></span>
-              </div>
+              <details class="runtime-details">
+                <summary><span data-i18n="chat.runtimeDetails">运行详情</span><span class="runtime-summary"><span data-i18n="chat.tokens">本次消耗</span> <strong id="token-count">0</strong></span></summary>
+                <div class="runtime-strip" aria-label="Runtime details">
+                  <span><strong data-i18n="chat.worker">节点</strong> <span id="chat-worker-id">-</span></span>
+                  <span><strong data-i18n="chat.container">容器</strong> <span id="chat-container-id">-</span></span>
+                  <span><strong data-i18n="chat.lock">工作区锁</strong> <span id="chat-lock-label">-</span></span>
+                  <div class="chat-resource-status">
+                    <div class="resource-line"><span id="chat-cpu-label">CPU 可用 0 / 0</span><div class="meter"><span id="chat-cpu-meter" style="width: 0%"></span></div></div>
+                    <div class="resource-line"><span id="chat-memory-label">内存 可用 0 / 0</span><div class="meter green"><span id="chat-memory-meter" style="width: 0%"></span></div></div>
+                  </div>
+                </div>
+              </details>
 
               <div class="event-stream" id="event-stream" aria-live="polite"></div>
 

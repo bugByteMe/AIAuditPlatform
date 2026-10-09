@@ -24,14 +24,14 @@ await new Promise((done) => server.listen(0, "127.0.0.1", done));
 const browser = await chromium.launch({ channel: process.env.PLAYWRIGHT_CHANNEL || "msedge", headless: true });
 test.after(async () => { await browser.close(); await new Promise((done) => server.close(done)); });
 
-async function openApp(role = "platform_admin", viewport = { width: 1280, height: 900 }) {
+async function openApp(role = "platform_admin", viewport = { width: 1280, height: 900 }, workspaceOverrides = {}) {
   const page = await browser.newPage({ viewport });
   const requests = [];
   const user = { id: "actor", username: "example.actor", role, groupId: "team", group: "示例小组", budget: { source: "micu", remainingPercent: 42.5 } };
   const member = { id: "member", username: "example.member", role: "user", groupId: "team", status: "active", enabled: true };
   const group = { id: "team", name: "示例小组", userCount: 2, liveRunLimit: 1 };
   const session = { id: "session", title: "Example chat", createdBy: "example.member", status: "completed", events: [], tokens: 0, historyLoaded: true };
-  const workspace = { id: "workspace", name: "Example workspace", owner: user.username, fileCount: 0, sizeBytes: 0, files: [], artifacts: [], sessions: [session], detailLoaded: true };
+  const workspace = { id: "workspace", name: "Example workspace", owner: user.username, fileCount: 0, sizeBytes: 0, files: [], artifacts: [], sessions: [session], detailLoaded: true, ...workspaceOverrides };
   await page.route("**/api/**", async (route) => {
     const request = route.request();
     const path = new URL(request.url()).pathname;
@@ -95,6 +95,46 @@ test("chat cards show their creator and recharge highlights remaining usage", as
       ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol"]);
     await page.locator('[data-view="recharge"]').click();
     assert.equal(await page.locator("#recharge-remaining-percent").innerText(), "42.5%");
+  } finally { await page.close(); }
+});
+
+test("workspace search, secondary actions and modal focus remain usable", async () => {
+  const { page } = await openApp();
+  try {
+    const search = page.locator("#workspace-search");
+    await search.fill("missing workspace");
+    assert.equal(await page.locator("#workspace-list [data-workspace-card]").count(), 0);
+    assert.ok((await page.locator("#workspace-list").innerText()).includes("没有"));
+    await search.fill("example.actor");
+    assert.equal(await page.locator("#workspace-list [data-workspace-card]").count(), 1);
+    assert.equal(await page.locator("#workspace-list [data-workspace-card]").getAttribute("data-workspace-card"), "0");
+    assert.ok((await page.locator("#workspace-results-count").innerText()).includes("1"));
+    await page.locator(".workspace-more > summary").focus();
+    await page.keyboard.press("Enter");
+    assert.equal(await page.locator(".workspace-more").evaluate((element) => element.open), true);
+    assert.equal(await page.locator('.workspace-more [data-action="fork"]').isVisible(), true);
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator(".workspace-more").evaluate((element) => element.open), false);
+    await page.locator("[data-open-workspace-modal]").click();
+    await page.waitForFunction(() => document.activeElement?.id === "workspace-name-input");
+    await page.locator("#workspace-modal [data-close-workspace-modal]").first().click();
+    await page.waitForFunction(() => document.activeElement?.hasAttribute("data-open-workspace-modal"));
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  } finally { await page.close(); }
+});
+
+test("private workspaces stay read-only for platform administrators while transcripts and runtime details remain accessible", async () => {
+  const { page, requests } = await openApp("platform_admin", { width: 1280, height: 900 }, { owner: "another.owner", shared: false });
+  try {
+    assert.equal(await page.locator(".workspace-more").count(), 0);
+    await page.locator('[data-action="open"]').click();
+    assert.match(await page.locator("#chat-session-list").innerText(), /example\.member/);
+    assert.equal(await page.locator("#new-chat-button").isDisabled(), true);
+    assert.equal(await page.locator("#composer textarea").isDisabled(), true);
+    assert.equal(await page.locator(".runtime-details").evaluate((element) => element.open), false);
+    await page.locator(".runtime-details > summary").click();
+    assert.equal(await page.locator("#chat-cpu-label").isVisible(), true);
+    assert.equal(requests.some((req) => req.method !== "GET"), false);
   } finally { await page.close(); }
 });
 
