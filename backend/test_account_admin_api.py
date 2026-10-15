@@ -289,3 +289,21 @@ class AccountAdminApiTest(AccountApiTestBase):
     wechat.decode_callback.assert_called_once_with(handler.headers, b"{}")
     apply.assert_called_once_with(store.recharge_order.return_value, transaction)
     self.assertEqual(binary_responses, [(b"", 204)])
+
+  def test_fast_callback_does_not_regress_applied_order_to_pending(self) -> None:
+    with tempfile.TemporaryDirectory() as tempdir:
+      user = {"id": "usr_alice", "username": "alice", "micu": {"tokenId": 7}}
+      store = AccountStore(Path(tempdir) / "accounts.json", {"alice": user})
+      handler = self.handler({"amountCny": "1.00"})
+      handler.require_user = MagicMock(return_value=store.users["alice"])
+      wechat = MagicMock()
+
+      def pay_early(*_args):
+        order = next(iter(store.recharge_orders.values()))
+        store.update_recharge_order(order["id"], status="applied")
+        return {"code_url": "weixin://wxpay/bizpayurl?pr=test"}
+
+      wechat.create_native_order.side_effect = pay_early
+      with patch("server.ACCOUNT_STORE", store), patch("server.WECHAT_PAY", wechat), patch("server.add_audit"):
+        Handler.create_recharge_order(handler)
+      self.assertEqual(handler.responses[0][0]["order"]["status"], "applied")

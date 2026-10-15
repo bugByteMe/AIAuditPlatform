@@ -1,3 +1,11 @@
+---
+title: Recharge Panel
+form: design
+updated: 2026-10-14
+status: active
+tags: [recharge, payments]
+---
+
 # Recharge Panel
 
 ## Scope
@@ -36,15 +44,22 @@ signed-in user. Supported face amounts and credits are:
 
 The backend stores the authenticated user's order before requesting its
 `code_url`. WeChat calls `POST /api/payments/wechat/notify` through the public
-HTTPS proxy. The backend verifies the raw request signature and timestamp,
-decrypts the resource using the API v3 key, and validates the AppID, merchant
-ID, order number, currency, and exact amount.
+HTTPS proxy, which forwards only this path to the independent callback service.
+The service verifies the raw signature and timestamp, decrypts the resource,
+validates the AppID and merchant ID, and commits a minimal notification ID and
+merchant order number to its own inbox before responding. The main server polls
+the private inbox, queries WeChat for the authoritative transaction, then
+validates the order number, currency, and exact amount before crediting.
 
 The transaction ID is hashed before persistence and reserved before the MicuAPI
 balance call. This prevents duplicate credit across callbacks, order queries,
 and spreadsheet imports. Uncertain balance results become `review_required`
 and are not retried automatically. A reconciliation loop queries pending orders
-after missed callbacks or restarts and closes expired unpaid orders.
+after missed callbacks or restarts and closes expired unpaid orders. Pending
+receipts are retried every 30 seconds; after 15 minutes unresolved receipts
+raise a warning for investigation and are never purged automatically. Acknowledged
+metadata is purged after seven days. The callback service does not receive the
+merchant private key or load the main account store.
 
 The CNY 1 option is deliberately marked as debug-only. Remove it from
 `RECHARGE_PRODUCTS` and the matching frontend button if it should not remain in

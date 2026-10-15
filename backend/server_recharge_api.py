@@ -200,9 +200,9 @@ class RechargeHandlerMixin:
       code_url = str(result.get("code_url") or "").strip()
       if not code_url.startswith("weixin://"):
         raise WechatPayError("wechat_pay_request_failed", "WeChat Pay did not return a valid Native Pay code URL")
-      order = ACCOUNT_STORE.update_recharge_order(order_id, status="pending", codeUrl=code_url)
+      order = ACCOUNT_STORE.transition_recharge_order(order_id, {"creating"}, status="pending", codeUrl=code_url)
     except Exception as exc:
-      ACCOUNT_STORE.update_recharge_order(order_id, status="failed", reason=str(exc))
+      ACCOUNT_STORE.transition_recharge_order(order_id, {"creating"}, status="failed", reason=str(exc))
       raise
     add_audit(user["username"], "WeChat recharge order created", f"order={order_id} amountCny={amount_cny}")
     self.write_json({"order": public_recharge_order(order)}, HTTPStatus.CREATED)

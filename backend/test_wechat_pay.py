@@ -85,6 +85,7 @@ class WechatPayClientTest(unittest.TestCase):
     ciphertext = AESGCM(self.api_key).encrypt(nonce_resource, json.dumps(transaction).encode(), associated)
     body = json.dumps(
       {
+        "id": "event-example-1",
         "event_type": "TRANSACTION.SUCCESS",
         "resource": {
           "algorithm": "AEAD_AES_256_GCM",
@@ -112,6 +113,7 @@ class WechatPayClientTest(unittest.TestCase):
   def test_valid_callback_is_verified_and_decrypted(self) -> None:
     headers, body = self.callback()
     decoded = self.client.decode_callback(headers, body)
+    self.assertEqual(decoded["id"], "event-example-1")
     self.assertEqual(decoded["eventType"], "TRANSACTION.SUCCESS")
     self.assertEqual(decoded["transaction"]["transaction_id"], "4200000001")
 

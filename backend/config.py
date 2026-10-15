@@ -167,6 +167,8 @@ class Settings:
     self.wechat_order_expiry_seconds = _int("wechat_order_expiry_seconds", "AI_AUDIT_WECHAT_ORDER_EXPIRY_SECONDS", 15 * 60)
     self.wechat_reconcile_interval_seconds = _float("wechat_reconcile_interval_seconds", "AI_AUDIT_WECHAT_RECONCILE_INTERVAL_SECONDS", 30)
     self.wechat_request_timeout_seconds = _float("wechat_request_timeout_seconds", "AI_AUDIT_WECHAT_REQUEST_TIMEOUT_SECONDS", 10)
+    self.wechat_callback_internal_url = os.environ.get("AI_AUDIT_WECHAT_CALLBACK_INTERNAL_URL", "").strip().rstrip("/")
+    self.wechat_receipt_token = os.environ.get("AI_AUDIT_WECHAT_RECEIPT_TOKEN", "").strip()
     self.codex_image = str(_value("codex_image", "AI_AUDIT_CODEX_IMAGE", "ai-audit-codex-runner:0.153.4"))
     self.codex_root = _path("codex_root", "AI_AUDIT_CODEX_ROOT", "workspace_storage/codex")
     self.codex_home_root = self._codex_home_root()

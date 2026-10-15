@@ -1,3 +1,11 @@
+---
+title: Backend Module Boundaries
+form: design
+updated: 2026-10-14
+status: active
+tags: [backend, architecture]
+---
+
 # Backend Module Boundaries
 
 ## Purpose
@@ -49,6 +57,9 @@ boundaries.
 The WeChat reconciliation loop explicitly imports its settings and the shared
 shutdown event from `server_state`; ASGI startup/shutdown and the loop must use
 the same event rather than creating separate stop signals.
+The independent WeChat callback receiver owns only its private SQLite inbox.
+It shares signature/decryption code, not the main server's process-local account
+store; the control plane queries WeChat before applying any credit.
 
 ## Tests
 

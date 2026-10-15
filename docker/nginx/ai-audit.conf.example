@@ -4,6 +4,11 @@ upstream ai_audit_control_plane {
   keepalive 32;
 }
 
+upstream ai_audit_wechat_callback {
+  server 127.0.0.1:8001;
+  keepalive 8;
+}
+
 server {
   listen 80;
   listen [::]:80;
@@ -25,7 +30,7 @@ server {
   location = /api/payments/wechat/notify {
     limit_except POST { deny all; }
     client_max_body_size 64k;
-    proxy_pass http://ai_audit_control_plane;
+    proxy_pass http://ai_audit_wechat_callback;
     proxy_http_version 1.1;
     proxy_set_header Host $host;
     proxy_set_header X-Real-IP $remote_addr;

@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import logging
 import time
 from decimal import Decimal
 from urllib.parse import quote
+
+import httpx
 
 from micu_api import MicuApiError, parse_cny
 from recharge_import import payment_key
@@ -10,6 +13,8 @@ from server_state import ACCOUNT_STORE, MICU_CLIENT, SETTINGS, WECHAT_PAY, WECHA
 from server_utils import utc_timestamp
 from wechat_pay import WechatPayError
 from workspace_store import StorageError
+
+LOGGER = logging.getLogger("ai_audit.wechat_receipts")
 
 def public_recharge_order(order: dict) -> dict:
   return {
@@ -137,7 +142,53 @@ def reconcile_wechat_order(order: dict) -> dict:
 def reconcile_wechat_orders() -> None:
   if not WECHAT_PAY.configured:
     return
+  if SETTINGS.wechat_callback_internal_url and len(SETTINGS.wechat_receipt_token) < 32:
+    LOGGER.error("WeChat receipt token is missing or too short; inbox consumption is disabled")
+  next_reconcile = 0.0
   while not WECHAT_RECONCILE_STOP.is_set():
-    for order in ACCOUNT_STORE.pending_recharge_orders():
-      reconcile_wechat_order(order)
-    WECHAT_RECONCILE_STOP.wait(max(5.0, SETTINGS.wechat_reconcile_interval_seconds))
+    if SETTINGS.wechat_callback_internal_url and len(SETTINGS.wechat_receipt_token) >= 32:
+      consume_wechat_receipts()
+    if time.monotonic() >= next_reconcile:
+      for order in ACCOUNT_STORE.pending_recharge_orders():
+        reconcile_wechat_order(order)
+      next_reconcile = time.monotonic() + max(5.0, SETTINGS.wechat_reconcile_interval_seconds)
+    WECHAT_RECONCILE_STOP.wait(5 if SETTINGS.wechat_callback_internal_url else max(5.0, SETTINGS.wechat_reconcile_interval_seconds))
+
+
+def consume_wechat_receipts() -> None:
+  url = SETTINGS.wechat_callback_internal_url
+  headers = {"Authorization": f"Bearer {SETTINGS.wechat_receipt_token}"}
+  try:
+    with httpx.Client(timeout=5) as client:
+      response = client.get(f"{url}/internal/receipts", params={"limit": 20}, headers=headers)
+      response.raise_for_status()
+      deadline = time.monotonic() + 5
+      for receipt in response.json()["receipts"]:
+        if time.monotonic() >= deadline:
+          break
+        notification_id = str(receipt["id"])
+        out_trade_no = str(receipt["outTradeNo"])
+        endpoint = f"{url}/internal/receipts/{quote(notification_id, safe='')}"
+        try:
+          order = ACCOUNT_STORE.recharge_order(out_trade_no)
+          if not order:
+            raise ValueError("order not yet available")
+          if order.get("status") not in {"applied", "review_required"}:
+            transaction = WECHAT_PAY.query_order(out_trade_no)
+            if transaction.get("trade_state") != "SUCCESS":
+              raise ValueError("payment not yet confirmed")
+            order = apply_wechat_transaction(order, transaction)
+          if order.get("status") not in {"applied", "review_required"}:
+            raise ValueError("credit not yet resolved")
+          ack = client.post(f"{endpoint}/ack", headers=headers)
+          ack.raise_for_status()
+        except Exception as exc:
+          # Keep the durable receipt available; never credit from callback fields alone.
+          if time.time() - float(receipt.get("receivedAt") or time.time()) >= 900:
+            attempts = int(receipt.get("attempts") or 0)
+            if attempts == 0 or attempts & (attempts - 1) == 0:
+              LOGGER.warning("WeChat receipt unresolved after 15 minutes: %s (%s)", notification_id, type(exc).__name__)
+          defer = client.post(f"{endpoint}/defer", headers=headers)
+          defer.raise_for_status()
+  except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
+    LOGGER.warning("WeChat callback inbox unavailable: %s", type(exc).__name__)

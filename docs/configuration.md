@@ -1,3 +1,11 @@
+---
+title: Runtime Configuration
+form: reference
+updated: 2026-10-14
+status: active
+tags: [configuration, operations]
+---
+
 # Runtime Configuration
 
 The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to use another file. Every setting can be overridden with its corresponding environment variable; environment variables take precedence over the JSON file.
@@ -49,7 +57,7 @@ and `AI_AUDIT_DATABASE_URL` when using PostgreSQL. Start the control plane with:
 docker run -d \
   --name ai-audit-control-plane \
   --restart unless-stopped \
-  -p 8000:8000 \
+  -p 127.0.0.1:8000:8000 \
   --env-file /secure/path/ai-audit.env \
   --mount type=bind,src=/srv/ai-audit/workspace_storage,dst=/mnt/workspace_storage \
   --mount type=bind,src="$(pwd)/config/ai_audit.json",dst=/app/config/ai_audit.json,readonly \
@@ -163,6 +171,8 @@ AI_AUDIT_WECHAT_API_V3_KEY=<32-byte-secret>
 AI_AUDIT_WECHAT_MERCHANT_CERT_FILE=/etc/ai-audit/wechatpay/apiclient_cert.pem
 AI_AUDIT_WECHAT_MERCHANT_KEY_FILE=/etc/ai-audit/wechatpay/apiclient_key.pem
 AI_AUDIT_WECHAT_PUBLIC_KEY_FILE=/etc/ai-audit/wechatpay/pub_key.pem
+AI_AUDIT_WECHAT_CALLBACK_INTERNAL_URL=http://ai-audit-wechat-callback:8001
+AI_AUDIT_WECHAT_RECEIPT_TOKEN=<shared-random-secret-at-least-32-characters>
 ```
 
 `wechat_order_expiry_seconds`, `wechat_reconcile_interval_seconds`, and
@@ -170,9 +180,50 @@ AI_AUDIT_WECHAT_PUBLIC_KEY_FILE=/etc/ai-audit/wechatpay/pub_key.pem
 provider timeouts. Never put the API v3 key or private-key content in
 `config/ai_audit.json`.
 
-Copy `docker/nginx/ai-audit.conf.example`, replace its domain and TLS certificate
-paths, validate it with `nginx -t`, and register the exact notification URL with
-WeChat Pay. Nginx terminates public TLS and forwards the callback body and
-`Wechatpay-*` headers unchanged to Uvicorn.
+Build the independent receiver with
+`docker build -f docker/wechat-callback/Dockerfile -t ai-audit-wechat-callback:latest .`.
+Use a separate environment file containing only `AI_AUDIT_WECHAT_APP_ID`,
+`AI_AUDIT_WECHAT_MERCHANT_ID`, `AI_AUDIT_WECHAT_API_V3_KEY`,
+`AI_AUDIT_WECHAT_PUBLIC_KEY_ID`, `AI_AUDIT_WECHAT_PUBLIC_KEY_FILE`, and the same
+`AI_AUDIT_WECHAT_RECEIPT_TOKEN`. Do not supply the merchant private key, the
+main account database URL, or the Micu management token to this container.
+Set the receiver's `AI_AUDIT_WECHAT_PUBLIC_KEY_FILE` to the mounted path below,
+and protect both environment files with mode `0600`.
+Keep the receiver's writable volume and public key mounted outside source
+control. For a same-host Docker deployment:
+
+```bash
+docker network create ai-audit-private
+sudo install -d -o 10001 -g 10001 /srv/ai-audit/wechat-callback
+docker run -d --name ai-audit-wechat-callback --restart unless-stopped \
+  --network ai-audit-private -p 127.0.0.1:8001:8001 \
+  --env-file /secure/path/ai-audit-wechat-callback.env \
+  --mount type=bind,src=/srv/ai-audit/wechat-callback,dst=/var/lib/ai-audit-wechat \
+  --mount type=bind,src=/secure/path/wechat-public.pem,dst=/etc/ai-audit/wechatpay/pub_key.pem,readonly \
+  ai-audit-wechat-callback:latest
+```
+
+Attach the control-plane container to `ai-audit-private`, configure its internal
+URL and shared token above, and recreate it with the updated environment file
+(`docker network connect ai-audit-private ai-audit-control-plane` attaches an
+already-running container, but does not update its environment). Publish the
+control-plane port only on host loopback (`-p 127.0.0.1:8000:8000`) so callbacks
+cannot bypass Nginx. The receiver accepts notifications at the unchanged public
+`AI_AUDIT_WECHAT_NOTIFY_URL` only after the Nginx route
+is switched. Copy `docker/nginx/ai-audit.conf.example`, replace the public
+domain and TLS paths, verify `http://127.0.0.1:8001/health`, then validate with
+`nginx -t` and reload. The proxy must preserve the raw body and `Wechatpay-*`
+headers, and `/internal/receipts` must never be exposed publicly. No payment
+domain or existing Native Pay `notify_url` change is needed.
+
+Verify a test recharge in staging and check that the inbox drains and the order
+becomes `applied`. If the receiver is unhealthy, restore the previous Nginx
+callback route to the control plane; the existing periodic WeChat order queries
+remain active. Keep the receiver's inbox volume across rollbacks and restarts
+until every pending receipt has been resolved; monitor 15-minute unresolved
+receipt warnings and investigate them rather than deleting them.
+The private receiver health response includes `pendingCount` and
+`oldestPendingAgeSeconds`; alert if its oldest pending receipt exceeds 900
+seconds, including when the control plane is offline and cannot emit a warning.
 
 Environment variable names use the `AI_AUDIT_` prefix and uppercase setting name, except the existing `SKILL_PATH` override for `skill_path`. List values such as `AI_AUDIT_BLOCKED_UPLOAD_SUFFIXES` use comma-separated entries.
