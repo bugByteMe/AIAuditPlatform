@@ -528,12 +528,6 @@ async function openFilePreview(path) {
       node.title = preview.name;
       node.src = fileUrl(workspace.id, "raw", preview.path);
       content.replaceChildren(node);
-    } else if (preview.mode === "office") {
-      const node = document.createElement("iframe");
-      node.className = "preview-frame";
-      node.title = preview.name;
-      node.src = fileUrl(workspace.id, "rendered", preview.path);
-      content.replaceChildren(node);
     } else {
       content.innerHTML = `<div class="preview-empty">${t("preview.unsupported")}</div>`;
     }

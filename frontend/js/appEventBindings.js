@@ -94,6 +94,13 @@ export function createEventBindings(context) {
 
   function bindGlobalClicks() {
     document.addEventListener("click", (event) => {
+      const workspaceLink = event.target.closest("#event-stream a[data-workspace-file]");
+      if (workspaceLink) {
+        event.preventDefault();
+        const workspace = safeCurrentWorkspace();
+        if (workspace) startNativeDownload(workspaceFileDownloadUrl(workspace, workspaceLink.dataset.workspaceFile, "file"));
+        return;
+      }
       document.querySelectorAll(".action-menu[open]").forEach((menu) => {
         if (!menu.contains(event.target) || event.target.closest(".action-menu-items button")) menu.open = false;
       });

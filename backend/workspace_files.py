@@ -3,9 +3,7 @@ from __future__ import annotations
 import json
 import mimetypes
 import os
-import shutil
 import sqlite3
-import subprocess
 import tempfile
 import threading
 import time
@@ -13,7 +11,6 @@ import zipfile
 from pathlib import Path
 from typing import Callable
 
-from config import SETTINGS
 from postgres_workspace_database import PostgresWorkspaceDatabase
 from workspace_database import WorkspaceDatabase
 from workspace_common import (
@@ -110,8 +107,12 @@ class WorkspaceFilesMixin:
     }
 
   def preview_metadata(self, workspace_id: str, raw_path: str) -> dict:
-    metadata = self.file_metadata(workspace_id, raw_path)
+    metadata = self.file_response_metadata(workspace_id, raw_path)
+    if metadata["suffix"] in OFFICE_SUFFIXES:
+      return {**metadata, "mode": "unsupported"}
     file_path = self.workspace_file_path(workspace_id, raw_path)
+    digest = stream_sha256(file_path)
+    metadata = {**metadata, "checksum": f"sha256:{digest}", "blob": digest}
     suffix = metadata["suffix"]
     content_type = metadata["contentType"]
     if suffix in TEXT_SUFFIXES or content_type.startswith("text/"):
@@ -126,39 +127,10 @@ class WorkspaceFilesMixin:
       return {**metadata, "mode": "image"}
     if content_type == "application/pdf" or suffix == ".pdf":
       return {**metadata, "mode": "pdf"}
-    if suffix in OFFICE_SUFFIXES:
-      return {**metadata, "mode": "office"}
     return {**metadata, "mode": "unsupported"}
 
   def rendered_preview_path(self, workspace_id: str, raw_path: str) -> Path:
-    metadata = self.file_metadata(workspace_id, raw_path)
-    if metadata["suffix"] not in OFFICE_SUFFIXES:
-      raise StorageError("unsupported_preview", "only office files can be rendered")
-    source = self.workspace_file_path(workspace_id, raw_path)
-    cache_dir = ensure_under_root(self.preview_dir, self.preview_dir / workspace_id / metadata["blob"])
-    cached_pdf = ensure_under_root(cache_dir, cache_dir / "preview.pdf")
-    if cached_pdf.exists():
-      return cached_pdf
-    converter = shutil.which("libreoffice") or shutil.which("soffice")
-    if not converter:
-      raise StorageError("converter_unavailable", "LibreOffice is not available")
-    cache_dir.mkdir(parents=True, exist_ok=True)
-    with tempfile.TemporaryDirectory(dir=self.preview_dir) as temp_name:
-      temp_dir = Path(temp_name)
-      temp_source = temp_dir / f"source{metadata['suffix']}"
-      shutil.copyfile(source, temp_source)
-      result = subprocess.run(
-        [converter, "--headless", "--convert-to", "pdf", "--outdir", str(temp_dir), str(temp_source)],
-        capture_output=True,
-        timeout=SETTINGS.office_preview_timeout_seconds,
-        check=False,
-      )
-      rendered = temp_dir / "source.pdf"
-      if result.returncode != 0 or not rendered.exists():
-        detail = result.stderr.decode("utf-8", errors="replace") or result.stdout.decode("utf-8", errors="replace")
-        raise StorageError("preview_failed", detail.strip() or "Office preview conversion failed")
-      shutil.copyfile(rendered, cached_pdf)
-    return cached_pdf
+    raise StorageError("unsupported_preview", "Office file previews are disabled")
 
   def build_download_zip(self, workspace_id: str, user: dict, mode: str, selected_paths: list[str]) -> tuple[str, Path]:
     self.get_workspace(workspace_id, user)

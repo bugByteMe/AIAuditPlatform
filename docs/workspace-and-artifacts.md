@@ -151,6 +151,9 @@ Run checkpoint creation uses protocol version 2:
 File checksums are computed with fixed-size streaming reads. Text preview reads are
 limited to the configured preview prefix, so neither operation allocates memory
 proportional to the source file size.
+Office files (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) are download-only:
+inline preview and direct PDF rendering are disabled on the control plane. Text,
+image, and PDF previews remain available.
 
 For remote runs, large baseline and result objects are stored as separate JSON
 files on shared storage. `runs.json` retains only protocol/version references and

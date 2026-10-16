@@ -270,20 +270,26 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertTrue(preview["truncated"])
     self.assertLessEqual(len(preview["text"].encode("utf-8")), 256 * 1024)
 
-  def test_image_pdf_and_office_preview_modes(self) -> None:
+  def test_image_pdf_and_disabled_office_preview_modes(self) -> None:
     workspace = self.create_preview_workspace()
     self.assertEqual(self.store.preview_metadata(workspace["id"], "images/pixel.png")["mode"], "image")
     self.assertEqual(self.store.preview_metadata(workspace["id"], "docs/manual.pdf")["mode"], "pdf")
-    self.assertEqual(self.store.preview_metadata(workspace["id"], "sheets/report.xlsx")["mode"], "office")
+    with mock.patch("workspace_files.stream_sha256", side_effect=AssertionError("Office previews should not hash the file")):
+      preview = self.store.preview_metadata(workspace["id"], "sheets/report.xlsx")
+    self.assertEqual(preview["mode"], "unsupported")
+    self.assertEqual(preview["name"], "report.xlsx")
+    self.assertEqual(self.store.workspace_file_path(workspace["id"], "sheets/report.xlsx").read_bytes(), b"not a real workbook")
 
-  def test_office_preview_cache_path_stays_under_storage(self) -> None:
+  def test_office_preview_rejects_direct_requests_even_with_cache(self) -> None:
     workspace = self.create_preview_workspace()
     metadata = self.store.file_metadata(workspace["id"], "sheets/report.xlsx")
     cache_dir = self.store.preview_dir / workspace["id"] / metadata["blob"]
     cache_dir.mkdir(parents=True)
     cached = cache_dir / "preview.pdf"
     cached.write_bytes(b"%PDF cached")
-    self.assertEqual(self.store.rendered_preview_path(workspace["id"], "sheets/report.xlsx"), cached)
+    with self.assertRaises(StorageError) as context:
+      self.store.rendered_preview_path(workspace["id"], "sheets/report.xlsx")
+    self.assertEqual(context.exception.code, "unsupported_preview")
 
   def test_fork_materializes_independent_workspace(self) -> None:
     source = self.create_workspace(shared=True)

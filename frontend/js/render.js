@@ -1,4 +1,5 @@
 import { t } from "./i18n.js";
+import { markdownToHtml } from "./chatMarkdown.js";
 import { fallbackAuditEvents } from "./mockData.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { isEventStreamNearBottom } from "./scrollPosition.js";
@@ -91,52 +92,6 @@ function editableName(kind, id, value, location, editable = true) {
   }
   if (!editable) return `<span class="inline-name-static">${escapeHtml(value)}</span>`;
   return `<button type="button" class="inline-name" data-edit-name data-name-kind="${kind}" data-name-id="${safeId}" data-editor-location="${safeLocation}" title="${t("actions.rename")}">${escapeHtml(value)}</button>`;
-}
-
-function inlineMarkdown(value) {
-  return escapeHtml(value)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
-    .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer">$1</a>');
-}
-
-function markdownToHtml(value) {
-  const blocks = String(value).split(/```/);
-  return blocks
-    .map((block, index) => {
-      if (index % 2 === 1) {
-        const lines = block.replace(/^\w+\n/, "").replace(/\n$/, "");
-        return `<pre><code>${escapeHtml(lines)}</code></pre>`;
-      }
-      const lines = block.split(/\n/);
-      const html = [];
-      let list = [];
-      const flushList = () => {
-        if (!list.length) return;
-        html.push(`<ul>${list.map((item) => `<li>${inlineMarkdown(item)}</li>`).join("")}</ul>`);
-        list = [];
-      };
-      lines.forEach((line) => {
-        const listMatch = line.match(/^\s*[-*]\s+(.+)$/);
-        if (listMatch) {
-          list.push(listMatch[1]);
-          return;
-        }
-        flushList();
-        if (!line.trim()) return;
-        const heading = line.match(/^(#{1,3})\s+(.+)$/);
-        if (heading) {
-          const level = heading[1].length + 2;
-          html.push(`<h${level}>${inlineMarkdown(heading[2])}</h${level}>`);
-          return;
-        }
-        html.push(`<p>${inlineMarkdown(line)}</p>`);
-      });
-      flushList();
-      return html.join("");
-    })
-    .join("");
 }
 
 function pathIsSelected(path, selectedPaths) {

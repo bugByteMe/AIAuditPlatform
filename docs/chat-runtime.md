@@ -161,6 +161,13 @@ event payload is available. Event rendering follows new output only when the
 reader is already near the bottom; otherwise it preserves the visible event
 anchor across refreshes.
 
+Assistant Markdown links to `/workspace/<relative-file-path>` appear as download
+links. The browser resolves them against the selected workspace at click time
+and uses the authenticated workspace raw-file endpoint with `download=1`;
+the runner's `/workspace` path is never served directly. Invalid or escaping
+paths remain plain text, and the endpoint still checks workspace access and
+file existence. Ordinary external HTTP(S) links continue to open normally.
+
 Workspace responses contain chat-session summaries rather than embedded
 transcripts. The browser fetches the latest selected-session page separately.
 History pages and SSE events omit stored `raw` runner payloads, including large
