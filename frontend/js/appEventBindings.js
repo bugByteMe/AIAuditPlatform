@@ -81,6 +81,13 @@ export function createEventBindings(context) {
   const toggleWorkspaceSharing = (...args) => context.toggleWorkspaceSharing(...args);
   const updateWorkspaceRunLock = (...args) => context.updateWorkspaceRunLock(...args);
   const uploadFilesToCurrentWorkspace = (...args) => context.uploadFilesToCurrentWorkspace(...args);
+  const cancelWorkspaceUpload = (...args) => context.cancelWorkspaceUpload(...args);
+  const openDestinationPicker = (...args) => context.openDestinationPicker(...args);
+  const closeDestinationPicker = (...args) => context.closeDestinationPicker(...args);
+  const selectDestinationFolder = (...args) => context.selectDestinationFolder(...args);
+  const expandDestinationFolder = (...args) => context.expandDestinationFolder(...args);
+  const confirmDestinationPicker = (...args) => context.confirmDestinationPicker(...args);
+  const acceptNativeUpload = (...args) => context.acceptNativeUpload(...args);
   const deleteCurrentWorkspacePath = (...args) => context.deleteCurrentWorkspacePath(...args);
   const deleteSelectedWorkspacePaths = (...args) => context.deleteSelectedWorkspacePaths(...args);
   const deleteWorkspace = (...args) => context.deleteWorkspace(...args);
@@ -279,6 +286,26 @@ export function createEventBindings(context) {
         return;
       }
 
+      if (event.target.closest("[data-close-destination]")) {
+        closeDestinationPicker();
+        return;
+      }
+
+      const destinationExpand = event.target.closest("[data-destination-expand]");
+      if (destinationExpand) {
+        expandDestinationFolder(destinationExpand.dataset.destinationExpand);
+        return;
+      }
+      const destinationSelect = event.target.closest("[data-destination-path]");
+      if (destinationSelect) {
+        selectDestinationFolder(destinationSelect.dataset.destinationPath);
+        return;
+      }
+      if (event.target.closest("#workspace-destination-confirm")) {
+        confirmDestinationPicker();
+        return;
+      }
+
       if (!event.target.closest("#file-context-menu")) {
         closeFileContextMenu();
       }
@@ -346,6 +373,10 @@ export function createEventBindings(context) {
         }
         if (actionButton.dataset.action === "fork") {
           forkWorkspace(index);
+          return;
+        }
+        if (actionButton.dataset.action === "cancel-upload") {
+          cancelWorkspaceUpload(workspaceAt(index).id);
           return;
         }
         if (actionButton.dataset.action === "delete") {
@@ -785,14 +816,14 @@ export function createEventBindings(context) {
     document.querySelector("#workspace-add-menu-button").addEventListener("click", () => {
       document.querySelector("#workspace-add-menu").classList.toggle("hidden");
     });
-    document.querySelector("#workspace-add-files-button").addEventListener("click", () => document.querySelector("#workspace-add-files-input").click());
-    document.querySelector("#workspace-add-folder-button").addEventListener("click", () => document.querySelector("#workspace-add-folder-input").click());
+    document.querySelector("#workspace-add-files-button").addEventListener("click", () => openDestinationPicker("files"));
+    document.querySelector("#workspace-add-folder-button").addEventListener("click", () => openDestinationPicker("folder"));
     document.querySelector("#workspace-add-files-input").addEventListener("change", (event) => {
-      uploadFilesToCurrentWorkspace(event.target.files);
+      acceptNativeUpload(event.target.files, "files");
       event.target.value = "";
     });
     document.querySelector("#workspace-add-folder-input").addEventListener("change", (event) => {
-      uploadFilesToCurrentWorkspace(event.target.files);
+      acceptNativeUpload(event.target.files, "folder");
       event.target.value = "";
     });
     document.querySelector("#file-context-menu").addEventListener("click", (event) => {

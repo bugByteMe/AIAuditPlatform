@@ -63,13 +63,15 @@ class WorkspaceFilesMixin:
         relative = item.relative_to(workspace_path).as_posix()
         parts = relative.split("/")
         if item.is_dir():
-          has_children = bool(visible_children(item))
+          child_count = len(visible_children(item))
+          has_children = child_count > 0
           rows.append({
             "name": item.name,
             "path": relative,
             "type": "folder",
             "level": len(parts) - 1,
             "hasChildren": has_children,
+            "childCount": child_count,
             "childrenLoaded": not has_children or remaining_depth > 1,
           })
           if has_children and remaining_depth > 1:

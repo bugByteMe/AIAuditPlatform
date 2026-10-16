@@ -95,6 +95,20 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("if (workspaceId) await refreshWorkspaceById(workspaceId)", app_source)
         self.assertIn("!safeCurrentWorkspace()?.detailLoaded", app_source)
 
+    def test_workspace_upload_controls_and_destination_picker_are_wired(self) -> None:
+        root = FRONTEND_ROOT / "js"
+        render = (root / "render.js").read_text(encoding="utf-8")
+        bindings = (root / "appEventBindings.js").read_text(encoding="utf-8")
+        controls = (root / "appUploadControls.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn('workspace.activeUpload?.status === "uploading"', render)
+        self.assertIn('data-action="cancel-upload"', render)
+        self.assertIn('id="workspace-destination-modal"', html)
+        self.assertIn('openDestinationPicker("files")', bindings)
+        self.assertIn('openDestinationPicker("folder")', bindings)
+        self.assertIn('method: "DELETE"', controls)
+        self.assertIn('depth: "1"', controls)
+
     def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")

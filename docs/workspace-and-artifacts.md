@@ -1,3 +1,11 @@
+---
+title: Workspace and Artifacts
+form: design
+updated: 2026-10-16
+status: active
+tags: [workspace, uploads, artifacts]
+---
+
 # Workspace and Artifacts
 
 ## Workspace Model
@@ -18,6 +26,8 @@ tree render these three levels by default and request only the direct children
 of a deeper folder when the user expands it.
 
 File-tree nodes expose their workspace-relative path, absolute display level, type, and whether folder children exist and are already present in the response. The authenticated file-tree endpoint accepts a normalized folder path and a bounded depth; current browser expansion requests use a depth of one. Backend traversal stops at the requested depth and applies the same workspace permission and path-containment checks as file access.
+
+Folder nodes also include `childCount`, the number of direct visible files and folders. Both workspace trees initially collapse folders with more than five direct children and folders whose children have not yet loaded. Folders with at most five loaded children remain expanded until the user changes them. The upload destination picker loads directories one level at a time and offers the workspace root and existing folders only.
 
 Both frontend trees share loaded node data while retaining independent expanded/collapsed state. A workspace snapshot change invalidates lazily loaded descendants so deleted or replaced paths cannot remain visible. Folder selections are represented as subtree selections and are expanded by the backend for downloads, so selecting or operating on a folder does not require sending its full tree to the browser.
 
@@ -40,6 +50,10 @@ The public upload lifecycle is:
 3. `GET /api/uploads/<id>` reconciles offsets and processing state after reconnects.
 4. `POST /api/uploads/<id>/complete` starts worker finalization.
 5. `DELETE /api/uploads/<id>` cancels a session before finalization begins.
+
+For append uploads, `POST /api/uploads` accepts an optional `destinationPath` that must resolve to an existing non-symlink workspace directory; omitted or empty means the workspace root. The server prefixes each uploaded relative file path before duplicate, file-count, and quota checks. A selected local folder keeps its own top-level name beneath the destination. The browser includes the destination in its resumable-session fingerprint.
+
+Workspace list and detail responses show `activeUpload: { id, status }` only to the workspace owner and system/platform administrators when an append upload holds the workspace lease; otherwise it is `null`. The catalog batches status lookups. Those users may cancel that upload via the existing DELETE endpoint while it is still `uploading`, including when another administrator started it. Processing and committing uploads remain non-cancellable; a race to finalization returns a conflict. New-workspace upload cancellation retains its original uploader/system-admin authorization.
 
 Network progress and server processing are separate phases. The UI reports completion only after the worker result and authoritative metadata commit are complete. A browser reload requires the user to reselect the same folder; path, size, and modification time are matched to the persisted session. Expired pre-commit sessions release their quota and workspace reservations.
 

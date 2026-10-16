@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import posixpath
 import threading
 import time
 
@@ -9,7 +10,7 @@ from compute_nodes import WorkerUnavailable
 from config import SETTINGS
 from upload_database import TERMINAL_UPLOAD_STATES, UploadDatabase
 from worker_upload import TrackedReader, UploadStreamTimeout, WorkerUploadStore
-from workspace_store import StorageError, generated_id, normalize_relative_path
+from workspace_store import StorageError, ensure_under_root, generated_id, normalize_relative_path
 
 ACTIVE_UPLOAD_STATES = {"uploading", "processing", "committing"}
 
@@ -73,9 +74,16 @@ class UploadManager:
         raise StorageError("empty_upload", "at least one uploaded file is required")
       if len(raw_files) > self.settings.max_file_count:
         raise StorageError("too_many_files", "workspace exceeds file count limit")
+      destination = str(payload.get("destinationPath") or "")
+      if mode == "create" and destination:
+        raise StorageError("bad_request", "destination is only available for existing workspaces")
+      if destination:
+        destination = normalize_relative_path(f"{destination}/__folder__").rsplit("/", 1)[0]
       files, seen, total = [], set(), 0
       for source in raw_files:
         path = normalize_relative_path(str(source.get("path") or ""))
+        if destination:
+          path = normalize_relative_path(posixpath.join(destination, path))
         if path in seen:
           raise StorageError("bad_request", f"duplicate upload path: {path}")
         seen.add(path)
@@ -94,6 +102,15 @@ class UploadManager:
         workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
         if not self.store.user_can_mutate_workspace(user, workspace):
           raise StorageError("forbidden", "only the owner or an administrator can add files")
+        if destination:
+          root = self.store.workspace_path(workspace_id)
+          target = root
+          for part in destination.split("/"):
+            target = target / part
+            if target.is_symlink():
+              raise StorageError("unsafe_path", "destination cannot contain symbolic links")
+          if not ensure_under_root(root, target).is_dir():
+            raise StorageError("bad_request", "destination folder does not exist")
         if workspace.get("locked"):
           raise StorageError("workspace_locked", "workspace has an active write lock")
         parent = metadata.get("snapshots", {}).get(workspace.get("latestSnapshotId")) or {"files": {}}
@@ -146,12 +163,18 @@ class UploadManager:
       return self.worker_registry.client(session["workerId"]).initialize_upload(payload)
     return self.local_worker.initialize(payload)
 
-  def _session(self, upload_id: str, user: dict) -> dict:
+  def _session(self, upload_id: str, user: dict, *, cancelling: bool = False) -> dict:
     session = self.database.get(upload_id)
     if not session:
       raise StorageError("not_found", "upload session not found")
     if session["owner"] != user["username"] and user.get("role") != "system_admin":
-      raise StorageError("forbidden", "upload session access denied")
+      if not cancelling or session.get("mode") != "append":
+        raise StorageError("forbidden", "upload session access denied")
+      workspace = self.store.get_workspace(session["workspaceId"], user)
+      if not self.store.user_can_mutate_workspace(user, workspace):
+        raise StorageError("forbidden", "upload session access denied")
+      if workspace.get("activeUploadId") != upload_id:
+        raise StorageError("upload_commit_started", "upload is no longer active in this workspace")
     return session
 
   @staticmethod
@@ -274,9 +297,15 @@ class UploadManager:
       return self.public(session, result)
 
   def cancel(self, upload_id: str, user: dict) -> dict:
-    session = self._session(upload_id, user)
+    session = self._session(upload_id, user, cancelling=True)
     with self.session_locks.hold(upload_id), self.store.coordination_locks.hold(f"workspace:{session['workspaceId']}"):
-      session = self._session(upload_id, user)
+      session = self._session(upload_id, user, cancelling=True)
+      if session["mode"] == "append":
+        workspace = self.store.get_workspace(session["workspaceId"], user)
+        if workspace.get("activeUploadId") != upload_id or not self.store.user_can_mutate_workspace(user, workspace):
+          raise StorageError("upload_commit_started", "upload is no longer active in this workspace")
+      if session["status"] != "uploading":
+        raise StorageError("upload_commit_started", "upload processing has already started")
       if self.worker_registry:
         self.worker_registry.client(session["workerId"]).cancel_upload(upload_id)
       else:

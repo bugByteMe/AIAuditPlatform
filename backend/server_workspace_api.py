@@ -18,9 +18,20 @@ from wechat_pay import WechatPayError
 from workspace_store import StorageError, parse_query, parse_urlencoded_paths
 
 class WorkspaceHandlerMixin:
+  def public_active_upload(self, upload_id: str | None) -> dict | None:
+    if not upload_id:
+      return None
+    status = UPLOAD_MANAGER.database.statuses([upload_id]).get(upload_id)
+    return {"id": upload_id, "status": status} if status in {"uploading", "processing", "committing"} else None
+
   def list_workspaces(self) -> None:
     user = self.require_user()
-    self.write_json({"workspaces": WORKSPACE_STORE.list_workspaces(user), "resources": CHAT_RUNTIME.resource_status()})
+    workspaces = WORKSPACE_STORE.list_workspaces(user)
+    statuses = UPLOAD_MANAGER.database.statuses([item["activeUploadId"] for item in workspaces if item.get("activeUploadId")])
+    for workspace in workspaces:
+      upload_id = workspace.pop("activeUploadId", None)
+      workspace["activeUpload"] = {"id": upload_id, "status": statuses[upload_id]} if statuses.get(upload_id) in {"uploading", "processing", "committing"} else None
+    self.write_json({"workspaces": workspaces, "resources": CHAT_RUNTIME.resource_status()})
 
   def upload_api(self, method: str, path: str, query: str) -> None:
     user = self.require_user()
@@ -69,7 +80,9 @@ class WorkspaceHandlerMixin:
       return
     if method == "GET" and not action:
       workspace = WORKSPACE_STORE.get_workspace(workspace_id, user)
-      self.write_json({"workspace": WORKSPACE_STORE.public_workspace(workspace), "resources": CHAT_RUNTIME.resource_status()})
+      payload = WORKSPACE_STORE.public_workspace(workspace)
+      payload["activeUpload"] = self.public_active_upload(workspace.get("activeUploadId")) if WORKSPACE_STORE.user_can_mutate_workspace(user, workspace) else None
+      self.write_json({"workspace": payload, "resources": CHAT_RUNTIME.resource_status()})
     elif method == "PATCH" and not action:
       workspace = WORKSPACE_STORE.update_workspace(workspace_id, user, self.read_json())
       add_audit(user["username"], "workspace updated", workspace_id)

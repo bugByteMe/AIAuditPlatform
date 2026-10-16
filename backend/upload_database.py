@@ -53,6 +53,17 @@ class UploadDatabase:
       row = connection.execute(select(self.sessions.c.payload).where(self.sessions.c.id == upload_id)).first()
       return dict(row.payload) if row else None
 
+  def statuses(self, upload_ids: list[str]) -> dict[str, str]:
+    if not upload_ids:
+      return {}
+    statuses = {}
+    with self.engine.connect() as connection:
+      for start in range(0, len(upload_ids), 500):
+        batch = upload_ids[start:start + 500]
+        rows = connection.execute(select(self.sessions.c.id, self.sessions.c.status).where(self.sessions.c.id.in_(batch)))
+        statuses.update({row.id: row.status for row in rows})
+    return statuses
+
   def all(self) -> dict[str, dict]:
     with self.engine.connect() as connection:
       return {row.id: dict(row.payload) for row in connection.execute(select(self.sessions))}

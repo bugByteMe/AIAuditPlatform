@@ -104,6 +104,7 @@ body { line-height: 1.55; }
   box-shadow: 0 12px 30px rgb(23 42 51 / 16%);
 }
 .action-menu-items .btn { width: 100%; text-align: left; }
+.action-menu-status { display: block; padding: 8px 12px; color: var(--muted); font-size: 12px; }
 .workspace-file-more .action-menu-items { min-width: 195px; }
 
 .chat-layout { border: 1px solid var(--line); border-radius: 12px 12px 0 0; }

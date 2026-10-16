@@ -2,7 +2,7 @@ FROM node:22-bookworm-slim AS node-runtime
 
 FROM python:3.12-slim-bookworm
 
-ARG CODEX_VERSION=0.153.4
+ARG CODEX_VERSION=0.162.0
 ARG NPM_REGISTRY=https://registry.npmmirror.com
 ARG PIP_INDEX_URL=https://mirrors.aliyun.com/pypi/simple
 ARG PIP_TRUSTED_HOST=mirrors.aliyun.com
@@ -39,7 +39,7 @@ RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
     defusedxml \
     docx2txt \
     lxml \
-    markitdown \
+    'markitdown[pptx]' \
     numpy \
     openpyxl \
     pandas \
@@ -50,6 +50,7 @@ RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
     pypdfium2 \
     pytesseract \
     python-docx \
+    python-pptx \
     reportlab
 
 RUN npm install -g "@openai/codex@${CODEX_VERSION}" --registry="${NPM_REGISTRY}" \

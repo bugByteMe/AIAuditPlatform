@@ -248,7 +248,13 @@ class WorkspaceCoreMixin:
       group_name=str(user.get("group") or ""),
       system_admin=user.get("role") in {"system_admin", "platform_admin"},
     )
-    return [self.public_workspace_summary(workspace) for workspace in workspaces]
+    summaries = []
+    for workspace in workspaces:
+      summary = self.public_workspace_summary(workspace)
+      if workspace.get("activeUploadId") and self.user_can_mutate_workspace(user, workspace):
+        summary["activeUploadId"] = workspace["activeUploadId"]
+      summaries.append(summary)
+    return summaries
 
   def get_workspace(self, workspace_id: str, user: dict) -> dict:
     workspace = self.database.get_workspace_header(workspace_id)

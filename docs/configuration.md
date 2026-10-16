@@ -1,7 +1,7 @@
 ---
 title: Runtime Configuration
 form: reference
-updated: 2026-10-14
+updated: 2026-10-15
 status: active
 tags: [configuration, operations]
 ---
@@ -70,6 +70,67 @@ container runs as UID/GID `10001`, so the storage mount must be writable by that
 identity. The image serves the bundled frontend and exposes `/api/health` as its
 Docker health check. Put the existing Nginx configuration in front of port 8000
 for public TLS, streaming uploads, and SSE.
+
+## PostgreSQL on a new control-plane host
+
+These instructions are for a fresh Ubuntu/Debian host with PostgreSQL installed
+on the host, while the control plane runs in Docker. Do not initialize or
+overwrite an existing database cluster. Other distributions and a PostgreSQL
+container use different installation and data-volume procedures.
+
+```bash
+sudo apt update
+sudo apt install postgresql
+sudo systemctl enable --now postgresql
+sudo -u postgres psql -Atc "SHOW data_directory;"
+sudo -u postgres psql -Atc "SHOW config_file;"
+sudo -u postgres psql -Atc "SHOW hba_file;"
+```
+
+The package normally initializes the cluster during installation. The
+`SHOW data_directory` result gives the actual on-disk location; do not assume a fixed path.
+Include that directory in your PostgreSQL backup and recovery plan. Create a
+dedicated login role and database on a *new, empty* installation:
+
+```bash
+sudo -u postgres createuser --pwprompt ai_audit
+sudo -u postgres createdb -O ai_audit ai_audit
+```
+
+Enter a new password at the prompt; do not put it in shell history or this
+repository. Set `AI_AUDIT_DATABASE_URL` in the protected control-plane env
+file, not in the callback receiver's env file. For example, if PostgreSQL is
+reachable at the Docker host gateway:
+
+```text
+AI_AUDIT_DATABASE_URL=postgresql+psycopg://ai_audit:<URL-encoded-password>@host.docker.internal:5432/ai_audit
+```
+
+With the bridge-networked `docker run` command above, add
+`--add-host=host.docker.internal:host-gateway`. A container's `127.0.0.1` is
+the container itself, so a host PostgreSQL listening only on localhost is not
+reachable through this bridge connection. Find the actual Docker gateway and
+container subnet for the network in use (`docker network inspect bridge` for
+the default bridge). Configure PostgreSQL's `listen_addresses` in the file
+reported by `SHOW config_file` to include that gateway address (for example,
+`listen_addresses = 'localhost,<gateway-ip>'`). In the file reported by
+`SHOW hba_file`, add a rule restricted to the actual Docker subnet, for example:
+
+```text
+host  ai_audit  ai_audit  <docker-subnet-cidr>  scram-sha-256
+```
+
+Replace both placeholders with values from the host; do not use the entire
+private network without checking which containers can access it. Restart
+PostgreSQL after changing `listen_addresses`, and restrict TCP 5432 with the
+host firewall; never expose it to the public internet. The host-gateway name
+does not make PostgreSQL accept connections on its own.
+
+Recreate the control-plane container after changing its env file; restarting
+an existing container does not update its environment. PostgreSQL stores
+account, chat, upload-coordination, and workspace metadata, **not** workspace
+file payloads in `/mnt/workspace_storage`. The separate WeChat callback
+receiver uses its own SQLite inbox and does not need `AI_AUDIT_DATABASE_URL`.
 
 ## Service and Storage
 

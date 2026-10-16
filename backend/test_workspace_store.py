@@ -221,6 +221,18 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual(paths["workpapers"]["type"], "folder")
     self.assertEqual(paths["workpapers/income.txt"]["type"], "file")
 
+  def test_file_tree_counts_only_direct_visible_children(self) -> None:
+    workspace = self.store.create_workspace(OWNER, "Counts", True, [
+      UploadedFile(f"five/{index}.txt", b"a") for index in range(4)
+    ] + [UploadedFile(f"six/{index}.txt", b"b") for index in range(6)] + [
+      UploadedFile("five/nested/deep.txt", b"c"),
+    ])
+    rows = {item["path"]: item for item in self.store.file_tree(workspace["id"], depth=1)}
+    self.assertEqual(rows["five"]["childCount"], 5)
+    self.assertEqual(rows["six"]["childCount"], 6)
+    self.assertFalse(rows["five"]["childrenLoaded"])
+    self.assertEqual(self.store.file_tree(workspace["id"], parent="five/nested", depth=1)[0]["path"], "five/nested/deep.txt")
+
   def test_file_tree_limits_initial_depth_and_loads_one_folder_level(self) -> None:
     workspace = self.store.create_workspace(
       OWNER,

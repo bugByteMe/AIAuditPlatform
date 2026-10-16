@@ -428,6 +428,23 @@
         <div class="preview-content" id="preview-content"></div>
       </section>
     </div>
+    <div class="modal-backdrop hidden" id="workspace-destination-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-destination-title">
+      <section class="modal-panel">
+        <div class="panel-head">
+          <div>
+            <h2 id="workspace-destination-title" data-i18n="files.chooseDestination">选择上传位置</h2>
+            <p data-i18n="files.destinationHelp">选择工作区中已有的文件夹，或使用工作区根目录。</p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-destination aria-label="Close">×</button>
+        </div>
+        <div class="destination-folder-list" id="workspace-destination-list" role="group" aria-labelledby="workspace-destination-title"></div>
+        <p class="destination-selected"><span data-i18n="files.destinationSelected">上传到：</span> <strong id="workspace-destination-selected"></strong></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-destination data-i18n="actions.cancel">取消</button>
+          <button type="button" class="btn primary" id="workspace-destination-confirm" data-i18n="files.chooseDestinationConfirm">选择此位置</button>
+        </div>
+      </section>
+    </div>
     <div class="modal-backdrop hidden" id="batch-account-modal" role="dialog" aria-modal="true" aria-labelledby="batch-account-title">
       <form class="modal-panel" id="batch-account-form">
         <div class="panel-head">

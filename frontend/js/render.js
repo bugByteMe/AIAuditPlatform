@@ -277,6 +277,8 @@ export function renderWorkspaces() {
               <div class="action-menu-items">
                 ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${shareTitle} <span aria-hidden="true">${shareIcon}</span></button>` : ""}
                 ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
+                ${canAdministerWorkspace(workspace) && workspace.activeUpload?.status === "uploading" ? `<button type="button" class="btn danger" data-action="cancel-upload" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.cancelUpload")}</button>` : ""}
+                ${canAdministerWorkspace(workspace) && ["processing", "committing"].includes(workspace.activeUpload?.status) ? `<span class="action-menu-status">${t("workspace.uploadProcessing")}</span>` : ""}
                 ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.delete")}</button>` : ""}
               </div>
             </details>` : ""}

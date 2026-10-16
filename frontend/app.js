@@ -3,6 +3,7 @@ import { createAdminRecharge } from "./js/appAdminRecharge.js";
 import { createWorkspaceActions } from "./js/appWorkspaceActions.js";
 import { createEventBindings } from "./js/appEventBindings.js";
 import { createUploadActions } from "./js/appUploads.js";
+import { createUploadControls } from "./js/appUploadControls.js";
 import { api, apiUrl, authenticatedApiUrl, uploadChunkApi } from "./js/api.js";
 import {
   LIVE_CHAT_STATES,
@@ -14,6 +15,7 @@ import {
   sessionEventCursor,
 } from "./js/chatEvents.js";
 import { applyLocale, t } from "./js/i18n.js";
+import { defaultCollapsedFolders } from "./js/fileTreeState.js";
 import { state } from "./js/state.js";
 import {
   renderAdmin,
@@ -129,11 +131,8 @@ function replaceWorkspace(updatedWorkspace) {
 }
 
 function resetFileTreeState(workspace) {
-  const collapsed = (workspace?.files || [])
-    .filter((file) => file.type === "folder" && file.hasChildren && !file.childrenLoaded)
-    .map((file) => file.path);
-  state.collapsedFileFolders = new Set(collapsed);
-  state.collapsedArtifactFolders = new Set(collapsed);
+  state.collapsedFileFolders = defaultCollapsedFolders(workspace?.files);
+  state.collapsedArtifactFolders = defaultCollapsedFolders(workspace?.files);
   state.loadingFileFolders = new Set();
   state.selectedArtifacts = new Set(
     (workspace?.files || [])
@@ -166,12 +165,10 @@ async function expandWorkspaceFolder(path, collapsedFolders, renderTree) {
     const latestWorkspace = state.workspaces.find((item) => item.id === workspace.id);
     if (!latestWorkspace) return;
     mergeWorkspaceTreeFiles(latestWorkspace, result.files || []);
-    (result.files || [])
-      .filter((file) => file.type === "folder" && file.hasChildren && !file.childrenLoaded)
-      .forEach((file) => {
-        state.collapsedFileFolders.add(file.path);
-        state.collapsedArtifactFolders.add(file.path);
-      });
+    defaultCollapsedFolders(result.files).forEach((path) => {
+      state.collapsedFileFolders.add(path);
+      state.collapsedArtifactFolders.add(path);
+    });
     const latestFolder = latestWorkspace.files.find((file) => file.type === "folder" && file.path === path);
     if (latestFolder) latestFolder.childrenLoaded = true;
     collapsedFolders.delete(path);
@@ -579,14 +576,14 @@ async function updateWorkspaceRunLock(enabled) {
   }
 }
 
-async function uploadFilesToCurrentWorkspace(files) {
+async function uploadFilesToCurrentWorkspace(files, destinationPath = "", workspaceId = "") {
   const workspace = safeCurrentWorkspace();
   const incoming = [...files];
-  if (!workspace || !incoming.length) return;
+  if (!workspace || !incoming.length || (workspaceId && workspace.id !== workspaceId)) return;
   const items = incoming.map((file) => ({ file, path: file.webkitRelativePath || file.name }));
   setOperationProgress(t("progress.uploadFiles"), 0);
   try {
-    const updatedWorkspace = await runResumableUpload({ items, mode: "append", workspaceId: workspace.id, uploadLabel: t("progress.uploadFiles") });
+    const updatedWorkspace = await runResumableUpload({ items, mode: "append", workspaceId: workspace.id, destinationPath, uploadLabel: t("progress.uploadFiles") });
     replaceWorkspace(updatedWorkspace);
     document.querySelector("#workspace-add-menu").classList.add("hidden");
     renderDynamic();
@@ -775,6 +772,7 @@ Object.assign(appContext, createAdminRecharge(appContext));
 Object.assign(appContext, createWorkspaceActions(appContext));
 Object.assign(appContext, createEventBindings(appContext));
 Object.assign(appContext, createUploadActions(appContext));
+Object.assign(appContext, createUploadControls(appContext));
 const {
   stopChatStream,
   currentSessionObject,
@@ -838,6 +836,13 @@ const {
   bindInputs,
   uploadFingerprint,
   runResumableUpload,
+  cancelWorkspaceUpload,
+  openDestinationPicker,
+  closeDestinationPicker,
+  selectDestinationFolder,
+  expandDestinationFolder,
+  confirmDestinationPicker,
+  acceptNativeUpload,
 } = appContext;
 window.addEventListener("hashchange", syncRouteFromLocation);
 window.addEventListener("popstate", syncRouteFromLocation);
