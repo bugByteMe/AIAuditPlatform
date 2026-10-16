@@ -219,6 +219,10 @@ class WorkspaceCoreMixin:
     with self.coordination_locks.hold(f"workspace:{workspace['id']}"):
       self.database.save_workspace_lifecycle(workspace)
 
+  def save_workspace_upload_lease(self, workspace: dict) -> None:
+    with self.coordination_locks.hold(f"workspace:{workspace['id']}"):
+      self.database.save_workspace_upload_lease(workspace)
+
   def prune_preview_blobs(self, digests: set[str]) -> None:
     if not digests or not self.preview_dir.exists():
       return

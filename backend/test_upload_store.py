@@ -218,12 +218,37 @@ class UploadManagerTest(unittest.TestCase):
 
   def test_append_upload_locks_workspace_and_cancel_releases_it(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
+    metadata = self.store.load_workspace_metadata(workspace["id"])
+    metadata["workspaces"][workspace["id"]]["sessions"] = [{"id": "chat_existing"}]
+    self.store.save_workspace_lifecycle(metadata["workspaces"][workspace["id"]])
     upload = self.manager.create(USER, {"mode": "append", "workspaceId": workspace["id"], "files": [{"path": "a.txt", "size": 3}]})
     self.assertTrue(self.store.get_workspace(workspace["id"], USER)["locked"])
+    self.assertEqual(self.store.load_workspace_metadata(workspace["id"])["workspaces"][workspace["id"]]["sessions"], [{"id": "chat_existing"}])
+    metadata = self.store.load_workspace_metadata(workspace["id"])
+    metadata["workspaces"][workspace["id"]]["sessions"].append({"id": "chat_created_during_upload"})
+    self.store.save_workspace_lifecycle(metadata["workspaces"][workspace["id"]])
     self.manager.cancel(upload["id"], USER)
     stored = self.store.get_workspace(workspace["id"], USER)
     self.assertFalse(stored["locked"])
     self.assertNotIn("activeUploadId", stored)
+    self.assertEqual(self.store.load_workspace_metadata(workspace["id"])["workspaces"][workspace["id"]]["sessions"], [
+      {"id": "chat_existing"}, {"id": "chat_created_during_upload"},
+    ])
+
+  def test_stale_upload_lease_repair_preserves_workspace_sessions(self):
+    workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
+    metadata = self.store.load_workspace_metadata(workspace["id"])
+    metadata["workspaces"][workspace["id"]]["sessions"] = [{"id": "chat_existing"}]
+    self.store.save_workspace_lifecycle(metadata["workspaces"][workspace["id"]])
+    upload = self.manager.create(USER, {"mode": "append", "workspaceId": workspace["id"], "files": [{"path": "b.txt", "size": 1}]})
+    session = self.manager.database.get(upload["id"])
+    session["status"] = "cancelled"
+    self.manager.database.save(session)
+    self.manager._repair_workspace_leases()
+    stored = self.store.load_workspace_metadata(workspace["id"])["workspaces"][workspace["id"]]
+    self.assertFalse(stored["locked"])
+    self.assertNotIn("activeUploadId", stored)
+    self.assertEqual(stored["sessions"], [{"id": "chat_existing"}])
 
   def test_workspace_owner_and_administrators_can_cancel_another_users_active_append(self):
     workspace = self.store.create_workspace(USER, "Shared", True, [UploadedFile("existing/a.txt", b"old")])

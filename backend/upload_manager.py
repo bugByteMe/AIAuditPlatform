@@ -60,7 +60,7 @@ class UploadManager:
       if upload_id and (not session or session.get("status") not in ACTIVE_UPLOAD_STATES):
         workspace["locked"] = False
         workspace.pop("activeUploadId", None)
-        self.store.save_workspace_lifecycle(workspace)
+        self.store.save_workspace_upload_lease(workspace)
 
   def create(self, user: dict, payload: dict) -> dict:
     mode = str(payload.get("mode") or "create")
@@ -145,7 +145,7 @@ class UploadManager:
       }
       if workspace:
         workspace["locked"], workspace["activeUploadId"] = True, upload_id
-        self.store.save_workspace_lifecycle(workspace)
+        self.store.save_workspace_upload_lease(workspace)
       self.database.save(session)
       try:
         self._initialize_worker(session)
@@ -330,7 +330,7 @@ class UploadManager:
     if workspace and workspace.get("activeUploadId") == session["id"]:
       workspace["locked"] = False
       workspace.pop("activeUploadId", None)
-      self.store.save_workspace_lifecycle(workspace)
+      self.store.save_workspace_upload_lease(workspace)
 
   def _cleanup_staging(self, session: dict) -> None:
     try:

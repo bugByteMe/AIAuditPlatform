@@ -470,6 +470,15 @@ class WorkspaceDatabase:
             (workspace["id"], session_id, ordinal),
           )
 
+  def save_workspace_upload_lease(self, workspace: dict) -> None:
+    """Update an upload lease without rewriting chat session references."""
+    with closing(self.connect()) as connection, connection:
+      connection.execute("BEGIN IMMEDIATE")
+      connection.execute(
+        "UPDATE workspaces SET locked=?, active_upload_id=? WHERE id=?",
+        (int(bool(workspace.get("locked"))), workspace.get("activeUploadId"), workspace["id"]),
+      )
+
   def referenced_blobs(self, candidates: set[str] | None = None) -> set[str]:
     with closing(self.connect()) as connection, connection:
       if candidates is None:

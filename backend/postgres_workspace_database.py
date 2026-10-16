@@ -203,6 +203,13 @@ class PostgresWorkspaceDatabase:
       ))
       self._replace_sessions(connection, workspace)
 
+  def save_workspace_upload_lease(self, workspace: dict) -> None:
+    """Update an upload lease without rewriting chat session references."""
+    with self.engine.begin() as connection:
+      connection.execute(update(self.workspaces).where(self.workspaces.c.id == workspace["id"]).values(
+        locked=bool(workspace.get("locked")), active_upload_id=workspace.get("activeUploadId"),
+      ))
+
   def _replace_sessions(self, connection, workspace: dict) -> None:
     connection.execute(delete(self.workspace_sessions).where(self.workspace_sessions.c.workspace_id == workspace["id"]))
     rows = [{"workspace_id": workspace["id"], "session_id": str(item.get("id") or ""), "ordinal": ordinal}

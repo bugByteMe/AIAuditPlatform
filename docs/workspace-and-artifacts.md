@@ -42,6 +42,9 @@ after their retention window. Each worker also collects stale staging
 directories independently without traversing active workspaces or blob data.
 
 Compute workers stage chunks under shared storage, persist per-file offsets, stream files while hashing, create missing content-addressed blobs, and apply completed files to the active workspace. Only the control plane commits workspace and snapshot metadata. New workspaces remain invisible until commit; existing workspaces hold a mutation lease from session creation through commit or cancellation.
+Upload lease changes update only the workspace lock and active upload ID; they
+do not rewrite chat-session references. Cancelling an append upload or repairing
+a stale lease therefore leaves the workspace's chats intact.
 
 The public upload lifecycle is:
 
