@@ -37,6 +37,10 @@ function rememberApiBase(base) {
 }
 
 function rememberSessionToken(path, payload) {
+  if (path === "/api/runtime-config" && payload.authMode === "oidc") {
+    // OIDC uses an HttpOnly cookie, not a stale legacy bearer token.
+    window.localStorage.removeItem(SESSION_TOKEN_KEY);
+  }
   if (["/api/login", "/api/register"].includes(path) && payload.sessionToken) {
     window.localStorage.setItem(SESSION_TOKEN_KEY, payload.sessionToken);
   }

@@ -20,6 +20,18 @@ globalThis.window = {
 const { api } = await import("./api.js");
 const { state } = await import("./state.js");
 
+test("OIDC runtime configuration discards legacy bearer tokens", async () => {
+  storage.clear();
+  storage.set("aiAuditSessionToken", "synthetic-legacy-token");
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    headers: { get: () => "application/json" },
+    json: async () => ({ authMode: "oidc" }),
+  });
+  await api("/api/runtime-config");
+  assert.equal(storage.has("aiAuditSessionToken"), false);
+});
+
 test("API base trailing slashes do not create a double-slash upload route", async () => {
   storage.clear();
   storage.set("aiAuditApiBase", "https://control.example.test/");

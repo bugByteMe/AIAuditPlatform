@@ -24,11 +24,21 @@ export function groupSettingsPayload(user, form) {
   return payload;
 }
 
-export function applyAdminPermissions(root, user) {
+export function applyAdminPermissions(root, user, runtimeConfig = {}) {
   root.querySelectorAll("[data-system-admin-only]").forEach((node) => {
     const allowed = isSystemAdmin(user);
     node.classList.toggle("hidden", !allowed);
     const controls = node.matches("input, select, button") ? [node] : node.querySelectorAll("input, select, button");
     controls.forEach((control) => { control.disabled = !allowed; });
   });
+  root.querySelectorAll("[data-invitation-admin-only]").forEach((node) => {
+    const allowed = isSystemAdmin(user) || (runtimeConfig.authMode === "oidc" && canManageAccounts(user));
+    node.classList.toggle("hidden", !allowed);
+    node.disabled = !allowed;
+  });
+  if (runtimeConfig.authMode === "oidc" && runtimeConfig.deploymentCustomerId) {
+    const recharge = root.querySelector?.("#recharge-import-button");
+    recharge?.classList.add("hidden");
+    if (recharge) recharge.disabled = true;
+  }
 }

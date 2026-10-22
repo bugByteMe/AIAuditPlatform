@@ -1,3 +1,4 @@
+import { configureIdentityUi, renderCustomers } from "./identityUi.js";
 // Frontend controller: adminrecharge responsibilities.
 export function createAdminRecharge(context) {
   let workerStatusLoading = false;
@@ -32,6 +33,10 @@ export function createAdminRecharge(context) {
       const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), isSystemAdmin(state.user) ? api("/api/audit-logs") : { logs: [] }, isSystemAdmin(state.user) ? api("/api/workers") : { workers: [] }]);
       state.accounts = accounts.accounts || [];
       state.groups = accounts.groups || [];
+      if (state.runtimeConfig.authMode === "oidc") {
+        const result = await api("/api/customers");
+        renderCustomers(result.customers, state.runtimeConfig.deploymentCustomerId || "");
+      }
       const ownAccount = state.accounts.find((account) => account.id === state.user?.id);
       if (ownAccount) {
         state.user.groupId = ownAccount.groupId;
@@ -68,6 +73,7 @@ export function createAdminRecharge(context) {
     try {
       const config = await api("/api/runtime-config");
       state.runtimeConfig = { ...state.runtimeConfig, ...config };
+      configureIdentityUi(state, api);
       document.querySelector('#register-form [name="password"]').minLength = state.runtimeConfig.registrationMinPasswordLength;
       document.querySelector('#batch-account-form [name="count"]').max = state.runtimeConfig.batchInviteMaxCount;
       document.querySelector('#batch-account-form [name="maxSessions"]').max = state.runtimeConfig.accountMaxSessionsLimit;
@@ -112,7 +118,7 @@ export function createAdminRecharge(context) {
   }
 
   function openBatchAccountModal() {
-    if (state.user?.role !== "system_admin") return;
+    if (!isSystemAdmin(state.user) && !(state.runtimeConfig.authMode === "oidc" && canManageAccounts(state.user))) return;
     const form = document.querySelector("#batch-account-form");
     form.reset();
     state.createdInvites = [];
@@ -368,7 +374,7 @@ export function createAdminRecharge(context) {
         ? t("admin.balanceUnavailable")
         : `¥${account.budget.remaining}`;
     document.querySelector("#account-settings-name").textContent = `${account.username || account.id} · ${balance}`;
-    document.querySelector("#account-settings-balance-field").classList.toggle("hidden", !isSystemAdmin(state.user) || !account.username || account.budget?.source === "custom");
+    document.querySelector("#account-settings-balance-field").classList.toggle("hidden", !isSystemAdmin(state.user) || !account.username || account.budget?.source === "custom" || Boolean(state.runtimeConfig.deploymentCustomerId));
     document.querySelector("#account-settings-error").textContent = "";
     const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
     document.querySelector("#account-settings-delete").disabled = isCurrentUser;

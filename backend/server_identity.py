@@ -19,6 +19,10 @@ from workspace_store import StorageError, parse_query, parse_urlencoded_paths
 
 class IdentityHandlerMixin:
   def login(self) -> None:
+    from identity_config import IDENTITY
+    if IDENTITY.enabled:
+      self.write_json({"redirectUrl": "/api/oidc/login"})
+      return
     payload = self.read_json()
     username = str(payload.get("username", "")).strip()
     password = str(payload.get("password", ""))
@@ -30,6 +34,12 @@ class IdentityHandlerMixin:
     self.start_session(user, "login success")
 
   def register(self) -> None:
+    from identity_config import IDENTITY
+    if IDENTITY.registration_paused:
+      raise ValueError("Registration is temporarily paused")
+    if IDENTITY.enabled:
+      self.oidc_register()
+      return
     payload = self.read_json()
     invite_token = str(payload.get("inviteToken") or "").strip()
     username = str(payload.get("username") or "").strip()
@@ -104,11 +114,19 @@ class IdentityHandlerMixin:
     )
 
   def logout(self) -> None:
+    from identity_config import IDENTITY
     token = self.session_token()
     with SESSION_LOCK:
       session = SESSIONS.pop(token, None) if token else None
+    if IDENTITY.enabled and session:
+      from server_oidc import services
+      from oidc_client import IdentityError
+      try:
+        services()[4].revoke((session.get("oidcTokens") or {}).get("refresh_token", ""))
+      except IdentityError:
+        pass  # Local sign-out must succeed even when the identity provider is unavailable.
     add_audit(session["username"] if session else "anonymous", "logout")
-    self.write_json({"ok": True}, headers={"Set-Cookie": f"{SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0"})
+    self.write_json({"ok": True}, headers={"Set-Cookie": f"{SESSION_COOKIE}=; HttpOnly; Path=/; SameSite=Lax; Max-Age=0" + ("; Secure" if IDENTITY.enabled else "")})
 
   def codex_settings(self) -> None:
     user = self.require_user()

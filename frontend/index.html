@@ -53,6 +53,7 @@
             <span class="button-label" data-i18n="auth.activate">激活并登录</span>
           </button>
           <p class="form-error" id="register-error"></p>
+          <button type="button" id="identity-existing-login" class="btn hidden">已有统一账号？登录 / Already registered? Sign in</button>
         </form>
       </div>
     </section>
@@ -347,7 +348,7 @@
                 <div class="toolbar-actions">
                   <button class="btn" id="recharge-import-button" data-system-admin-only data-i18n="admin.importRecharge">批量充值</button>
                   <button class="btn" id="create-group-button" data-i18n="admin.createGroup">新建小组</button>
-                  <button class="btn primary" id="batch-create-button" data-system-admin-only data-i18n="admin.batchCreate">批量创建</button>
+                  <button class="btn primary" id="batch-create-button" data-invitation-admin-only data-i18n="admin.batchCreate">批量创建</button>
                   <input type="file" id="recharge-import-input" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
                 </div>
               </div>
@@ -447,6 +448,14 @@
     </div>
     <div class="modal-backdrop hidden" id="batch-account-modal" role="dialog" aria-modal="true" aria-labelledby="batch-account-title">
       <form class="modal-panel" id="batch-account-form">
+        <div id="identity-customer-fields" class="hidden">
+          <label class="field"><span>客户 / Customer</span><select name="customerId" id="identity-customer-select"></select></label>
+          <div class="batch-fields" data-identity-customer-create>
+            <label class="field"><span>客户 ID / Customer ID</span><input id="identity-customer-id" /></label>
+            <label class="field"><span>客户名称 / Customer name</span><input id="identity-customer-name" /></label>
+          </div>
+          <button type="button" id="identity-add-customer">添加客户 / Add customer</button>
+        </div>
         <div class="panel-head">
           <div>
             <h2 id="batch-account-title" data-i18n="admin.batchTitle">批量创建邀请</h2>

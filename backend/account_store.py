@@ -9,13 +9,14 @@ from pathlib import Path
 from account_common import new_id, timestamp
 from account_database import AccountDatabase
 from account_recharge import AccountRechargeMixin
+from account_identity import AccountIdentityMixin
 from config import SETTINGS
 
 SCHEMA_VERSION = 7
 DEFAULT_GROUP_LIVE_RUN_LIMIT = 1
 
 
-class AccountStore(AccountRechargeMixin):
+class AccountStore(AccountIdentityMixin, AccountRechargeMixin):
   def __init__(self, path: Path, seed_users: dict[str, dict], database_url: str = ""):
     self.path = path
     self.database_url = database_url
@@ -220,6 +221,7 @@ class AccountStore(AccountRechargeMixin):
     budget_cny: str | int | float | None = None,
     budget_tokens: int | None = None,
     max_sessions: int,
+    customer_id: str = "",
   ) -> tuple[dict, list[dict]]:
     group_id = group_id.strip()
     new_group_name = new_group_name.strip()
@@ -266,6 +268,7 @@ class AccountStore(AccountRechargeMixin):
       created.append(
         {
           "id": user_id,
+          "customerId": customer_id,
           "username": None,
           "displayName": "",
           "role": "user",

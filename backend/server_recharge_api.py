@@ -134,6 +134,7 @@ class RechargeHandlerMixin:
     self.write_json(self.public_recharge_import(result))
 
   def recharge_info(self) -> None:
+    from identity_config import IDENTITY
     user = self.require_user()
     binding = user.get("micu") or {}
     api_key = str(binding.get("apiKey") or "").strip()
@@ -145,8 +146,9 @@ class RechargeHandlerMixin:
         "username": user["username"],
         "baseUrl": SETTINGS.micu_inference_url,
         "apiKey": api_key,
-        "paymentReady": WECHAT_PAY.configured,
-        "paymentError": "" if WECHAT_PAY.configured or not WECHAT_PAY.enabled else "; ".join(WECHAT_PAY.configuration_errors()),
+        "paymentReady": WECHAT_PAY.configured and not (IDENTITY.enabled and IDENTITY.customer_id),
+        "paymentError": "Recharge on the main platform" if IDENTITY.enabled and IDENTITY.customer_id else (
+          "" if WECHAT_PAY.configured or not WECHAT_PAY.enabled else "; ".join(WECHAT_PAY.configuration_errors())),
         "products": [
           {"amountCny": amount, "creditCny": product["creditCny"], "debug": product["debug"]}
           for amount, product in RECHARGE_PRODUCTS.items()

@@ -418,6 +418,10 @@ export function createEventBindings(context) {
   function bindForms() {
     document.querySelector("#login-form").addEventListener("submit", async (event) => {
       event.preventDefault();
+      if (state.runtimeConfig.authMode === "oidc") {
+        window.location.assign("/api/oidc/login");
+        return;
+      }
       const form = new FormData(event.currentTarget);
       const loginError = document.querySelector("#login-error");
       const submitButton = event.currentTarget.querySelector('button[type="submit"]');
@@ -428,6 +432,7 @@ export function createEventBindings(context) {
           method: "POST",
           body: JSON.stringify({ username: form.get("username"), password: form.get("password") }),
         });
+        if (result.redirectUrl) { window.location.assign(result.redirectUrl); return; }
         loginError.textContent = state.lang === "zh" ? "登录成功，正在载入工作区..." : "Signed in. Loading workspaces...";
         showAuthenticated(result.user);
         await loadWorkspaces();
@@ -461,6 +466,7 @@ export function createEventBindings(context) {
           body: JSON.stringify({ inviteToken: form.get("inviteToken"), username: form.get("username"), password: form.get("password") }),
         });
         formElement.reset();
+        if (result.redirectUrl) { window.location.assign(result.redirectUrl); return; }
         if (!result.sessionToken) {
           setAuthMode("login");
           document.querySelector("#login-error").textContent = result.sessionError === "account_disabled"
@@ -501,6 +507,7 @@ export function createEventBindings(context) {
         count: Number(form.get("count")),
         budgetCny: String(form.get("budgetCny") || "0.00"),
         maxSessions: Number(form.get("maxSessions")),
+        ...(state.runtimeConfig.authMode === "oidc" ? { customerId: form.get("customerId") } : {}),
       };
       errorElement.textContent = "";
       if (submitButton) submitButton.disabled = true;

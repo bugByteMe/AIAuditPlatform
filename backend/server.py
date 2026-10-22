@@ -56,7 +56,9 @@ def main() -> None:
   parser.add_argument("--host", default=SETTINGS.host)
   parser.add_argument("--port", type=int, default=SETTINGS.port)
   args = parser.parse_args()
-  uvicorn.run(app, host=args.host, port=args.port)
+  from identity_config import IDENTITY
+  # OIDC callbacks contain one-time authorization codes; never put query strings in access logs.
+  uvicorn.run(app, host=args.host, port=args.port, access_log=not IDENTITY.enabled)
 
 
 if __name__ == "__main__":

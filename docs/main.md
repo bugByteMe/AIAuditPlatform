@@ -40,7 +40,7 @@ See [architecture.md](architecture.md) for the control-plane and worker design.
 
 The system uses internal username/password accounts. Each user can belong to a group. Managed accounts receive a dedicated MicuAPI key and use its CNY balance as the authoritative run budget; users may instead select their own API URL and key. Token counts remain visible as usage reporting. Each group can also have a logical workspace disk limit.
 
-Account sharing is discouraged through concurrent session limits and audit logs for IP/device changes. Strong device binding and SSO are not part of the initial design.
+Account sharing is discouraged through concurrent session limits and audit logs for IP/device changes. Shared OIDC login and customer admission are opt-in; groups and application permissions remain platform-local. See [shared-identity.md](shared-identity.md). Strong device binding is not implemented.
 
 See [identity-and-budget.md](identity-and-budget.md).
 
@@ -69,7 +69,7 @@ Deployment and runtime settings are documented in [configuration.md](configurati
 - Data is sensitive enterprise audit data.
 - Docker is the v1 execution isolation boundary.
 - Shared filesystem storage is the v1 workspace and artifact storage layer.
-- Kubernetes, cloud object storage, external SSO, and collaborative simultaneous file mutation are outside the v1 scope.
+- Kubernetes, cloud object storage, and collaborative simultaneous file mutation are outside the v1 scope.
 - All access to workspace files, artifacts, and chat histories must pass backend permission checks.
 
 ## Validation

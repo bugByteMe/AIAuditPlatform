@@ -140,6 +140,9 @@ def reconcile_wechat_order(order: dict) -> dict:
   return ACCOUNT_STORE.recharge_order(str(current["id"])) or current
 
 def reconcile_wechat_orders() -> None:
+  from identity_config import IDENTITY
+  if IDENTITY.enabled and IDENTITY.customer_id:
+    return
   if not WECHAT_PAY.configured:
     return
   if SETTINGS.wechat_callback_internal_url and len(SETTINGS.wechat_receipt_token) < 32:

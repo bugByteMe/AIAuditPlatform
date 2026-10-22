@@ -1,0 +1,178 @@
+# Shared OIDC identity
+
+Shared identity is opt-in: `AI_AUDIT_AUTH_MODE=local` remains the default.
+Rebuild the control-plane image to install the new dependency. Deploying Keycloak
+alone does not change login; this change performs no production migration.
+
+## User journeys
+
+| Journey | Result |
+| --- | --- |
+| Existing account, current platform | Keycloak verifies the existing password; an explicit issuer/subject link loads the same local ID, group, role, resources, and Micu binding. |
+| Existing identity, new platform | Matching customer on dedicated (any enabled registered customer on main) gets an ordinary local profile in the configured default group. No invitation or credit grant. |
+| Invitation registration | Existing form reserves the invitation, centrally provisions identity/Micu, activates the invitation's local group and limits, then redirects through OIDC login. Registration itself issues no session. |
+| Existing identity with invitation | Enter the code and choose **Already registered? Sign in**. A new local profile receives its group/limits; an existing profile is unchanged and does not consume the invitation. |
+
+Keycloak manages credentials and one admin-assigned `customerId`. Each platform
+manages groups, roles, sessions, and resources. Customer admission has no admin
+bypass. Local disabling/deletion never revokes central identity or shared keys;
+deleted-profile links remain tombstones to prevent automatic recreation.
+
+New usernames are stripped/case-folded and globally unique. Migration preserves
+old platform/Micu spelling using the admin-only `platformUsername` attribute,
+even when Keycloak normalizes login case. Do not edit linked usernames, this
+attribute, or customer assignments outside a reviewed migration.
+
+## Configuration
+
+Identity settings are environment-only. Keep completed files outside Git.
+
+| Variable (`AI_AUDIT_` prefix) | Purpose |
+| --- | --- |
+| `AUTH_MODE` | `local` (default) or `oidc`. |
+| `OIDC_ISSUER` | Stable HTTPS realm issuer. |
+| `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Separate confidential login client for each platform. |
+| `PUBLIC_URL` | Platform HTTPS origin, no path. |
+| `OIDC_DEFAULT_GROUP_ID` | Existing local group for automatic admission; required at startup. |
+| `DEPLOYMENT_CUSTOMER_ID` | Empty on main; fixed business customer on dedicated. |
+| `OIDC_REVALIDATE_SECONDS` | Default 300; allowed range 30–900. |
+| `REGISTRATION_PAUSED` | `true` pauses registration for maintenance/migration. |
+| `KEYCLOAK_ADMIN_CLIENT_ID`, `KEYCLOAK_ADMIN_CLIENT_SECRET` | Main only: separate service account with user query/view/manage access, not realm-admin. |
+| `IDENTITY_CENTRAL_URL`, `IDENTITY_CENTRAL_TOKEN` | Dedicated only: main's trusted HTTPS origin and per-instance service token. |
+| `IDENTITY_CLIENTS_JSON` | Main only: scoped service-token directory below. |
+
+Configure Keycloak following [deployment](keycloak-deployment.md):
+
+1. Disable self-registration and username editing. Keep `customerId`,
+   `platformUsername`, and `platformProvisioningId` administrator-only editable
+   user-profile attributes. Do not let ordinary account-console users write them.
+2. Map `customerId` to a single string in ID tokens **and UserInfo**, in default
+   client scopes. The other two attributes are internal, not user claims.
+3. Use authorization code, mandatory PKCE S256, asymmetric signing (RS256 by
+   default), and disable implicit/password grants. Register the exact callback
+   `https://<platform-host>/api/oidc/callback` and exact HTTPS web origin.
+4. Configure password policy centrally. Do not require password changes for
+   imported users. Do not mandate email/first/last-name fields unless the
+   username/password onboarding form is extended.
+
+Create default groups and an initial local administrator before switching a new
+installation to OIDC; migrate that administrator explicitly. Automatic admission
+never grants administrator permissions.
+
+Dedicated instances use their own Micu management credentials for direct balance
+and pre-run checks. Application guards prevent dedicated recharge/key-lifecycle
+mutations, but cannot make a broad provider credential read-only. Protect those
+hosts. Central Keycloak service-account credentials must exist on main only.
+
+## Customers and invitations
+
+Management roles use `GET /api/customers`; main also accepts
+`POST /api/customers` with `{id, name}`. IDs are immutable lowercase letters,
+digits, underscores/hyphens, up to 64 characters. `public` is reserved for
+non-business users and created automatically; groups are independent.
+
+In OIDC mode, system/platform admins issue batches and revoke unused invitations.
+`POST /api/accounts/batch` adds `customerId`. Main administrators choose a
+registered customer; dedicated instances force their own ID and reject overrides.
+The batch dialog provides customer selection and main-only customer creation.
+Group admins retain their existing lack of invitation-creation access. Local-mode
+privileges remain unchanged.
+
+Public registration still uses `inviteToken`, `username`, and `password`.
+Injected customer/group/role fields never override the invitation. Success in
+OIDC mode returns `{"redirectUrl":"/api/oidc/login"}`, not a bearer token or
+password hash. Passwords exist transiently in memory and outbound HTTPS only.
+
+Reservations persist as `provisioning`, bound to username. Retry the same request
+after interruption; settings/revocation cannot force-cancel this state. The
+central journal records subject and idempotency result. Exact-name Micu reuse
+does not add initial credit twice. Authenticated login can finish interrupted
+local activation. A confirmed username conflict releases an unused reservation
+so the user can choose another name. An unrelated existing central username is
+never claimed or password-reset; its owner must use OIDC. Review unfinished reservations before
+reuse; do not delete central identities to roll them back.
+
+Dedicated servers use authenticated main-platform endpoints:
+
+- `POST /api/internal/identity/provision`: fixed customer, operation ID, and
+  configured per-client initial-budget ceiling.
+- `POST /api/internal/identity/binding`: enabled, customer-matching subject's
+  existing Micu binding; no username-only lookup or credit grant.
+
+There is **no balance-proxy endpoint**. Dedicated recharge orders/imports,
+reset-budget requests, callback reconciliation, and key mutations are blocked.
+Recharge displays credentials/usage and directs payment to main.
+
+`AI_AUDIT_IDENTITY_CLIENTS_JSON` maps stable instance IDs to objects containing
+`customerId`, unique random `token` (at least 32 characters), and
+`maxInitialBudgetCny` (default zero). Put real values in a protected environment
+file. Retain instance IDs across redeploys because they namespace provisioning
+operations. Dedicated tokens never authorize another customer or arbitrary IdP
+administration. Tokens and passwords must not be captured by proxy/APM logs.
+
+Keep internal APIs private/firewalled with HTTPS and per-instance tokens. The
+Nginx example denies them until explicit private source IPs are allowed. It also
+disables access logs for invitation/OIDC URLs. Use `backend/server.py` or launch
+Uvicorn with `--no-access-log` to keep callback codes out of server access logs.
+
+Provider tokens stay server-side; app sessions use Secure, HttpOnly cookies and
+same-origin frontend/backend deployment. Identity/customer status is rechecked
+on the next request after the interval, failing closed on provider failure.
+Local disabling takes effect on the next request. Open streams/runs are not
+forcibly stopped by polling. Local logout revokes its refresh token but leaves
+Keycloak browser SSO available to other platforms. As before, run one control
+process per platform: sessions, flows, rate limits, and profile caches are local
+to that process.
+
+## Offline migration
+
+1. Back up complete application and Keycloak databases. Audit **all instances**
+   for case-insensitive username collisions and shared Micu IDs; resolve different
+   people sharing names/keys before allowing new central provisioning.
+2. Prepare private JSON outside Git. `users` must include every local account as
+   `{localUserId, customerId}`; add `subject` only for an explicitly reviewed link
+   to an existing central identity. Optional `customers` are `{id, name}`.
+   `invitations` maps each legacy pending invite lacking a customer as
+   `{invitationId, customerId}`. Do not infer membership from groups/email domains.
+   For a main-platform migration where every account is explicitly approved as
+   non-business (`public`), generate the file using the existing deployment's
+   database/storage environment and installed backend dependencies:
+
+   ```bash
+   python backend/generate_oidc_mapping.py --output /secure/identity-map.json
+   ```
+
+   The parent directory must already exist. The generator only reads existing
+   account tables, includes disabled/admin accounts and pending invitations,
+   preserves existing public identity subjects, and writes a new mode-0600 file.
+   It exports IDs and customer assignments only, never credentials or invitation
+   tokens. It refuses empty account data, existing output paths, dedicated
+   deployments, and existing non-public assignments rather than overwriting
+   reviewed customer membership. It does not contact Keycloak, verify migration
+   readiness, or run migration. Review its output and run preflight below.
+3. Stop app processes and pause registration/password changes. Set
+   `AI_AUDIT_REGISTRATION_PAUSED=true`, source storage/database configuration, and
+   protected identity credentials for the offline tool.
+4. Run `python backend/migrate_oidc_accounts.py --mapping /secure/identity-map.json`
+   for local preflight. Review, then repeat with `--apply`. Preflight does not
+   check remote Keycloak connectivity. Apply adds identity SQL tables and imports
+   PBKDF2-SHA256 credentials, converting salt/hash hex bytes to Base64 without
+   changing iterations or needing plaintext passwords.
+5. Migrate main first. Dedicated migration requires explicit central subjects
+   and matching existing Micu token IDs; it never imports/resets central
+   passwords. Local IDs, roles, groups, ownership, and usage stay unchanged;
+   linked profiles lose their local password hashes.
+6. Partial migrations can rerun with the same mapping. Operation markers identify
+   imported users; unrelated central identities require explicit subject maps.
+   Rollback requires reviewed database backups, not just an application downgrade.
+7. Verify synthetic credentials against the deployed Keycloak image (including
+   Unicode/long passwords), then a pilot migrated user. Enable OIDC, restart,
+   verify isolation and direct Micu balances, and unpause registration. Keycloak
+   can upgrade password hashes transparently after successful login.
+
+Passwords and resources remain the same, but expect one sign-in after cutover;
+legacy app sessions have no OIDC refresh tokens. Do not switch migrated data
+back to local mode without restoring its backup. Never commit customer mappings,
+credential exports, or real customer data. CI tests cover admission, linking,
+reservation/retry races, token validation, hash conversion, and provider
+boundaries; real Keycloak login/restore drills remain deployment gates.

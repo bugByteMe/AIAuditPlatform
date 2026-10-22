@@ -12,6 +12,9 @@ For the standalone central identity deployment, see
 [Keycloak deployment](keycloak-deployment.md). Deploying it alone does not change
 the platform's current login or account storage.
 
+For opt-in shared login, invitation provisioning, customer admission, and
+environment-only OIDC configuration, see [Shared OIDC identity](shared-identity.md).
+
 The backend reads `config/ai_audit.json` by default. Set `AI_AUDIT_CONFIG` to use another file. Every setting can be overridden with its corresponding environment variable; environment variables take precedence over the JSON file.
 
 Install the Linux control-plane Python dependencies before starting the backend:

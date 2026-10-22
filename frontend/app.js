@@ -340,7 +340,7 @@ function routeToView(view, { replace = false } = {}) {
 function showAuthenticated(user) {
   state.user = user;
   const isAdmin = canManageAccounts(user);
-  applyAdminPermissions(document, user);
+  applyAdminPermissions(document, user, state.runtimeConfig);
   document.querySelector("#admin-nav-button").classList.toggle("hidden", !isAdmin);
   if (!isAdmin && viewFromLocation() === "admin") routeToView("workspace", { replace: true });
   document.querySelector("#auth-screen").classList.add("hidden");

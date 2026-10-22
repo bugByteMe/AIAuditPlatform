@@ -41,8 +41,9 @@ def workload_pools() -> WorkloadPools:
 
 
 def cors_headers(request: Request) -> dict[str, str]:
+  from identity_policy import allowed_browser_origin
   origin = request.headers.get("origin")
-  if not origin:
+  if not origin or not allowed_browser_origin(origin):
     return {}
   return {
     "Access-Control-Allow-Origin": origin,
@@ -252,6 +253,8 @@ async def sse_response(request: Request) -> Response:
 
 
 async def app_lifespan(_app: FastAPI):
+  from server_oidc import validate_identity_startup
+  validate_identity_startup()
   global WORKLOAD_POOLS
   WORKLOAD_POOLS = WorkloadPools(SETTINGS)
   SSE_BROKER.bind(asyncio.get_running_loop())
@@ -276,6 +279,10 @@ app = FastAPI(lifespan=app_lifespan)
 
 @app.options("/{request_path:path}")
 async def options_route(request: Request, request_path: str) -> Response:
+  from identity_policy import allowed_browser_origin
+  origin = request.headers.get("origin")
+  if origin and not allowed_browser_origin(origin):
+    return Response(status_code=HTTPStatus.FORBIDDEN)
   return Response(
     status_code=HTTPStatus.NO_CONTENT,
     headers={

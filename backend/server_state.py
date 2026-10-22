@@ -240,7 +240,12 @@ def provision_micu(username: str, initial_balance_cny) -> dict:
   except MicuApiError as exc:
     raise ValueError(str(exc)) from exc
 
+
 def reconcile_micu_accounts() -> None:
+  from identity_config import IDENTITY
+  if IDENTITY.enabled:
+    # Central identity provisioning/migration owns bindings in OIDC mode.
+    return
   if not MICU_CLIENT.configured:
     return
   changed = False

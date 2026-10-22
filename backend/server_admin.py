@@ -16,6 +16,8 @@ from server_utils import hash_password, invite_digest, utc_timestamp, verify_pas
 from wechat_pay import WechatPayError
 from workspace_store import StorageError, parse_query, parse_urlencoded_paths
 from account_permissions import PLATFORM_ACCOUNT_FIELDS, PLATFORM_GROUP_FIELDS, validate_role
+from identity_config import IDENTITY
+from identity_policy import visible_customer, invitation_customer
 
 class AdminHandlerMixin:
   def authorize_management_fields(self, actor: dict, payload: dict, allowed: frozenset) -> None:
@@ -32,15 +34,24 @@ class AdminHandlerMixin:
     active = [
       {**serialize(user), **user_usage.get(str(user.get("id") or ""), {"diskUsageBytes": 0, "workspaceCount": 0})}
       for user in USERS.values()
+      if visible_customer(user)
     ]
     pending = [
-      {**serialize(account), "diskUsageBytes": 0, "workspaceCount": 0}
+      {**(admin_account(account) if IDENTITY.enabled else serialize(account)), "diskUsageBytes": 0, "workspaceCount": 0}
       for account in ACCOUNT_STORE.pending_accounts.values()
+      if visible_customer(account)
     ]
-    all_accounts = [*USERS.values(), *ACCOUNT_STORE.pending_accounts.values()]
+    all_accounts = [a for a in [*USERS.values(), *ACCOUNT_STORE.pending_accounts.values()] if visible_customer(a)]
     groups = []
     for group_id, group in ACCOUNT_STORE.groups.items():
+      if IDENTITY.enabled and IDENTITY.customer_id and group_id != IDENTITY.default_group and not any(
+          visible_customer(account) and account.get("groupId") == group_id for account in all_accounts):
+        continue
       summary = group_usage.get(group_id, {"diskUsageBytes": 0, "workspaceCount": 0, "userCount": 0})
+      if IDENTITY.enabled and IDENTITY.customer_id:
+        members = [a for a in all_accounts if a.get("groupId") == group_id]
+        summary = {key: sum(user_usage.get(str(a.get("id") or ""), {}).get(key, 0) for a in members)
+          for key in ("diskUsageBytes", "workspaceCount")}
       groups.append(
         {
           **group,
@@ -51,9 +62,10 @@ class AdminHandlerMixin:
     self.write_json({"accounts": active + pending, "groups": groups})
 
   def create_account_batch(self) -> None:
-    actor = self.require_admin()
+    actor = self.require_management() if IDENTITY.enabled else self.require_admin()
     payload = self.read_json()
     group, accounts = ACCOUNT_STORE.create_batch(
+      customer_id=invitation_customer(payload, actor),
       group_id=str(payload.get("groupId") or ""),
       new_group_name=str(payload.get("newGroupName") or ""),
       count=int(payload.get("count") or 0),
@@ -66,7 +78,7 @@ class AdminHandlerMixin:
     self.write_json({"group": group, "accounts": [admin_account(account) for account in accounts]}, HTTPStatus.CREATED)
 
   def revoke_invite(self, user_id: str) -> None:
-    actor = self.require_admin()
+    actor = self.require_management() if IDENTITY.enabled else self.require_admin()
     account = ACCOUNT_STORE.revoke_invite(unquote(user_id))
     if not account:
       self.write_json({"error": "not_found"}, HTTPStatus.NOT_FOUND)
@@ -157,7 +169,7 @@ class AdminHandlerMixin:
     active_users = [user] if user else []
     self.validate_admin_deletion(actor, user_ids)
     deleted_resources = self.stop_and_delete_resources(actor, active_users)
-    if user and (user.get("micu") or {}).get("tokenId"):
+    if not IDENTITY.enabled and user and (user.get("micu") or {}).get("tokenId"):
       try:
         MICU_CLIENT.delete_token(user["micu"])
       except MicuApiError as exc:
@@ -182,7 +194,7 @@ class AdminHandlerMixin:
     self.validate_admin_deletion(actor, user_ids)
     deleted_resources = self.stop_and_delete_resources(actor, active_users)
     for user in active_users:
-      if not (user.get("micu") or {}).get("tokenId"):
+      if IDENTITY.enabled or not (user.get("micu") or {}).get("tokenId"):
         continue
       try:
         MICU_CLIENT.delete_token(user["micu"])
@@ -198,6 +210,9 @@ class AdminHandlerMixin:
     self.write_json({"deleted": {"group": removed_group, "accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
 
   def validate_admin_deletion(self, actor: dict, user_ids: set[str]) -> None:
+    if IDENTITY.enabled and any(account.get("status") == "provisioning" and account["id"] in user_ids
+        for account in ACCOUNT_STORE.pending_accounts.values()):
+      raise StorageError("forbidden", "Cannot delete an invitation while identity provisioning is in progress")
     if str(actor.get("id") or "") in user_ids:
       raise StorageError("protected_admin", "the signed-in system administrator cannot be deleted")
     remaining_admins = [
@@ -278,6 +293,10 @@ class AdminHandlerMixin:
       return
     payload = self.read_json()
     self.authorize_management_fields(actor, payload, PLATFORM_ACCOUNT_FIELDS)
+    if IDENTITY.enabled and is_pending and user.get("status") == "provisioning":
+      raise StorageError("forbidden", "Invitation provisioning has started; its settings are immutable")
+    if IDENTITY.enabled and payload.keys() & {"password", "customerId", "oidcSubject", "oidcIssuer", "username"}:
+      raise StorageError("forbidden", "Central identity fields cannot be edited locally")
     if "role" in payload:
       validate_role(payload["role"])
       if user.get("role") == "system_admin" and payload["role"] != "system_admin":
@@ -306,7 +325,7 @@ class AdminHandlerMixin:
       user["providerMode"] = "custom"
     if "password" in payload and payload["password"]:
       user["passwordHash"] = hash_password(str(payload["password"]))
-    if "enabled" in payload and bool(user.get("enabled")) != was_enabled and (user.get("micu") or {}).get("tokenId"):
+    if not IDENTITY.enabled and "enabled" in payload and bool(user.get("enabled")) != was_enabled and (user.get("micu") or {}).get("tokenId"):
       try:
         MICU_CLIENT.set_enabled(user["micu"], bool(user.get("enabled")))
       except MicuApiError as exc:

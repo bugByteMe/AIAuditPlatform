@@ -2,9 +2,9 @@
 
 This standalone deployment runs central identity year-round, independently of
 the main platform and seasonal customer instances. It does **not** enable OIDC
-login in AI Audit, migrate accounts, enforce `customerId`, or change Micu key
-behavior. Those application changes are a later step. Existing local login
-continues unchanged.
+login in AI Audit by itself. For opt-in application integration, migration,
+invitation registration, and customer admission, see
+[Shared OIDC identity](shared-identity.md). Local login remains the default.
 
 ## Topology and prerequisites
 
@@ -83,18 +83,19 @@ Before adding production users:
 2. In the realm's user-profile configuration, define a single-valued `customerId`
    attribute with administrator-only edit permission. Use stable customer IDs,
    not editable group names. Populate it before allowing application access.
-3. Once application OIDC callbacks are implemented, create a separate confidential
+3. Create a separate confidential
    OIDC client for the main platform and each dedicated instance. Use Standard
    Flow (authorization code), require PKCE S256, disable Implicit Flow and Direct
-   Access Grants, and register exact HTTPS redirect URIs/web origins. Do not
-   invent callback paths or register wildcard redirects now.
+   Access Grants, and register the exact platform callback
+   `https://<platform-host>/api/oidc/callback` and HTTPS web origin. Never use
+   wildcard redirects.
 4. Attach a user-attribute protocol mapper to those clients: map `customerId` to
    a single string claim of the same name in the ID token and UserInfo response.
    It is an application-specific claim, not a built-in tenancy boundary.
 
-No realm import, sample users, client secrets, or guessed application callbacks
-are shipped. This avoids presenting an unfinished login integration as usable
-and keeps customer provisioning an explicit administrator action.
+No realm import, sample users, or client secrets are shipped. Configure the
+additional admin-only provisioning attributes and service account described
+in the application integration guide before enabling OIDC.
 
 After creating the realm, check discovery:
 

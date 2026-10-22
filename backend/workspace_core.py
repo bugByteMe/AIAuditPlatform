@@ -233,6 +233,12 @@ class WorkspaceCoreMixin:
         shutil.rmtree(workspace_previews / digest, ignore_errors=True)
 
   def user_can_access(self, user: dict, workspace: dict) -> bool:
+    from identity_config import IDENTITY
+    if IDENTITY.enabled and IDENTITY.customer_id:
+      users, _ = self.account_provider() if self.account_provider else ({}, {})
+      owner = users.get(str(workspace.get("owner") or ""), {})
+      if user.get("customerId") != IDENTITY.customer_id or owner.get("customerId") != IDENTITY.customer_id:
+        return False
     if user["role"] in {"system_admin", "platform_admin"}:
       return True
     if workspace["owner"] == user["username"]:
@@ -254,6 +260,8 @@ class WorkspaceCoreMixin:
     )
     summaries = []
     for workspace in workspaces:
+      if not self.user_can_access(user, workspace):
+        continue
       summary = self.public_workspace_summary(workspace)
       if workspace.get("activeUploadId") and self.user_can_mutate_workspace(user, workspace):
         summary["activeUploadId"] = workspace["activeUploadId"]

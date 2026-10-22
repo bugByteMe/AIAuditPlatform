@@ -85,6 +85,11 @@ class BaseHandler(BaseHTTPRequestHandler):
     self.handle_api("DELETE", parsed.path, parsed.query)
 
   def do_OPTIONS(self) -> None:
+    from identity_policy import allowed_browser_origin
+    if self.headers.get("Origin") and not allowed_browser_origin(self.headers["Origin"]):
+      self.send_response(HTTPStatus.FORBIDDEN)
+      self.end_headers()
+      return
     self.send_response(HTTPStatus.NO_CONTENT)
     self.send_header("Access-Control-Allow-Origin", self.headers.get("Origin", "*"))
     self.send_header("Access-Control-Allow-Credentials", "true")
@@ -94,11 +99,17 @@ class BaseHandler(BaseHTTPRequestHandler):
 
   def handle_api(self, method: str, path: str, query: str = "") -> None:
     try:
+      from identity_policy import guard_identity_route
+      guard_identity_route(self, method, path)
       if method == "GET" and path == "/api/health":
         self.write_json({"ok": True})
       elif method == "GET" and path == "/api/runtime-config":
+        from identity_config import IDENTITY
         self.write_json(
           {
+            "authMode": IDENTITY.auth_mode,
+            "oidcLoginUrl": "/api/oidc/login" if IDENTITY.enabled else None,
+            "deploymentCustomerId": IDENTITY.customer_id,
             "chatPollIntervalMs": SETTINGS.chat_poll_interval_ms,
             "sseRetryMs": SETTINGS.sse_retry_ms,
             "registrationMinPasswordLength": SETTINGS.registration_min_password_length,
@@ -109,6 +120,14 @@ class BaseHandler(BaseHTTPRequestHandler):
         )
       elif method == "GET" and path == "/api/session":
         self.require_session_response()
+      elif method == "GET" and path == "/api/oidc/login":
+        self.oidc_login(query)
+      elif method == "GET" and path == "/api/oidc/callback":
+        self.oidc_callback(query)
+      elif method in {"GET", "POST"} and path == "/api/customers":
+        self.identity_customers(method)
+      elif method == "POST" and path.startswith("/api/internal/identity/"):
+        self.identity_internal(path.rsplit("/", 1)[-1])
       elif method == "POST" and path == "/api/login":
         self.login()
       elif method == "POST" and path == "/api/register":
@@ -168,6 +187,10 @@ class BaseHandler(BaseHTTPRequestHandler):
     except StorageError as exc:
       self.write_json({"error": exc.code, "message": exc.message}, self.status_for_storage_error(exc))
     except ValueError as exc:
+      from oidc_client import IdentityNameTaken
+      if isinstance(exc, IdentityNameTaken):
+        self.write_json({"error": "identity_username_exists", "message": str(exc)}, HTTPStatus.CONFLICT)
+        return
       self.write_json({"error": "bad_request", "message": str(exc)}, HTTPStatus.BAD_REQUEST)
     except WechatPayError as exc:
       status = HTTPStatus.SERVICE_UNAVAILABLE if exc.code == "wechat_pay_unavailable" else HTTPStatus.BAD_REQUEST
@@ -214,7 +237,8 @@ class BaseHandler(BaseHTTPRequestHandler):
     self.send_header("Connection", "keep-alive")
     self.send_header("X-Accel-Buffering", "no")
     origin = self.headers.get("Origin")
-    if origin:
+    from identity_policy import allowed_browser_origin
+    if origin and allowed_browser_origin(origin):
       self.send_header("Access-Control-Allow-Origin", origin)
       self.send_header("Access-Control-Allow-Credentials", "true")
     self.end_headers()
@@ -299,7 +323,15 @@ class BaseHandler(BaseHTTPRequestHandler):
         return None
       session["expiresAt"] = now + SESSION_TTL_SECONDS
       username = session["username"]
-    return USERS.get(username)
+    user = USERS.get(username)
+    from identity_config import IDENTITY
+    if IDENTITY.enabled:
+      from server_oidc import revalidate_session
+      if not revalidate_session(session, user):
+        with SESSION_LOCK:
+          SESSIONS.pop(token, None)
+        return None
+    return user
 
   def session_token(self) -> str | None:
     authorization = self.headers.get("Authorization", "")
@@ -342,7 +374,8 @@ class BaseHandler(BaseHTTPRequestHandler):
     if no_store:
       self.send_header("Cache-Control", "no-store")
     origin = self.headers.get("Origin")
-    if origin:
+    from identity_policy import allowed_browser_origin
+    if origin and allowed_browser_origin(origin):
       self.send_header("Access-Control-Allow-Origin", origin)
       self.send_header("Access-Control-Allow-Credentials", "true")
     for key, value in (headers or {}).items():
@@ -366,7 +399,8 @@ class BaseHandler(BaseHTTPRequestHandler):
       self.send_header("Cache-Control", "no-store")
       self.send_header("Connection", "close")
       origin = self.headers.get("Origin")
-      if origin:
+      from identity_policy import allowed_browser_origin
+      if origin and allowed_browser_origin(origin):
         self.send_header("Access-Control-Allow-Origin", origin)
         self.send_header("Access-Control-Allow-Credentials", "true")
       self.end_headers()

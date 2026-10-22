@@ -1,5 +1,12 @@
 # Identity and Budget
 
+Local authentication below remains the default. Opt-in shared Keycloak login,
+customer admission, invitation provisioning, and offline password-hash migration
+are documented in [shared-identity.md](shared-identity.md). In OIDC mode groups
+remain platform-local; central passwords and customer assignments cannot be
+edited locally, system/platform admins may issue scoped invitations, and local
+account deletion/disabling does not revoke shared identities or Micu keys.
+
 ## Account Model
 
 The first version uses internal accounts with username and password login. Administrators create users and groups, including batch creation for classroom, project, or department onboarding.

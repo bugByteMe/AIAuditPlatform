@@ -119,7 +119,8 @@ class WorkspaceLifecycleMixin:
       return self.public_workspace(workspace, metadata)
 
   def user_can_mutate_workspace(self, user: dict, workspace: dict) -> bool:
-    return user["role"] in {"system_admin", "platform_admin"} or workspace["owner"] == user["username"]
+    return self.user_can_access(user, workspace) and (
+      user["role"] in {"system_admin", "platform_admin"} or workspace["owner"] == user["username"])
 
   def add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
