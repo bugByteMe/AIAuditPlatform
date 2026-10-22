@@ -465,7 +465,7 @@ class AccountStore(AccountIdentityMixin, AccountRechargeMixin):
           self.pending_accounts.pop(user_id, None)
         self._tombstone_recharge_payments(user_ids)
         self._tombstone_recharge_orders(user_ids)
-        self.save()
+        self.database.sync(self.state(), removed_identity_users=user_ids)
       except Exception:
         self.users.clear()
         self.users.update(previous_users)
@@ -499,7 +499,7 @@ class AccountStore(AccountIdentityMixin, AccountRechargeMixin):
         self._tombstone_recharge_payments(user_ids)
         self._tombstone_recharge_orders(user_ids)
         removed_group = deepcopy(self.groups.pop(group_id))
-        self.save()
+        self.database.sync(self.state(), removed_identity_users=user_ids)
       except Exception:
         self.groups.clear()
         self.groups.update(previous_groups)

@@ -43,6 +43,12 @@ class IdentityAuthority:
       if record and record.get("result"):
         return record["result"]
       if record is None:
+        from sqlalchemy import select
+        with self.db.engine.connect() as connection:
+          reserved = connection.execute(select(self.db.bindings.c.subject).where(
+            self.db.bindings.c.username_key == username)).first()
+        if reserved:
+          raise IdentityNameTaken("Username is reserved by an existing shared binding; contact an administrator")
         record = {"request": fingerprint}
         self.db.put(self.db.operations, operation, record)
       try:

@@ -148,6 +148,12 @@ class BaseHandler(BaseHTTPRequestHandler):
         self.revoke_invite(path.split("/")[-2])
       elif method == "POST" and path == "/api/accounts":
         self.create_account()
+      elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/full-delete"):
+        from identity_admin import full_delete
+        full_delete(self, unquote(path.split("/")[-2]))
+      elif method == "POST" and path.startswith("/api/accounts/") and path.endswith("/customer"):
+        from identity_admin import change_customer
+        change_customer(self, unquote(path.split("/")[-2]))
       elif method == "DELETE" and path.startswith("/api/accounts/"):
         self.delete_account(path.rsplit("/", 1)[-1])
       elif method == "PATCH" and path.startswith("/api/accounts/"):

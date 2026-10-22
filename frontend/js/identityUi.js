@@ -2,6 +2,18 @@
 export function configureIdentityUi(state, api) {
   const enabled = state.runtimeConfig.authMode === "oidc";
   const zh = state.lang === "zh";
+  const labels = zh ? {
+    customer: "客户", newCustomer: "添加新客户", customerId: "客户 ID", customerName: "客户名称",
+    addCustomer: "添加", fullDelete: "完全删除", changeCustomer: "更改客户",
+    customerHelp: "中央归属变更会影响所有平台的准入，不会更改本地小组。",
+  } : {
+    customer: "Customer", newCustomer: "Add new customer", customerId: "Customer ID", customerName: "Customer name",
+    addCustomer: "Add", fullDelete: "Full deletion", changeCustomer: "Change customer",
+    customerHelp: "Changes central membership across platforms, not local groups.",
+  };
+  document.querySelectorAll("[data-identity-label]").forEach((element) => {
+    element.textContent = labels[element.dataset.identityLabel] || "";
+  });
   document.querySelectorAll('#login-form input').forEach((input) => {
     input.disabled = enabled;
     input.closest("label")?.classList.toggle("hidden", enabled);
@@ -25,7 +37,11 @@ export function configureIdentityUi(state, api) {
         const id = document.querySelector("#identity-customer-id").value.trim();
         const name = document.querySelector("#identity-customer-name").value.trim();
         const result = await api("/api/customers", { method: "POST", body: JSON.stringify({ id, name }) });
+        state.customers = result.customers;
         renderCustomers(result.customers, id);
+        document.querySelector("#identity-customer-id").value = "";
+        document.querySelector("#identity-customer-name").value = "";
+        document.querySelector(".identity-customer-create").open = false;
       } catch (error) {
         document.querySelector("#batch-account-error").textContent = error.message;
       }
@@ -40,15 +56,15 @@ export function configureIdentityUi(state, api) {
   }
 }
 
-export function renderCustomers(customers, selected = "") {
-  const select = document.querySelector("#identity-customer-select");
+export function renderCustomers(customers, selected = "", selector = "#identity-customer-select") {
+  const select = document.querySelector(selector);
   if (!select) return;
   const placeholder = document.createElement("option");
   placeholder.value = "";
-  placeholder.textContent = "选择客户 / Choose customer";
+  placeholder.textContent = document.documentElement?.lang?.startsWith("zh") ? "选择客户" : "Choose customer";
   placeholder.disabled = true;
   placeholder.selected = placeholder.defaultSelected = !selected;
-  select.replaceChildren(placeholder, ...(customers || []).map((customer) => {
+  select.replaceChildren(placeholder, ...(customers || []).filter((customer) => customer.enabled !== false).map((customer) => {
     const option = document.createElement("option");
     option.value = customer.id;
     option.textContent = `${customer.name} (${customer.id})`;

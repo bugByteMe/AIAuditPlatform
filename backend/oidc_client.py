@@ -17,8 +17,11 @@ class IdentityNameTaken(IdentityError):
 
 
 def request_json(method, url, **kwargs):
+  accepted_statuses = kwargs.pop("accepted_statuses", ())
   try:
     response = httpx.request(method, url, timeout=20, follow_redirects=False, **kwargs)
+    if response.status_code in accepted_statuses:
+      return {}
     if response.status_code >= 400:
       if response.status_code == 409:
         try:

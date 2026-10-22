@@ -18,6 +18,15 @@ The frontend is a web application with:
 
 The chat UI should support websocket or SSE updates for model output, progress events, tool calls, errors, budget warnings, stop events, and completion events.
 
+The initial HTML gates both login and the application shell behind a neutral
+startup screen. Runtime configuration must load before session resolution;
+only an HTTP 401 session response reveals login. Configuration/network/server
+failures show a retry screen rather than falling back to local authentication.
+After session resolution the shell appears immediately, with loading/error
+placeholders for workspace/chat, account/worker/audit, and recharge panels.
+Workspace and management requests can run concurrently; real empty states appear
+only after successful loads. Empty audit logs never display sample events.
+
 ### Backend API
 
 The browser-facing control plane is a FastAPI ASGI application served by a

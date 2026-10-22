@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from sqlalchemy import JSON, Boolean, Column, Index, MetaData, String, Table, create_engine, delete, func, select
+from sqlalchemy import JSON, Boolean, Column, Index, MetaData, String, Table, create_engine, delete, func, select, inspect
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.engine import Engine
 from sqlalchemy.pool import NullPool
@@ -198,9 +198,14 @@ class AccountDatabase:
           status=str(order.get("status") or ""), payload=order,
         ))
 
-  def sync(self, state: dict) -> None:
+  def sync(self, state: dict, removed_identity_users: set[str] | None = None) -> None:
     """Compatibility persistence for infrequent multi-row administration changes."""
+    links = None
+    if removed_identity_users and inspect(self.engine).has_table("identity_local_links"):
+      links = Table("identity_local_links", MetaData(), Column("user_id", String))
     with self.engine.begin() as connection:
+      if links is not None:
+        connection.execute(links.delete().where(links.c.user_id.in_(removed_identity_users)))
       sections = [
         (self.groups, "id", state.get("groups", {}), lambda key, item: {
           "id": key, "name_key": str(item.get("name") or "").casefold(), "payload": item,

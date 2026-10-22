@@ -29,12 +29,17 @@ export function createAdminRecharge(context) {
       renderWorkers();
       return;
     }
+    state.adminLoading = true;
+    state.adminLoadError = false;
+    renderAdmin();
+    renderWorkers();
     try {
       const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), isSystemAdmin(state.user) ? api("/api/audit-logs") : { logs: [] }, isSystemAdmin(state.user) ? api("/api/workers") : { workers: [] }]);
       state.accounts = accounts.accounts || [];
       state.groups = accounts.groups || [];
       if (state.runtimeConfig.authMode === "oidc") {
         const result = await api("/api/customers");
+        state.customers = result.customers;
         renderCustomers(result.customers, state.runtimeConfig.deploymentCustomerId || "");
       }
       const ownAccount = state.accounts.find((account) => account.id === state.user?.id);
@@ -45,11 +50,13 @@ export function createAdminRecharge(context) {
       state.auditLogs = logs.logs || [];
       state.workers = workers.workers || [];
     } catch {
+      state.adminLoadError = true;
       state.accounts = [];
       state.groups = [];
       state.auditLogs = [];
       state.workers = [];
     }
+    state.adminLoading = false;
     renderAdmin();
     renderWorkers();
     renderWorkspaces();
@@ -78,7 +85,7 @@ export function createAdminRecharge(context) {
       document.querySelector('#batch-account-form [name="count"]').max = state.runtimeConfig.batchInviteMaxCount;
       document.querySelector('#batch-account-form [name="maxSessions"]').max = state.runtimeConfig.accountMaxSessionsLimit;
     } catch (error) {
-      console.warn("Runtime configuration unavailable; using frontend defaults", error);
+      throw error;
     }
   }
 
@@ -150,6 +157,10 @@ export function createAdminRecharge(context) {
   }
 
   async function loadRechargeData() {
+    if (state.rechargeLoading) return;
+    state.rechargeLoading = true;
+    state.rechargeLoadError = false;
+    renderRechargeHistory();
     const error = document.querySelector("#recharge-error");
     error.textContent = t("recharge.loading");
     try {
@@ -164,11 +175,15 @@ export function createAdminRecharge(context) {
       error.textContent = result.paymentReady ? "" : result.paymentError || t("recharge.paymentDisabled");
       renderRechargeHistory();
     } catch (loadError) {
+      state.rechargeLoadError = true;
       state.recharge = null;
       error.textContent = loadError.message;
       document.querySelectorAll("[data-recharge-amount]").forEach((button) => {
         button.disabled = true;
       });
+      renderRechargeHistory();
+    } finally {
+      state.rechargeLoading = false;
       renderRechargeHistory();
     }
   }
@@ -378,6 +393,29 @@ export function createAdminRecharge(context) {
     document.querySelector("#account-settings-error").textContent = "";
     const isCurrentUser = account.id === state.user?.id || account.username === state.user?.username;
     document.querySelector("#account-settings-delete").disabled = isCurrentUser;
+    const central = state.runtimeConfig.authMode === "oidc" && !state.runtimeConfig.deploymentCustomerId && Boolean(account.oidcSubject);
+    const fullDelete = document.querySelector("#account-settings-full-delete");
+    fullDelete.classList.toggle("hidden", !central || !isSystemAdmin(state.user));
+    fullDelete.disabled = isCurrentUser;
+    fullDelete.onclick = () => deleteAdminAccount(account.id, true);
+    document.querySelector("#account-customer-field").classList.toggle("hidden", !central);
+    renderCustomers(state.customers, account.customerId, "#account-customer-select");
+    const change = document.querySelector("#account-customer-save");
+    change.onclick = async () => {
+      const customerId = document.querySelector("#account-customer-select").value;
+      if (!customerId || customerId === account.customerId) return;
+      const warning = state.lang === "zh" ? "更改此用户在所有平台的客户归属？其登录会话将失效，本地小组不变。" : "Change this user's customer across all platforms? Their local sessions will end; groups are unchanged.";
+      if (!window.confirm(warning)) return;
+      change.disabled = true;
+      try {
+        await api(`/api/accounts/${encodeURIComponent(account.id)}/customer`, { method: "POST", body: JSON.stringify({ customerId }) });
+        if (isCurrentUser) { window.location.reload(); return; }
+        closeAccountSettingsModal();
+        await loadAccountControlData();
+      } catch (error) {
+        document.querySelector("#account-settings-error").textContent = error.message;
+      } finally { change.disabled = false; }
+    };
     const invitePanel = document.querySelector("#account-settings-invite");
     invitePanel.classList.toggle("hidden", !isSystemAdmin(state.user) || !account.inviteToken);
     document.querySelector("#account-settings-invite-token").textContent = account.inviteToken || "";
@@ -425,10 +463,16 @@ export function createAdminRecharge(context) {
     }
   }
 
-  async function deleteAdminAccount(userId) {
-    if (!window.confirm(t("admin.confirmDeleteUser"))) return;
+  async function deleteAdminAccount(userId, full = false) {
+    const account = state.accounts.find((item) => item.id === userId);
+    const warning = full
+      ? (state.lang === "zh" ? "完全删除此用户？将永久删除 Keycloak 统一账号及本平台数据，影响所有平台登录。其他平台数据及 Micu 密钥不删除。" : "Permanently delete this Keycloak identity and local data? This affects login across all platforms. Other platforms' data and the Micu key are not deleted.")
+      : t("admin.confirmDeleteUser");
+    if (!window.confirm(warning)) return;
     try {
-      await api(`/api/accounts/${encodeURIComponent(userId)}`, { method: "DELETE" });
+      await api(`/api/accounts/${encodeURIComponent(userId)}${full ? "/full-delete" : ""}`, full
+        ? { method: "POST", body: JSON.stringify({ confirmSubject: account.oidcSubject }) }
+        : { method: "DELETE" });
       closeAccountSettingsModal();
       await loadAccountControlData();
       showToast(t("toast.accountDeleted"));

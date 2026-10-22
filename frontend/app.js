@@ -35,6 +35,7 @@ import { currentWorkspace } from "./js/selectors.js";
 import { isEventStreamNearTop } from "./js/scrollPosition.js";
 import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSettingsPayload, groupSettingsPayload } from "./js/adminPermissions.js";
 import { renderPaymentNotice } from "./js/paymentNotice.js";
+import { resolveStartup, setStartupScreen } from "./js/startupUi.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 
@@ -277,6 +278,9 @@ async function refreshWorkspaceById(workspaceId) {
 }
 
 async function loadWorkspaces() {
+  state.workspacesLoading = true;
+  state.workspaceLoadError = false;
+  renderDynamic();
   try {
     const result = await api("/api/workspaces");
     state.workspaces = result.workspaces || [];
@@ -292,8 +296,10 @@ async function loadWorkspaces() {
     console.error("Failed to load workspaces", error);
     state.workspaces = [];
     state.workspacesLoaded = true;
+    state.workspaceLoadError = true;
     showToast(error.message || t("toast.workspaceLoadFailed"));
   }
+  state.workspacesLoading = false;
   renderDynamic();
   maybeStartChatStream();
 }
@@ -338,6 +344,12 @@ function routeToView(view, { replace = false } = {}) {
 }
 
 function showAuthenticated(user) {
+  if (!state.user) {
+    state.workspacesLoading = true;
+    state.adminLoading = true;
+    state.workspaceLoadError = false;
+    state.adminLoadError = false;
+  }
   state.user = user;
   const isAdmin = canManageAccounts(user);
   applyAdminPermissions(document, user, state.runtimeConfig);
@@ -658,17 +670,24 @@ async function deleteWorkspace(index = state.selectedWorkspace) {
 }
 
 async function bootstrap() {
-  applyLocale();
-  await loadRuntimeConfig();
-  routeToView(viewFromLocation(), { replace: true });
-  selectWorkspace(0);
+  if (bootstrap.running) return;
+  bootstrap.running = true;
+  setStartupScreen("loading", state.lang);
   try {
-    const session = await api("/api/session");
-    showAuthenticated(session.user);
-    await loadWorkspaces();
-    await loadAccountControlData();
+    applyLocale();
+    const signedIn = await resolveStartup({
+      loadConfig: loadRuntimeConfig,
+      loadSession: () => api("/api/session"),
+      authenticated: showAuthenticated,
+      login: showLogin,
+    });
+    routeToView(viewFromLocation(), { replace: true });
+    setStartupScreen("ready", state.lang);
+    if (signedIn) await Promise.all([loadWorkspaces(), loadAccountControlData()]);
   } catch {
-    showLogin();
+    setStartupScreen("error", state.lang);
+  } finally {
+    bootstrap.running = false;
   }
 }
 
@@ -845,5 +864,6 @@ window.setInterval(refreshWorkerStatus, 5_000);
 bindGlobalClicks();
 bindForms();
 bindInputs();
+document.querySelector("#startup-retry").addEventListener("click", bootstrap);
 window.aiAuditAppReady = true;
 bootstrap();

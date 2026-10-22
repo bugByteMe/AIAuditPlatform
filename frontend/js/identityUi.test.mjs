@@ -44,3 +44,12 @@ test("dedicated customer creation is hidden and customer names use text nodes", 
   assert.equal(option.textContent, "<synthetic> (business)");
   assert.equal(option.selected, true);
 });
+
+test("customer picker excludes disabled customers and supports account settings", () => {
+  const { nodes } = dom();
+  renderCustomers([{ id: "public", name: "Public" }, { id: "disabled", name: "Disabled", enabled: false }], "public", "#account-customer-select");
+  const children = nodes.get("#account-customer-select").children;
+  assert.equal(children.length, 2);
+  assert.equal(children[1].value, "public");
+  assert.equal(children[1].selected, true);
+});

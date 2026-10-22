@@ -1,13 +1,24 @@
 <!doctype html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-startup="loading">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AI Audit</title>
+    <style>
+      html:not([data-startup="ready"]) #auth-screen,
+      html:not([data-startup="ready"]) #app-shell { display: none !important; }
+      #startup-screen { min-height: 100vh; display: grid; place-content: center; justify-items: center; gap: 14px; background: #f7f9fa; color: #526875; font: 14px system-ui, sans-serif; }
+      #startup-screen[hidden] { display: none; }
+    </style>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
-    <section class="auth-screen" id="auth-screen">
+    <section id="startup-screen" aria-busy="true" aria-label="Loading">
+      <p id="startup-message" role="status">正在加载…</p>
+      <button type="button" class="btn" id="startup-retry" hidden>重试</button>
+      <noscript>请启用 JavaScript / JavaScript is required.</noscript>
+    </section>
+    <section class="auth-screen hidden" id="auth-screen">
       <div class="login-panel">
         <div class="brand login-brand">
           <div class="brand-mark">AI</div>
@@ -278,6 +289,7 @@
         </section>
 
         <section class="view" id="recharge-view">
+          <div id="recharge-loading-status"></div>
           <div class="recharge-layout">
             <section class="panel">
               <div class="panel-head">
@@ -448,20 +460,23 @@
     </div>
     <div class="modal-backdrop hidden" id="batch-account-modal" role="dialog" aria-modal="true" aria-labelledby="batch-account-title">
       <form class="modal-panel" id="batch-account-form">
-        <div id="identity-customer-fields" class="hidden">
-          <label class="field"><span>客户 / Customer</span><select name="customerId" id="identity-customer-select"></select></label>
-          <div class="batch-fields" data-identity-customer-create>
-            <label class="field"><span>客户 ID / Customer ID</span><input id="identity-customer-id" /></label>
-            <label class="field"><span>客户名称 / Customer name</span><input id="identity-customer-name" /></label>
-          </div>
-          <button type="button" id="identity-add-customer">添加客户 / Add customer</button>
-        </div>
         <div class="panel-head">
           <div>
             <h2 id="batch-account-title" data-i18n="admin.batchTitle">批量创建邀请</h2>
             <p data-i18n="admin.batchHelp">为同一小组创建多个待激活账号。</p>
           </div>
           <button type="button" class="rail-toggle" data-close-batch-account aria-label="Close">×</button>
+        </div>
+        <div id="identity-customer-fields" class="identity-customer-section hidden">
+          <label class="field"><span data-identity-label="customer">客户</span><select name="customerId" id="identity-customer-select"></select></label>
+          <details class="identity-customer-create" data-identity-customer-create>
+            <summary data-identity-label="newCustomer">添加客户</summary>
+            <div class="identity-customer-grid">
+              <label class="field"><span data-identity-label="customerId">客户 ID</span><input id="identity-customer-id" maxlength="64" placeholder="customer_a" /></label>
+              <label class="field"><span data-identity-label="customerName">客户名称</span><input id="identity-customer-name" maxlength="128" /></label>
+              <button type="button" class="btn" id="identity-add-customer" data-identity-label="addCustomer">添加</button>
+            </div>
+          </details>
         </div>
         <div class="segmented">
           <button type="button" class="segment active" data-group-mode="existing" data-i18n="admin.existingGroup">现有小组</button>
@@ -513,6 +528,11 @@
           <button type="button" class="rail-toggle" data-close-account-settings aria-label="Close">×</button>
         </div>
         <input type="hidden" name="accountId" />
+        <div id="account-customer-field" class="identity-customer-section hidden">
+          <label class="field"><span data-identity-label="customer">客户</span><select id="account-customer-select"></select></label>
+          <button type="button" class="btn" id="account-customer-save" data-identity-label="changeCustomer">更改客户</button>
+          <p class="identity-help" data-identity-label="customerHelp">中央归属变更会影响所有平台的准入，不会更改本地小组。</p>
+        </div>
         <label class="field" data-system-admin-only>
           <span data-i18n="admin.role">用户角色</span>
           <select name="role">
@@ -544,6 +564,7 @@
         <p class="form-error" id="account-settings-error"></p>
         <div class="modal-actions admin-settings-actions">
           <button type="button" class="btn danger" id="account-settings-delete" data-system-admin-only data-i18n="admin.deleteUser">删除用户</button>
+          <button type="button" class="btn danger hidden" id="account-settings-full-delete" data-identity-label="fullDelete">完全删除</button>
           <span class="settings-action-spacer"></span>
           <button type="button" class="btn" data-close-account-settings data-i18n="actions.cancel">取消</button>
           <button type="submit" class="btn primary" data-i18n="actions.save">保存</button>

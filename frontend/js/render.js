@@ -1,6 +1,6 @@
 import { t } from "./i18n.js";
 import { markdownToHtml } from "./chatMarkdown.js";
-import { fallbackAuditEvents } from "./mockData.js";
+import { dataPanelMarkup } from "./startupUi.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { isEventStreamNearBottom } from "./scrollPosition.js";
 import { state } from "./state.js";
@@ -9,6 +9,15 @@ import { renderWorkspaceTitle } from "./workspaceTitle.js";
 const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
 let renderedEventSessionId = "";
 let renderedEventSignature = "";
+
+function pendingPanel(selector, loading, failed) {
+  const node = document.querySelector(selector);
+  if (!node) return false;
+  node.setAttribute("aria-busy", String(Boolean(loading)));
+  if (!loading && !failed) return false;
+  node.innerHTML = dataPanelMarkup(failed ? "error" : "loading", state.lang);
+  return true;
+}
 
 function captureEventScroll(stream) {
   const top = stream.getBoundingClientRect().top;
@@ -190,6 +199,10 @@ export function renderCurrentUser() {
 
 export function renderWorkspaces() {
   renderWorkspaceTitle(document, state.user, state.groups);
+  if (pendingPanel("#workspace-list", state.workspacesLoading, state.workspaceLoadError)) {
+    document.querySelector("#workspace-results-count").textContent = "—";
+    return;
+  }
   const items = workspaceList();
   const query = state.workspaceQuery.trim().toLocaleLowerCase();
   const visible = items.map((workspace, index) => ({ workspace, index }))
@@ -280,6 +293,15 @@ export function renderPanelState() {
 }
 
 export function renderChatSessions() {
+  if (state.workspacesLoading || state.workspaceLoadError) {
+    document.querySelector('#composer button[type="submit"]').disabled = true;
+    document.querySelector("#composer textarea").disabled = true;
+    document.querySelector("#new-chat-button").disabled = true;
+    document.querySelector("#stop-run").disabled = true;
+    pendingPanel("#chat-session-list", state.workspacesLoading, state.workspaceLoadError);
+    return;
+  }
+  document.querySelector("#chat-session-list").setAttribute("aria-busy", "false");
   const workspace = currentWorkspace();
   const session = currentSession();
   const status = session?.status || "stopped";
@@ -346,6 +368,11 @@ function renderChatResources(resources = {}) {
 
 export function renderEvents() {
   const stream = document.querySelector("#event-stream");
+  if (pendingPanel("#event-stream", state.workspacesLoading, state.workspaceLoadError)) {
+    renderedEventSessionId = "";
+    renderedEventSignature = "";
+    return;
+  }
   const session = currentSession();
   if (!session) {
     stream.innerHTML = "";
@@ -413,6 +440,12 @@ export function renderOperationProgress() {
 }
 
 export function renderRechargeHistory() {
+  const loading = state.rechargeLoading || (!state.recharge && !state.rechargeLoadError);
+  document.querySelector("#recharge-view .recharge-layout")?.classList.toggle("hidden", loading || state.rechargeLoadError);
+  const status = document.querySelector("#recharge-loading-status");
+  if (status) status.innerHTML = loading || state.rechargeLoadError
+    ? dataPanelMarkup(state.rechargeLoadError ? "error" : "loading", state.lang) : "";
+  if (loading || state.rechargeLoadError) return;
   const percentage = document.querySelector("#recharge-remaining-percent");
   if (percentage) {
     const budget = state.user?.budget || {};
@@ -443,6 +476,7 @@ export function renderArtifacts() {
   const workspace = currentWorkspace();
   const tree = document.querySelector("#artifact-tree");
   if (!tree) return;
+  if (pendingPanel("#artifact-tree", state.workspacesLoading, state.workspaceLoadError)) return;
   const topLevelItems = (workspace?.files || []).filter(
     (file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren),
   );
@@ -473,6 +507,7 @@ export function renderArtifacts() {
 }
 
 export function renderFileExplorer() {
+  if (pendingPanel("#file-tree", state.workspacesLoading, state.workspaceLoadError)) return;
   const workspace = currentWorkspace();
   const files = workspace?.files || [];
   const tree = document.querySelector("#file-tree");
@@ -480,6 +515,10 @@ export function renderFileExplorer() {
 }
 
 export function renderAdmin() {
+  if (pendingPanel("#admin-grid", state.adminLoading, state.adminLoadError)) {
+    pendingPanel("#audit-list", state.adminLoading, state.adminLoadError);
+    return;
+  }
   const formatBytes = (value) => {
     let size = Math.max(0, Number(value || 0));
     const units = ["B", "KB", "MB", "GB", "TB"];
@@ -549,13 +588,15 @@ export function renderAdmin() {
 
   const logs = state.auditLogs.length
     ? state.auditLogs.map((log) => `${log.actor} ${log.event}${log.detail ? ` - ${log.detail}` : ""}`)
-    : fallbackAuditEvents;
+    : [];
+  document.querySelector("#audit-list").setAttribute("aria-busy", "false");
   document.querySelector("#audit-list").innerHTML = logs
-    .map((event, index) => `<li>${event}<div class="meta-line">${state.auditLogs[index]?.time || `2026-09-12 23:${String(index + 12).padStart(2, "0")}`}</div></li>`)
+    .map((event, index) => `<li>${escapeHtml(event)}<div class="meta-line">${escapeHtml(state.auditLogs[index]?.time || "")}</div></li>`)
     .join("");
 }
 
 export function renderWorkers() {
+  if (pendingPanel("#worker-grid", state.adminLoading, state.adminLoadError)) return;
   const grid = document.querySelector("#worker-grid");
   if (!grid) return;
   if (!state.workers.length) {

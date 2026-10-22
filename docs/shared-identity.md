@@ -15,8 +15,10 @@ alone does not change login; this change performs no production migration.
 
 Keycloak manages credentials and one admin-assigned `customerId`. Each platform
 manages groups, roles, sessions, and resources. Customer admission has no admin
-bypass. Local disabling/deletion never revokes central identity or shared keys;
-deleted-profile links remain tombstones to prevent automatic recreation.
+bypass. Local disabling/deletion never revokes central identity or shared keys.
+Local account/group deletion removes identity links atomically with profiles,
+allowing later ordinary-user readmission in the default group or an invitation's
+group. Disable rather than delete to block returning users.
 
 New usernames are stripped/case-folded and globally unique. Migration preserves
 old platform/Micu spelling using the admin-only `platformUsername` attribute,
@@ -125,6 +127,62 @@ process per platform: sessions, flows, rate limits, and profile caches are local
 to that process.
 
 ## Offline migration
+
+### Account deletion and customer administration
+
+Normal account deletion (including group-cascade deletion) removes the local
+profile and identity link in one database transaction. It does not delete the
+Keycloak identity or Micu key. A later valid login can create a fresh ordinary
+profile; old roles, chats, and workspaces are not restored. Local disabling
+continues to block login. Use disabling when removal must prevent readmission.
+
+On main, system administrators can choose **Full deletion** beside local deletion.
+`POST /api/accounts/{id}/full-delete` requires `{confirmSubject}` matching the
+linked Keycloak subject. Self/last-administrator protections still apply. It
+disables the local profile and invalidates sessions before deleting the Keycloak
+identity, then performs normal local cleanup. Remote deletion treats 404 as an
+already-completed step so retry can finish after partial failure. Failures leave
+the local profile disabled. Dedicated platforms cannot call this operation.
+Other platforms' data and Micu keys are not deleted. The central Micu binding
+remains and its username is reserved against new provisioning to avoid handing
+an old key to a different identity. Reusing that username requires a separately
+reviewed provider/binding cleanup, not merely deleting the Keycloak user.
+
+Main system/platform administrators can change a linked active user's customer
+through the account-settings customer control:
+`POST /api/accounts/{id}/customer` with `{customerId}`. The destination must be an
+enabled central customer. The operation updates Keycloak attributes, the central
+Micu binding metadata, and the main local profile without changing groups or
+roles. Pending invitations remain immutable. Main sessions are invalidated;
+other platforms reject changed membership at their next identity revalidation.
+Their local profiles/resources are not reassigned automatically. If a remote
+update succeeds but local persistence fails, retry the same customer assignment;
+admission fails closed until the central binding/profile is consistent.
+
+For a legacy stale local link, stop the relevant platform and back up its DB.
+In PostgreSQL inspect the exact issuer/subject and missing profile first:
+
+```sql
+SELECT l.issuer, l.subject, l.user_id
+FROM identity_local_links l
+LEFT JOIN account_users u ON u.id = l.user_id
+WHERE u.id IS NULL;
+```
+
+Delete only the reviewed link, retaining the live-profile safeguard:
+
+```sql
+DELETE FROM identity_local_links AS l
+WHERE l.issuer = 'https://login.example.com/realms/ai-audit'
+  AND l.subject = '<reviewed-keycloak-user-id>'
+  AND NOT EXISTS (SELECT 1 FROM account_users u WHERE u.id = l.user_id)
+RETURNING issuer, subject, user_id;
+```
+
+Restart the platform afterward. This permits fresh readmission, not recovery of
+deleted data. Do not delete central bindings or use an unfiltered links deletion.
+
+### Migration procedure
 
 1. Back up complete application and Keycloak databases. Audit **all instances**
    for case-insensitive username collisions and shared Micu IDs; resolve different
