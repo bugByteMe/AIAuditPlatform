@@ -4,6 +4,33 @@ from chat_runtime_test_support import *
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def test_session_list_batch_loads_sessions_and_latest_runs(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    first = runtime.create_session(workspace["id"], self.users["li.review"], "First")
+    second = runtime.create_session(workspace["id"], self.users["li.review"], "Second")
+    stored = runtime.chat_store.get_session(first["id"])
+    stored["latestRunId"] = "run-batch"
+    runtime.chat_store.save_session(stored)
+    runtime.chat_store.save_run({
+      "id": "run-batch", "workspaceId": workspace["id"], "sessionId": first["id"],
+      "status": "completed", "requestedCpu": 2, "requestedMemoryBytes": 2048,
+    })
+
+    with (
+      patch.object(runtime.chat_store, "get_sessions", wraps=runtime.chat_store.get_sessions) as get_sessions,
+      patch.object(runtime.chat_store, "get_runs", wraps=runtime.chat_store.get_runs) as get_runs,
+      patch.object(runtime.chat_store, "get_session", side_effect=AssertionError("individual session query")),
+      patch.object(runtime.chat_store, "get_run", side_effect=AssertionError("individual run query")),
+    ):
+      listed = runtime.list_sessions(workspace["id"], self.users["li.review"])
+
+    self.assertEqual([item["id"] for item in listed], [second["id"], first["id"]])
+    self.assertTrue(all(item["events"] == [] for item in listed))
+    self.assertEqual(listed[1]["requestedCpu"], 2)
+    get_sessions.assert_called_once()
+    get_runs.assert_called_once()
+
   def test_queued_session_reports_number_of_prior_jobs(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())

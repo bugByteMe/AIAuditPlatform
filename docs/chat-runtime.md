@@ -170,6 +170,12 @@ file existence. Ordinary external HTTP(S) links continue to open normally.
 
 Workspace responses contain chat-session summaries rather than embedded
 transcripts. The browser fetches the latest selected-session page separately.
+Workspace detail and session-list responses resolve their referenced session
+summaries and latest runs with batch queries while preserving the workspace's
+stored chat order; missing stale references are skipped. The workspace catalog
+finishes its loading state as soon as its summary response arrives, then hydrates
+the selected workspace detail asynchronously without keeping the catalog loading
+indicator active.
 History pages and SSE events omit stored `raw` runner payloads, including large
 command outputs, while retaining event IDs, messages, status, and tool-call IDs.
 The original payload remains persisted for internal processing and diagnostics.

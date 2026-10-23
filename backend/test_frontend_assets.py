@@ -92,7 +92,11 @@ class FrontendAssetTests(unittest.TestCase):
 
     def test_workspace_catalog_uses_summary_then_lazy_detail(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
-        self.assertIn("if (workspaceId) await refreshWorkspaceById(workspaceId)", app_source)
+        load_start = app_source.index("async function loadWorkspaces()")
+        catalog_loaded = app_source.index("state.workspacesLoading = false;", load_start)
+        detail_load = app_source.index("void refreshWorkspaceById(workspaceId).then", load_start)
+        self.assertLess(catalog_loaded, detail_load)
+        self.assertNotIn("await refreshWorkspaceById(workspaceId)", app_source[load_start:detail_load])
         self.assertIn("!safeCurrentWorkspace()?.detailLoaded", app_source)
 
     def test_workspace_upload_controls_and_destination_picker_are_wired(self) -> None:

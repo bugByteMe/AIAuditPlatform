@@ -10,7 +10,7 @@ from workspace_store import StorageError, generated_id, now_string
 
 class ChatSessionMixin:
   def public_workspace_sessions(self, workspace: dict) -> list[dict]:
-    return [self.public_session(item["id"], include_events=False) for item in workspace.get("sessions", []) if self.chat_store.get_session(item.get("id"))]
+    return self.public_sessions([str(item.get("id") or "") for item in workspace.get("sessions", [])])
 
   def recover_persisted_runs(self) -> None:
     for run in self.chat_store.runs().values():
@@ -51,7 +51,7 @@ class ChatSessionMixin:
     metadata = self.store.load_workspace_metadata(workspace_id)
     self.ensure_chat_metadata(metadata)
     workspace = metadata["workspaces"][workspace_id]
-    return [self.public_session(session["id"], include_events=False) for session in workspace.get("sessions", []) if self.chat_store.get_session(session["id"])]
+    return self.public_sessions([str(session.get("id") or "") for session in workspace.get("sessions", [])])
 
   def create_session(self, workspace_id: str, user: dict, title: str | None = None) -> dict:
     with self.lifecycle_locks.hold(f"workspace:{workspace_id}"):

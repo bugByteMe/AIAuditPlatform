@@ -126,9 +126,33 @@ class ChatStore:
     with self.engine.connect() as connection:
       return self._payload(connection.execute(select(self.session_table.c.payload).where(self.session_table.c.id == session_id)).first())
 
+  def get_sessions(self, session_ids: list[str]) -> dict[str, dict]:
+    identifiers = list(dict.fromkeys(str(session_id) for session_id in session_ids if session_id))
+    if not identifiers:
+      return {}
+    with self.engine.connect() as connection:
+      return {
+        row.id: dict(row.payload)
+        for row in connection.execute(
+          select(self.session_table.c.id, self.session_table.c.payload).where(self.session_table.c.id.in_(identifiers))
+        )
+      }
+
   def get_run(self, run_id: str) -> dict | None:
     with self.engine.connect() as connection:
       return self._payload(connection.execute(select(self.run_table.c.payload).where(self.run_table.c.id == run_id)).first())
+
+  def get_runs(self, run_ids: list[str]) -> dict[str, dict]:
+    identifiers = list(dict.fromkeys(str(run_id) for run_id in run_ids if run_id))
+    if not identifiers:
+      return {}
+    with self.engine.connect() as connection:
+      return {
+        row.id: dict(row.payload)
+        for row in connection.execute(
+          select(self.run_table.c.id, self.run_table.c.payload).where(self.run_table.c.id.in_(identifiers))
+        )
+      }
 
   def runs_for_session(self, session_id: str) -> dict[str, dict]:
     with self.engine.connect() as connection:
@@ -377,12 +401,15 @@ class ChatStore:
     if not session:
       return {"id": session_id, "title": "Unknown session", "status": "failed", "updated": now_string(), "tokens": "0", "events": []}
     events = self.public_events(session_id) if include_events else []
+    return self.public_session_payload(session, events)
+
+  def public_session_payload(self, session: dict, events: list[dict] | None = None) -> dict:
     return {
       "id": session["id"], "title": session["title"], "status": session["status"], "updated": session["updated"],
       "tokens": session.get("tokens", "0"), "latestRunId": session.get("latestRunId"),
       "createdBy": session.get("createdBy") or "",
       "codexNativeResumable": bool(session.get("codexNativeResumable")), "forkedFromSessionId": session.get("forkedFromSessionId"),
-      "events": [self.public_event_tuple(event) for event in events],
+      "events": [self.public_event_tuple(event) for event in (events or [])],
     }
 
   def public_events(self, session_id: str) -> list[dict]:

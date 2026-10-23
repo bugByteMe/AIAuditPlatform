@@ -300,8 +300,19 @@ async function loadWorkspaces() {
     state.selectedWorkspace = Math.min(state.selectedWorkspace, Math.max(state.workspaces.length - 1, 0));
     state.selectedSession = 0;
     const workspaceId = safeCurrentWorkspace()?.id;
-    if (workspaceId) await refreshWorkspaceById(workspaceId);
     resetFileTreeState(safeCurrentWorkspace());
+    state.workspacesLoading = false;
+    renderDynamic();
+    maybeStartChatStream();
+    if (workspaceId) {
+      void refreshWorkspaceById(workspaceId).then((workspace) => {
+        if (!workspace || safeCurrentWorkspace()?.id !== workspaceId) return;
+        resetFileTreeState(workspace);
+        renderDynamic();
+        maybeStartChatStream();
+      });
+    }
+    return;
   } catch (error) {
     console.error("Failed to load workspaces", error);
     state.workspaces = [];

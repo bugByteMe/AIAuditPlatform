@@ -301,30 +301,83 @@ class ChatExecutionMixin:
     self.event_callback = callback
 
   def public_session(self, session_id: str, include_events: bool = True) -> dict:
-    session = self.chat_store.public_session(session_id, include_events=include_events)
     stored = self.chat_store.get_session(session_id)
-    run = self.chat_store.get_run(str(stored.get("latestRunId") or "")) if stored else None
+    if not stored:
+      return self.enrich_public_session({
+        "id": session_id, "title": "Unknown session", "status": "failed",
+        "updated": now_string(), "tokens": "0", "events": [],
+      }, None)
+    events = self.chat_store.public_events(session_id) if include_events else []
+    session = self.chat_store.public_session_payload(stored, events)
+    run = self.chat_store.get_run(str(stored.get("latestRunId") or ""))
+    return self.enrich_public_session(session, run)
+
+  def public_sessions(self, session_ids: list[str]) -> list[dict]:
+    stored_by_id = self.chat_store.get_sessions(session_ids)
+    if not stored_by_id:
+      return []
+    runs_by_id = self.chat_store.get_runs([
+      str(session.get("latestRunId") or "") for session in stored_by_id.values()
+    ])
+    default_resources = self.resource_status()
+    worker_resources: dict[str, dict | None] = {}
+    queued_positions = None
+    if any(run.get("status") == "queued" for run in runs_by_id.values()):
+      queued = sorted(
+        (item for item in self.chat_store.active_runs() if item.get("status") == "queued"),
+        key=lambda item: (str(item.get("created") or ""), str(item.get("id") or "")),
+      )
+      queued_positions = {str(run.get("id") or ""): index for index, run in enumerate(queued)}
+    return [
+      self.enrich_public_session(
+        self.chat_store.public_session_payload(stored_by_id[session_id]),
+        runs_by_id.get(str(stored_by_id[session_id].get("latestRunId") or "")),
+        queued_positions,
+        default_resources,
+        worker_resources,
+      )
+      for session_id in session_ids
+      if session_id in stored_by_id
+    ]
+
+  def enrich_public_session(
+    self,
+    session: dict,
+    run: dict | None,
+    queued_positions: dict[str, int] | None = None,
+    default_resources: dict | None = None,
+    worker_resources: dict[str, dict | None] | None = None,
+  ) -> dict:
     if not run:
-      session["resources"] = self.resource_status()
+      session["resources"] = default_resources or self.resource_status()
       return session
     node_id = str(run.get("workerId") or "")
-    worker = self.worker_registry.node_status(node_id) if self.worker_registry and node_id else None
+    worker = None
+    if self.worker_registry and node_id:
+      if worker_resources is None:
+        worker = self.worker_registry.node_status(node_id)
+      else:
+        if node_id not in worker_resources:
+          worker_resources[node_id] = self.worker_registry.node_status(node_id)
+        worker = worker_resources[node_id]
     if worker:
       session["resources"] = worker
     elif self.worker_registry:
-      session["resources"] = self.worker_registry.aggregate_status()
+      session["resources"] = default_resources or self.worker_registry.aggregate_status()
     else:
-      session["resources"] = self.local_resource_status()
+      session["resources"] = default_resources or self.local_resource_status()
     session["workerId"] = node_id or ("compute-pool" if self.worker_registry else "local-docker")
     session["container"] = str(run.get("container") or "")
     session["requestedCpu"] = float(run.get("requestedCpu") or self.requested_cpu)
     session["requestedMemoryBytes"] = int(run.get("requestedMemoryBytes") or self.requested_memory_bytes)
     if run.get("status") == "queued":
-      queued = sorted(
-        (item for item in self.chat_store.active_runs() if item.get("status") == "queued"),
-        key=lambda item: (str(item.get("created") or ""), str(item.get("id") or "")),
-      )
-      session["queueAhead"] = next((index for index, item in enumerate(queued) if item.get("id") == run.get("id")), 0)
+      if queued_positions is None:
+        queued = sorted(
+          (item for item in self.chat_store.active_runs() if item.get("status") == "queued"),
+          key=lambda item: (str(item.get("created") or ""), str(item.get("id") or "")),
+        )
+        queued_positions = {str(item.get("id") or ""): index for index, item in enumerate(queued)}
+      session["queueAhead"] = queued_positions.get(str(run.get("id") or ""), 0)
     return session
 
   def resource_status(self) -> dict:
