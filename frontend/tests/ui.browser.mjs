@@ -37,7 +37,8 @@ async function openApp(role = "platform_admin", viewport = { width: 1280, height
     const path = new URL(request.url()).pathname;
     requests.push({ path, method: request.method(), body: request.postDataJSON() });
     let body = {};
-    if (path === "/api/session") body = { user };
+    if (["/api/session", "/api/session/balance"].includes(path)) body = { user };
+    else if (path === "/api/accounts/balances") body = { balances: [{ id: user.id, budget: user.budget }] };
     else if (path === "/api/workspaces") body = { workspaces: [workspace] };
     else if (path === "/api/workspaces/workspace") body = { workspace };
     else if (path === "/api/accounts") body = { accounts: [user, member], groups: [group] };

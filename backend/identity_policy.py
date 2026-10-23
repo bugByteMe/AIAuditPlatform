@@ -50,7 +50,7 @@ def guard_identity_route(handler, method, path):
     origin = getattr(handler, "headers", {}).get("Origin")
     if origin and origin != IDENTITY.public_url:
       raise StorageError("forbidden", "Request origin does not match this platform")
-  if path.startswith("/api/accounts/"):
+  if path.startswith("/api/accounts/") and not (method == "GET" and path == "/api/accounts/balances"):
     if IDENTITY.customer_id:
       handler.require_management()
     identifier = unquote(path.split("/")[3])

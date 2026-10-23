@@ -131,6 +131,8 @@ def classify_request(method: str, path: str) -> tuple[str | None, str]:
 
   if path == "/api/session" and method == "GET":
     return "external", "session.refresh"
+  if path == "/api/session/balance" and method == "GET":
+    return "external", "session.balance"
   if path == "/api/register" and method == "POST":
     return "external", "account.register"
   if path.startswith("/api/oidc/") or path.startswith("/api/internal/identity/"):

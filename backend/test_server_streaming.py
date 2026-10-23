@@ -92,6 +92,46 @@ class RoutedPools:
 
 
 class ServerStreamingTest(unittest.TestCase):
+  def test_session_is_fast_and_balance_refresh_is_explicit(self) -> None:
+    user = {"id": "example", "username": "example", "providerMode": "custom"}
+    with TestClient(app) as client, patch.object(Handler, "current_user", return_value=user), patch("server_transport.refresh_micu_balance") as refresh:
+      session = client.get("/api/session")
+      self.assertEqual(session.status_code, 200)
+      refresh.assert_not_called()
+      balance = client.get("/api/session/balance")
+      self.assertEqual(balance.status_code, 200)
+      refresh.assert_called_once_with(user)
+      self.assertEqual(balance.headers["cache-control"], "no-store")
+
+  def test_balance_requires_authentication_before_refresh(self) -> None:
+    with TestClient(app) as client, patch.object(Handler, "current_user", return_value=None), patch("server_transport.refresh_micu_balance") as refresh:
+      response = client.get("/api/session/balance")
+    self.assertEqual(response.status_code, 401)
+    refresh.assert_not_called()
+
+  def test_static_cache_revalidation_and_compression(self) -> None:
+    with TestClient(app) as client:
+      response = client.get("/app.js", headers={"Accept-Encoding": "gzip"})
+      self.assertEqual(response.status_code, 200)
+      self.assertEqual(response.headers["cache-control"], "public, no-cache")
+      self.assertEqual(response.headers["content-encoding"], "gzip")
+      self.assertIn("accept-encoding", response.headers["vary"].lower())
+      cached = client.get("/app.js", headers={"If-None-Match": response.headers["etag"]})
+      self.assertEqual(cached.status_code, 304)
+      self.assertEqual(cached.content, b"")
+      modified = client.get("/app.js", headers={"If-None-Match": '"old-version"'})
+      self.assertEqual(modified.status_code, 200)
+      by_date = client.get("/app.js", headers={"If-Modified-Since": response.headers["last-modified"]})
+      self.assertEqual(by_date.status_code, 304)
+      html = client.get("/")
+      self.assertEqual(html.headers["cache-control"], "public, no-cache")
+
+  def test_sse_is_never_gzip_buffered(self) -> None:
+    with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch("server.CHAT_RUNTIME", TerminalChatRuntime()):
+      response = client.get("/api/workspaces/workspace-1/chat/stream?sessionId=chat-1", headers={"Accept-Encoding": "gzip"})
+    self.assertNotIn("content-encoding", response.headers)
+    self.assertIn("event: completed", response.text)
+
   def test_server_entrypoint_uses_configured_host_and_port(self) -> None:
     with patch.object(sys, "argv", ["server.py"]), patch("uvicorn.run") as run:
       server.main()

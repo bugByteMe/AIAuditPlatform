@@ -5,6 +5,7 @@ import hmac
 import mimetypes
 import secrets
 import time
+from email.utils import formatdate, parsedate_to_datetime
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -19,6 +20,30 @@ def static_content_type(file_path: Path) -> str:
   if file_path.suffix.lower() in {".js", ".mjs"}:
     return "text/javascript"
   return mimetypes.guess_type(file_path.name)[0] or "application/octet-stream"
+
+
+def static_cache_headers(file_path: Path) -> dict[str, str]:
+  stat = file_path.stat()
+  tag = hashlib.sha256(f"{stat.st_mtime_ns}:{stat.st_size}".encode()).hexdigest()
+  # Unversioned modules must revalidate on deployment, not stay stale for a TTL.
+  return {
+    "Cache-Control": "public, no-cache",
+    "ETag": f'"{tag}"',
+    "Last-Modified": formatdate(stat.st_mtime, usegmt=True),
+  }
+
+
+def static_not_modified(request_headers, response_headers: dict[str, str]) -> bool:
+  etags = request_headers.get("If-None-Match")
+  if etags is not None:
+    return any(tag.strip().removeprefix("W/") in {"*", response_headers["ETag"]} for tag in etags.split(","))
+  modified_since = request_headers.get("If-Modified-Since")
+  if modified_since:
+    try:
+      return parsedate_to_datetime(modified_since) >= parsedate_to_datetime(response_headers["Last-Modified"])
+    except (TypeError, ValueError, OverflowError):
+      pass
+  return False
 
 def hash_password(password: str, salt: str | None = None) -> str:
   salt = salt or secrets.token_hex(16)

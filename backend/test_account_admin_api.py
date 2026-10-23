@@ -65,7 +65,7 @@ class AccountAdminApiTest(AccountApiTestBase):
     self.assertNotIn("currency", user_budget)
     self.assertEqual(admin_account(active)["budget"]["remaining"], "12.34")
 
-  def test_admin_accounts_refreshes_micu_balances_from_one_token_list(self) -> None:
+  def test_admin_balances_refreshes_from_one_token_list(self) -> None:
     users = {
       "alice": {
         "id": "usr_alice", "username": "alice", "status": "active", "enabled": True,
@@ -99,7 +99,7 @@ class AccountAdminApiTest(AccountApiTestBase):
       patch("server.WORKSPACE_STORE", workspace_store),
       patch("server.MICU_CLIENT", provider),
     ):
-      Handler.accounts(handler)
+      Handler.account_balances(handler)
 
     provider.all_tokens.assert_called_once_with()
     provider.balance.assert_not_called()
@@ -111,6 +111,21 @@ class AccountAdminApiTest(AccountApiTestBase):
     account_store.save_user.assert_any_call(users["alice"])
     account_store.save_user.assert_any_call(users["bob"])
     self.assertNotIn("micu", users["custom"])
+    body = handler.responses[0][0]
+    self.assertEqual(body["balances"][0]["budget"]["remaining"], "7.00")
+    self.assertEqual(set(body["balances"][0]), {"id", "budget"})
+
+  def test_account_list_does_not_wait_for_provider(self) -> None:
+    handler = self.handler({}, {"username": "admin", "role": "system_admin"})
+    store = MagicMock()
+    store.pending_accounts = {}
+    store.groups = {}
+    workspace = MagicMock()
+    workspace.usage_summaries.return_value = ({}, {})
+    with patch("server.USERS", {}), patch("server.ACCOUNT_STORE", store), patch("server.WORKSPACE_STORE", workspace), patch("server_admin.refresh_micu_balances") as refresh:
+      Handler.accounts(handler)
+    refresh.assert_not_called()
+    self.assertEqual(handler.responses[0][0], {"accounts": [], "groups": []})
 
   def test_worker_status_requires_admin_and_returns_runtime_summary(self) -> None:
     actor = {"username": "admin", "role": "system_admin"}

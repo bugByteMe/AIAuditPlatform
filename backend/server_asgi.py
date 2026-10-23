@@ -16,6 +16,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
 from starlette.concurrency import run_in_threadpool
 from starlette.requests import ClientDisconnect
+from starlette.middleware.gzip import GZipMiddleware
 
 from chat_common import browser_event
 from config import SETTINGS
@@ -23,7 +24,7 @@ from server_api import Handler
 from server_state import CHAT_RUNTIME, FRONTEND_DIR, UPLOAD_MANAGER, WECHAT_RECONCILE_STOP, reconcile_micu_accounts
 from server_recharge import reconcile_wechat_orders
 from server_transport import RequestStopped, SSE_BROKER
-from server_utils import ascii_download_filename, static_content_type
+from server_utils import ascii_download_filename, static_content_type, static_cache_headers, static_not_modified
 from server_workloads import WorkloadBusy, WorkloadPools, classify_request
 from worker_upload import UploadStreamTimeout
 from workspace_store import StorageError, parse_query
@@ -100,10 +101,14 @@ class AsgiHandler(Handler):
       candidate = FRONTEND_DIR / "index.html"
     if not candidate.is_file():
       candidate = FRONTEND_DIR / "index.html"
+    headers = static_cache_headers(candidate)
+    if static_not_modified(self.headers, headers):
+      self.response = Response(status_code=304, headers=headers)
+      return
     self.response = FileResponse(
       candidate,
       media_type=static_content_type(candidate),
-      headers={"Cache-Control": "no-store"},
+      headers=headers,
     )
 
 
@@ -275,6 +280,7 @@ async def app_lifespan(_app: FastAPI):
 
 
 app = FastAPI(lifespan=app_lifespan)
+app.add_middleware(GZipMiddleware, minimum_size=1024, compresslevel=5)
 
 
 @app.options("/{request_path:path}")

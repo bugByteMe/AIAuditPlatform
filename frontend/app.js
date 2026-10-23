@@ -182,12 +182,22 @@ async function expandWorkspaceFolder(path, collapsedFolders, renderTree) {
 }
 
 async function refreshCurrentUser() {
+  const user = state.user;
+  if (!user) return;
+  state.userBalanceLoading = user.budget?.source !== "custom";
+  renderCurrentUser();
   try {
-    const result = await api("/api/session");
-    if (result.user) state.user = result.user;
-    renderCurrentUser();
+    const result = await api("/api/session/balance");
+    if (state.user === user && result.user) state.user = result.user;
   } catch (error) {
     console.warn("Current budget refresh failed", error);
+    if (state.user === user) user.budget = { ...user.budget, remainingPercent: null, status: "unavailable" };
+  } finally {
+    if (state.user === user || state.user?.id === user.id) {
+      state.userBalanceLoading = false;
+      renderCurrentUser();
+      renderRechargeHistory();
+    }
   }
 }
 
@@ -351,6 +361,7 @@ function showAuthenticated(user) {
     state.adminLoadError = false;
   }
   state.user = user;
+  state.userBalanceLoading = user.budget?.source !== "custom";
   const isAdmin = canManageAccounts(user);
   applyAdminPermissions(document, user, state.runtimeConfig);
   document.querySelector("#admin-nav-button").classList.toggle("hidden", !isAdmin);
@@ -358,11 +369,13 @@ function showAuthenticated(user) {
   document.querySelector("#auth-screen").classList.add("hidden");
   document.querySelector("#app-shell").classList.remove("hidden");
   renderDynamic();
+  void refreshCurrentUser();
   if (viewFromLocation() === "recharge" && !state.recharge) loadRechargeData();
 }
 
 function showLogin() {
   state.user = null;
+  state.userBalanceLoading = false;
   state.workspaceQuery = "";
   document.querySelector("#workspace-search").value = "";
   state.recharge = null;

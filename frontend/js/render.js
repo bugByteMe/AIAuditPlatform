@@ -177,6 +177,8 @@ export function renderCurrentUser() {
   document.querySelector("#current-username").textContent = state.user.username;
   const percentage = budget.source === "custom"
     ? t("session.customProvider")
+    : state.userBalanceLoading
+      ? t("session.balanceLoading")
     : budget.remainingPercent === null || budget.remainingPercent === undefined
       ? t("session.balanceUnavailable")
       : `${Number(budget.remainingPercent).toFixed(1).replace(/\.0$/, "")}%`;
@@ -186,13 +188,14 @@ export function renderCurrentUser() {
       ? `${(used / 1_000).toFixed(1).replace(/\.0$/, "")}K`
       : `${(used / 1_000_000).toFixed(1).replace(/\.0$/, "")}M`;
   const separator = state.lang === "zh" ? "，" : ", ";
-  const budgetLabel = budget.source === "custom" || budget.remainingPercent === null || budget.remainingPercent === undefined
+  const budgetLabel = state.userBalanceLoading || budget.source === "custom" || budget.remainingPercent === null || budget.remainingPercent === undefined
     ? `${percentage}${separator}${t("session.platformTokenUsage")} ${compactTokens}`
     : `${t("session.remaining")} ${percentage}${separator}${t("session.platformTokenUsage")} ${compactTokens}`;
   document.querySelector("#current-budget-label").textContent = budgetLabel;
+  document.querySelector("#current-budget-label").setAttribute("aria-busy", String(state.userBalanceLoading));
   document.querySelector("#current-budget-label").title = `${t("session.platformTokenUsage")} ${used.toLocaleString()}`;
   const meter = document.querySelector("#current-budget-meter");
-  const hasPercentage = budget.remainingPercent !== null && budget.remainingPercent !== undefined;
+  const hasPercentage = !state.userBalanceLoading && budget.remainingPercent !== null && budget.remainingPercent !== undefined;
   meter.style.width = `${Math.max(0, Math.min(100, Number(budget.remainingPercent || 0)))}%`;
   meter.parentElement.classList.toggle("hidden", !hasPercentage);
 }
@@ -451,6 +454,8 @@ export function renderRechargeHistory() {
     const budget = state.user?.budget || {};
     percentage.textContent = budget.source === "custom"
       ? t("session.customProvider")
+      : state.userBalanceLoading
+        ? t("session.balanceLoading")
       : budget.remainingPercent === null || budget.remainingPercent === undefined
         ? t("session.balanceUnavailable")
         : `${Number(budget.remainingPercent).toFixed(1).replace(/\.0$/, "")}%`;
@@ -536,6 +541,8 @@ export function renderAdmin() {
     const budget = account.budget || {};
     const balance = budget.source === "custom"
       ? t("admin.customProvider")
+      : state.adminBalancesLoading && account.status !== "pending"
+        ? t("session.balanceLoading")
       : budget.remaining === null || budget.remaining === undefined
         ? t("admin.balanceUnavailable")
         : `¥${escapeHtml(budget.remaining)}`;

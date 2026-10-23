@@ -27,8 +27,6 @@ class AdminHandlerMixin:
   def accounts(self) -> None:
     actor = self.require_management()
     system_admin = actor.get("role") == "system_admin"
-    if system_admin:
-      refresh_micu_balances(USERS.values())
     serialize = admin_account if system_admin else public_user
     user_usage, group_usage = WORKSPACE_STORE.usage_summaries()
     active = [
@@ -60,6 +58,15 @@ class AdminHandlerMixin:
         }
       )
     self.write_json({"accounts": active + pending, "groups": groups})
+
+  def account_balances(self) -> None:
+    self.require_admin()
+    users = [user for user in USERS.values() if visible_customer(user)]
+    refresh_micu_balances(users)
+    self.write_json({"balances": [
+      {"id": user["id"], "budget": budget_summary(user, include_amount=True)}
+      for user in users
+    ]})
 
   def create_account_batch(self) -> None:
     actor = self.require_management() if IDENTITY.enabled else self.require_admin()

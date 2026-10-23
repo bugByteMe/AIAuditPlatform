@@ -91,6 +91,7 @@ class WorkloadRoutingTest(unittest.TestCase):
       ("GET", "/api/uploads/upload-1"): ("upload", "uploads"),
       ("POST", "/api/workspaces/ws-1/chat/runs"): ("external", "chat.run_start"),
       ("GET", "/api/session"): ("external", "session.refresh"),
+      ("GET", "/api/session/balance"): ("external", "session.balance"),
       ("POST", "/api/recharge/orders"): ("external", "recharge"),
     }
     for request, expected in cases.items():

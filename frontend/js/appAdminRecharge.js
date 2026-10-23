@@ -2,6 +2,7 @@ import { configureIdentityUi, renderCustomers } from "./identityUi.js";
 // Frontend controller: adminrecharge responsibilities.
 export function createAdminRecharge(context) {
   let workerStatusLoading = false;
+  let accountLoadGeneration = 0;
   let rechargeOrderPollTimer = null;
   let rechargeOrderGeneration = 0;
   const api = (...args) => context.api(...args);
@@ -21,6 +22,8 @@ export function createAdminRecharge(context) {
   const viewFromLocation = (...args) => context.viewFromLocation(...args);
 
   async function loadAccountControlData() {
+    const generation = ++accountLoadGeneration;
+    const user = state.user;
     if (!canManageAccounts(state.user)) {
       state.accounts = [];
       state.groups = [];
@@ -30,15 +33,18 @@ export function createAdminRecharge(context) {
       return;
     }
     state.adminLoading = true;
+    state.adminBalancesLoading = isSystemAdmin(user);
     state.adminLoadError = false;
     renderAdmin();
     renderWorkers();
     try {
       const [accounts, logs, workers] = await Promise.all([api("/api/accounts"), isSystemAdmin(state.user) ? api("/api/audit-logs") : { logs: [] }, isSystemAdmin(state.user) ? api("/api/workers") : { workers: [] }]);
+      if (generation !== accountLoadGeneration || state.user?.id !== user?.id) return;
       state.accounts = accounts.accounts || [];
       state.groups = accounts.groups || [];
       if (state.runtimeConfig.authMode === "oidc") {
         const result = await api("/api/customers");
+        if (generation !== accountLoadGeneration || state.user?.id !== user?.id) return;
         state.customers = result.customers;
         renderCustomers(result.customers, state.runtimeConfig.deploymentCustomerId || "");
       }
@@ -50,7 +56,9 @@ export function createAdminRecharge(context) {
       state.auditLogs = logs.logs || [];
       state.workers = workers.workers || [];
     } catch {
+      if (generation !== accountLoadGeneration || state.user?.id !== user?.id) return;
       state.adminLoadError = true;
+      state.adminBalancesLoading = false;
       state.accounts = [];
       state.groups = [];
       state.auditLogs = [];
@@ -60,6 +68,30 @@ export function createAdminRecharge(context) {
     renderAdmin();
     renderWorkers();
     renderWorkspaces();
+    if (!state.adminLoadError && isSystemAdmin(user)) void loadAccountBalances(generation, user);
+  }
+
+  async function loadAccountBalances(generation, user) {
+    try {
+      const result = await api("/api/accounts/balances");
+      if (generation !== accountLoadGeneration || state.user?.id !== user?.id) return;
+      const budgets = new Map((result.balances || []).map((entry) => [entry.id, entry.budget]));
+      state.accounts.forEach((account) => {
+        if (budgets.has(account.id)) account.budget = budgets.get(account.id);
+      });
+    } catch {
+      if (generation !== accountLoadGeneration || state.user?.id !== user?.id) return;
+      state.accounts.forEach((account) => {
+        if (account.budget?.source !== "custom" && account.status !== "pending") {
+          account.budget = { ...account.budget, remaining: null, status: "unavailable" };
+        }
+      });
+    } finally {
+      if (generation === accountLoadGeneration && state.user?.id === user?.id) {
+        state.adminBalancesLoading = false;
+        renderAdmin();
+      }
+    }
   }
 
   async function refreshWorkerStatus() {

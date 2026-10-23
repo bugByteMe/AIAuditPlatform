@@ -1,6 +1,8 @@
 export const state = {
   lang: "zh",
   user: null,
+  userBalanceLoading: false,
+  adminBalancesLoading: false,
   accounts: [],
   groups: [],
   workers: [],

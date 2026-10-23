@@ -80,7 +80,8 @@ class PlatformAdminTest(AccountApiTestBase):
   def test_platform_cannot_use_system_only_endpoints(self):
     for method, args in [(Handler.create_account, ()), (Handler.create_account_batch, ()),
                          (Handler.delete_account, ("member",)), (Handler.revoke_invite, ("missing",)),
-                         (Handler.reset_account_budget, ("member",)), (Handler.audit_logs, ()), (Handler.workers, ())]:
+                         (Handler.reset_account_budget, ("member",)), (Handler.audit_logs, ()), (Handler.workers, ()),
+                         (Handler.account_balances, ())]:
       with self.subTest(method=method.__name__), self.assertRaises(RequestStopped):
         method(self.request({}), *args)
 

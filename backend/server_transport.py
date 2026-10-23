@@ -12,7 +12,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from chat_common import browser_event
 from server_state import *
-from server_utils import static_content_type
+from server_utils import static_content_type, static_cache_headers, static_not_modified
 from wechat_pay import WechatPayError
 from workspace_store import StorageError, parse_query
 
@@ -120,6 +120,8 @@ class BaseHandler(BaseHTTPRequestHandler):
         )
       elif method == "GET" and path == "/api/session":
         self.require_session_response()
+      elif method == "GET" and path == "/api/session/balance":
+        self.session_balance()
       elif method == "GET" and path == "/api/oidc/login":
         self.oidc_login(query)
       elif method == "GET" and path == "/api/oidc/callback":
@@ -136,6 +138,8 @@ class BaseHandler(BaseHTTPRequestHandler):
         self.logout()
       elif method == "GET" and path == "/api/accounts":
         self.accounts()
+      elif method == "GET" and path == "/api/accounts/balances":
+        self.account_balances()
       elif method == "POST" and path == "/api/accounts/batch":
         self.create_account_batch()
       elif method == "POST" and path == "/api/admin/recharge-imports/preview":
@@ -289,6 +293,10 @@ class BaseHandler(BaseHTTPRequestHandler):
     if not user:
       self.write_json({"user": None}, HTTPStatus.UNAUTHORIZED)
       return
+    self.write_json({"user": public_user(user)})
+
+  def session_balance(self) -> None:
+    user = self.require_user()
     refresh_micu_balance(user)
     self.write_json({"user": public_user(user)})
 
@@ -425,13 +433,21 @@ class BaseHandler(BaseHTTPRequestHandler):
   def serve_static(self, request_path: str) -> None:
     relative = unquote(request_path.lstrip("/")) or "index.html"
     candidate = (FRONTEND_DIR / relative).resolve()
-    if not str(candidate).startswith(str(FRONTEND_DIR.resolve())) or not candidate.is_file():
+    if not candidate.is_relative_to(FRONTEND_DIR.resolve()) or not candidate.is_file():
       candidate = FRONTEND_DIR / "index.html"
+    headers = static_cache_headers(candidate)
+    if static_not_modified(self.headers, headers):
+      self.send_response(HTTPStatus.NOT_MODIFIED)
+      for key, value in headers.items():
+        self.send_header(key, value)
+      self.end_headers()
+      return
     content_type = static_content_type(candidate)
     body = candidate.read_bytes()
     self.send_response(HTTPStatus.OK)
     self.send_header("Content-Type", content_type)
     self.send_header("Content-Length", str(len(body)))
-    self.send_header("Cache-Control", "no-store")
+    for key, value in headers.items():
+      self.send_header(key, value)
     self.end_headers()
     self.wfile.write(body)
