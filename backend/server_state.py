@@ -40,6 +40,7 @@ SEED_USERS = {
     "budgetTokens": 3_000_000,
     "usedTokens": 1_900_000,
     "enabled": True,
+      "universalSeedKey": "chen.audit",
       "maxSessions": 2,
       "codex": {
         "baseUrl": SETTINGS.default_codex_base_url,
@@ -55,6 +56,7 @@ SEED_USERS = {
     "budgetTokens": 2_000_000,
     "usedTokens": 940_000,
     "enabled": True,
+      "universalSeedKey": "li.review",
       "maxSessions": 1,
       "codex": {
         "baseUrl": SETTINGS.default_codex_base_url,
@@ -152,7 +154,8 @@ def public_user(user: dict) -> dict:
     key: value
     for key, value in user.items()
     if key not in {
-      "passwordHash", "codex", "customCodex", "micu", "inviteToken", "initialBudgetCny", "activationInviteDigest"
+      "passwordHash", "codex", "customCodex", "micu", "inviteToken", "initialBudgetCny", "activationInviteDigest",
+      "universalSeedKey"
     }
   }
   mode = str(user.get("providerMode") or "legacy")
@@ -169,7 +172,7 @@ def admin_account(account: dict) -> dict:
   public = {
     key: value
     for key, value in account.items()
-    if key not in {"passwordHash", "codex", "customCodex", "micu", "activationInviteDigest"}
+    if key not in {"passwordHash", "codex", "customCodex", "micu", "activationInviteDigest", "universalSeedKey"}
   }
   public["budget"] = budget_summary(account, include_amount=True)
   if public.get("status") == "active" and not public.get("enabled", True):

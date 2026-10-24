@@ -3,6 +3,8 @@ import json
 import os
 from urllib.parse import urlparse
 
+from identity_common import UNIVERSAL_CUSTOMER_ID
+
 
 class IdentitySettings:
   def __init__(self):
@@ -43,6 +45,8 @@ class IdentitySettings:
     if not 30 <= self.revalidate_seconds <= 900:
       raise ValueError("OIDC_REVALIDATE_SECONDS must be between 30 and 900")
     if self.customer_id:
+      if self.customer_id == UNIVERSAL_CUSTOMER_ID:
+        raise ValueError("DEPLOYMENT_CUSTOMER_ID cannot use the reserved universal customer")
       parsed = urlparse(self.central_url)
       if parsed.scheme != "https" or not parsed.netloc or parsed.path not in {"", "/"} or parsed.username or parsed.query or parsed.fragment or len(self.central_token) < 32:
         raise ValueError("Dedicated OIDC deployments require HTTPS IDENTITY_CENTRAL_URL and token")
@@ -53,7 +57,8 @@ class IdentitySettings:
     tokens = set()
     for client, entry in self.clients.items():
       token = entry.get("token", "")
-      if len(token) < 32 or token in tokens or not entry.get("customerId") or entry["customerId"] == "public":
+      if (len(token) < 32 or token in tokens or not entry.get("customerId")
+          or entry["customerId"] in {"public", UNIVERSAL_CUSTOMER_ID}):
         raise ValueError("Each identity client requires a unique >=32 character token and business customerId")
       tokens.add(token)
 

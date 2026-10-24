@@ -15,6 +15,7 @@ from account_store import AccountStore
 from identity_database import IdentityDatabase
 from identity_config import IdentitySettings
 from identity_policy import invitation_customer, guard_identity_route
+from identity_common import UNIVERSAL_CUSTOMER_ID
 from oidc_client import IdentityError, IdentityNameTaken, OidcClient, request_json
 import server_oidc
 
@@ -89,6 +90,7 @@ class OidcFlowTest(unittest.TestCase):
     self.store.reserve_identity_invite(pending["inviteToken"], "another")
 
   def test_customer_mismatch_and_disabled_local_profile_deny_sessions(self):
+    server_oidc.check_admission({"customerId": UNIVERSAL_CUSTOMER_ID})
     with self.assertRaises(IdentityError):
       server_oidc.check_admission({"customerId": "another"})
     user = self.store.admit_identity(self.settings.issuer, self.identity, self.group["id"])
@@ -127,6 +129,20 @@ class OidcFlowTest(unittest.TestCase):
       self.assertEqual(invitation_customer({}, {"role": "system_admin"}), "business")
       with self.assertRaises(Exception):
         invitation_customer({"customerId": "another"}, {"role": "system_admin"})
+      with self.assertRaises(Exception):
+        invitation_customer({"customerId": UNIVERSAL_CUSTOMER_ID}, {"role": "system_admin"})
+
+  def test_universal_cannot_be_configured_as_dedicated_customer(self):
+    with patch.dict("os.environ", {
+        "AI_AUDIT_AUTH_MODE": "oidc", "AI_AUDIT_OIDC_ISSUER": self.settings.issuer,
+        "AI_AUDIT_PUBLIC_URL": self.settings.public_url, "AI_AUDIT_OIDC_CLIENT_ID": "app",
+        "AI_AUDIT_OIDC_CLIENT_SECRET": "secret", "AI_AUDIT_OIDC_DEFAULT_GROUP_ID": self.group["id"],
+        "AI_AUDIT_DEPLOYMENT_CUSTOMER_ID": UNIVERSAL_CUSTOMER_ID,
+        "AI_AUDIT_IDENTITY_CENTRAL_URL": "https://central.example.test",
+        "AI_AUDIT_IDENTITY_CENTRAL_TOKEN": "x" * 32,
+      }, clear=True):
+      with self.assertRaisesRegex(ValueError, "reserved universal"):
+        IdentitySettings().validate(self.store.groups)
 
   def test_dedicated_recharge_routes_are_blocked(self):
     with patch("identity_policy.IDENTITY", self.settings):
@@ -156,6 +172,10 @@ class OidcFlowTest(unittest.TestCase):
     with patch("identity_config.IDENTITY", self.settings):
       self.assertTrue(WorkspaceCoreMixin.user_can_access(store, actor, {"owner": "alice"}))
       self.assertFalse(WorkspaceCoreMixin.user_can_access(store, actor, {"owner": "bob"}))
+      universal = {"username": "seed", "role": "platform_admin", "customerId": UNIVERSAL_CUSTOMER_ID}
+      owners["seed"] = universal
+      self.assertTrue(WorkspaceCoreMixin.user_can_access(store, universal, {"owner": "alice"}))
+      self.assertTrue(WorkspaceCoreMixin.user_can_access(store, universal, {"owner": "seed"}))
 
   def test_origin_check_rejects_mutating_browser_requests_from_other_sites(self):
     handler = self.handler()

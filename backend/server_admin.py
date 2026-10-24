@@ -217,6 +217,8 @@ class AdminHandlerMixin:
     self.write_json({"deleted": {"group": removed_group, "accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
 
   def validate_admin_deletion(self, actor: dict, user_ids: set[str]) -> None:
+    if IDENTITY.enabled and any(user.get("universalSeedKey") and str(user.get("id") or "") in user_ids for user in USERS.values()):
+      raise StorageError("protected_admin", "universal seed accounts cannot be deleted")
     if IDENTITY.enabled and any(account.get("status") == "provisioning" and account["id"] in user_ids
         for account in ACCOUNT_STORE.pending_accounts.values()):
       raise StorageError("forbidden", "Cannot delete an invitation while identity provisioning is in progress")

@@ -234,10 +234,12 @@ class WorkspaceCoreMixin:
 
   def user_can_access(self, user: dict, workspace: dict) -> bool:
     from identity_config import IDENTITY
+    from identity_common import customer_allowed
     if IDENTITY.enabled and IDENTITY.customer_id:
       users, _ = self.account_provider() if self.account_provider else ({}, {})
       owner = users.get(str(workspace.get("owner") or ""), {})
-      if user.get("customerId") != IDENTITY.customer_id or owner.get("customerId") != IDENTITY.customer_id:
+      if (not customer_allowed(user.get("customerId", ""), IDENTITY.customer_id)
+          or not customer_allowed(owner.get("customerId", ""), IDENTITY.customer_id)):
         return False
     if user["role"] in {"system_admin", "platform_admin"}:
       return True

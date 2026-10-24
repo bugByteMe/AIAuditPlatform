@@ -61,6 +61,43 @@ class AccountStore(AccountIdentityMixin, AccountRechargeMixin):
     if recovered:
       self.save()
 
+  def ensure_universal_seed_users(self) -> list[dict]:
+    """Ensure configured universal profiles exist even when storage is non-empty."""
+    from identity_common import UNIVERSAL_SEED_USERNAMES
+    with self.lock:
+      previous_users, previous_groups = deepcopy(self.users), deepcopy(self.groups)
+      try:
+        for seed_key in UNIVERSAL_SEED_USERNAMES:
+          source = deepcopy(self.seed_users.get(seed_key) or {})
+          if not source:
+            raise RuntimeError(f"Universal seed profile is not configured: {seed_key}")
+          username = str(source.get("username") or seed_key)
+          existing = next((user for name, user in self.users.items() if name.casefold() == username.casefold()), None)
+          if existing:
+            marker = str(existing.get("universalSeedKey") or "")
+            if marker and marker != seed_key:
+              raise RuntimeError(f"Universal seed marker conflicts for {username}")
+            existing["universalSeedKey"] = seed_key
+            continue
+          group_name = str(source.get("group") or "").strip()
+          group = next((item for item in self.groups.values() if item.get("name", "").casefold() == group_name.casefold()), None)
+          if not group:
+            group = {"id": new_id("grp"), "name": group_name, "createdAt": timestamp(),
+              "diskLimitBytes": None, "liveRunLimit": DEFAULT_GROUP_LIVE_RUN_LIMIT}
+            self.groups[group["id"]] = group
+          source.update(id=new_id("usr"), username=username, groupId=group["id"], group=group_name,
+            status="active", universalSeedKey=seed_key)
+          self.users[username] = source
+        self._normalize_provider_state()
+        self.database.sync(self.state())
+      except Exception:
+        self.users.clear()
+        self.users.update(previous_users)
+        self.groups.clear()
+        self.groups.update(previous_groups)
+        raise
+      return [self.users[self.seed_users[key]["username"]] for key in UNIVERSAL_SEED_USERNAMES]
+
   def migrate_legacy(self, users: dict[str, dict]) -> dict:
     migrated_users: dict[str, dict] = {}
     groups: dict[str, dict] = {}

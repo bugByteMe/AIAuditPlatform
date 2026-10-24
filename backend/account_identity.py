@@ -5,9 +5,48 @@ from sqlalchemy import select
 
 from account_common import new_id, timestamp
 from oidc_client import IdentityError
+from identity_common import UNIVERSAL_CUSTOMER_ID
 
 
 class AccountIdentityMixin:
+  def link_universal_seed(self, issuer, identity, seed_key):
+    subject, username = str(identity.get("sub") or ""), str(identity.get("username") or "")
+    if (not subject or username != seed_key or identity.get("customerId") != UNIVERSAL_CUSTOMER_ID
+        or not isinstance(identity.get("micu"), dict)):
+      raise IdentityError("Universal seed identity does not match the configured profile")
+    with self.lock, self.identity_db.exclusive("admit:" + subject):
+      user = self.user_by_identifier(username)
+      if not user or user.get("universalSeedKey") != seed_key:
+        raise IdentityError("Universal seed local profile is missing or changed")
+      if (user.get("authSource") == "oidc" and
+          (user.get("oidcIssuer") != issuer or user.get("oidcSubject") != subject)):
+        raise IdentityError("Universal seed local profile has a conflicting identity link")
+      if user.get("customerId") not in {None, "", UNIVERSAL_CUSTOMER_ID}:
+        raise IdentityError("Universal seed local profile has a conflicting customer assignment")
+      linked_id = self.identity_db.linked_user_id(issuer, subject)
+      with self.database.engine.connect() as connection:
+        linked_identity = connection.execute(select(
+          self.identity_db.links.c.issuer, self.identity_db.links.c.subject).where(
+          self.identity_db.links.c.user_id == user["id"])).first()
+      if (linked_id not in {None, user["id"]}
+          or (linked_identity and tuple(linked_identity) != (issuer, subject))):
+        raise IdentityError("Universal seed identity is already linked to another profile")
+      row = deepcopy(user)
+      row.update(authSource="oidc", oidcIssuer=issuer, oidcSubject=subject,
+        customerId=UNIVERSAL_CUSTOMER_ID, providerMode="micu", micu=deepcopy(identity["micu"]))
+      row.pop("passwordHash", None)
+      with self.database.engine.begin() as connection:
+        if linked_id is None:
+          connection.execute(self.identity_db.links.insert().values(
+            issuer=issuer, subject=subject, user_id=row["id"]))
+        connection.execute(self.database.users.update().where(self.database.users.c.id == row["id"]).values(
+          username=row["username"], username_key=row["username"].casefold(),
+          group_id=row.get("groupId", ""), enabled=bool(row.get("enabled", True)),
+          status=row.get("status", "active"), payload=row))
+      user.clear()
+      user.update(row)
+      return user
+
   def release_identity_invite(self, token, username):
     with self.lock, self.identity_db.exclusive("invite:" + token):
       account = self.pending_by_token(token)

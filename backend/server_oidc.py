@@ -10,6 +10,7 @@ from urllib.parse import parse_qs
 from identity_config import IDENTITY
 from identity_database import IdentityDatabase
 from identity_service import IdentityAuthority, IdentityGateway, canonical_username
+from identity_common import UNIVERSAL_CUSTOMER_ID, UNIVERSAL_SEED_USERNAMES, customer_allowed
 from oidc_client import IdentityError, IdentityNameTaken, OidcClient
 
 _lock = threading.RLock()
@@ -35,15 +36,22 @@ def validate_identity_startup():
   from server_state import ACCOUNT_STORE
   IDENTITY.validate(ACCOUNT_STORE.groups)
   if IDENTITY.enabled:
-    _, database, _, _, _ = services()
+    store, database, _, gateway, _ = services()
     if not IDENTITY.customer_id and not database.get(database.customers, "public"):
       database.put(database.customers, "public", {"id": "public", "name": "Public", "enabled": True})
+    if not IDENTITY.customer_id and not database.get(database.customers, UNIVERSAL_CUSTOMER_ID):
+      database.put(database.customers, UNIVERSAL_CUSTOMER_ID,
+        {"id": UNIVERSAL_CUSTOMER_ID, "name": "Universal platform accounts", "enabled": True})
+    from config import SETTINGS
+    for user in store.ensure_universal_seed_users():
+      identity = gateway.universal_seed(user["universalSeedKey"], SETTINGS.micu_migration_balance_cny)
+      store.link_universal_seed(IDENTITY.issuer, identity, user["universalSeedKey"])
 
 
 def check_admission(identity):
   if not isinstance(identity.get("customerId"), str) or not identity["customerId"]:
     raise IdentityError("Identity has no customer assignment")
-  if IDENTITY.customer_id and identity["customerId"] != IDENTITY.customer_id:
+  if IDENTITY.customer_id and not customer_allowed(identity["customerId"], IDENTITY.customer_id):
     raise IdentityError("This platform is restricted to another customer")
 
 
@@ -203,13 +211,14 @@ class OidcHandlerMixin:
       payload = self.read_json()
       identifier = str(payload.get("id") or "")
       name = str(payload.get("name") or "").strip()
-      if not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", identifier) or not name or len(name) > 128:
+      if (identifier == UNIVERSAL_CUSTOMER_ID or
+          not re.fullmatch(r"[a-z0-9][a-z0-9_-]{0,63}", identifier) or not name or len(name) > 128):
         raise IdentityError("Invalid customer ID or name")
       if db.get(db.customers, identifier):
         raise IdentityError("Customer already exists")
       db.put(db.customers, identifier, {"id": identifier, "name": name, "enabled": True})
       add_audit(actor["username"], "customer created", identifier)
-    self.write_json({"customers": db.customer_list()})
+    self.write_json({"customers": [item for item in db.customer_list() if item.get("id") != UNIVERSAL_CUSTOMER_ID]})
 
   def identity_internal(self, action):
     if not IDENTITY.enabled or IDENTITY.customer_id:
@@ -223,6 +232,13 @@ class OidcHandlerMixin:
     if action == "binding":
       binding = authority.binding(str(payload.get("sub") or ""), customer)
       self.write_json(binding)
+      return
+    if action == "universal-seed":
+      username = str(payload.get("username") or "")
+      if username not in UNIVERSAL_SEED_USERNAMES:
+        raise IdentityError("Unknown universal seed identity")
+      from config import SETTINGS
+      self.write_json(authority.universal_seed(username, SETTINGS.micu_migration_balance_cny))
       return
     if action != "provision" or payload.get("customerId") != customer:
       raise IdentityError("Invalid provisioning request")

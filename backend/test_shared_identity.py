@@ -12,6 +12,7 @@ from unittest.mock import MagicMock, patch
 from account_store import AccountStore
 from identity_database import IdentityDatabase
 from identity_service import IdentityAuthority
+from identity_common import UNIVERSAL_CUSTOMER_ID
 from migrate_oidc_accounts import imported_credential, preflight, migrate
 from oidc_client import IdentityError, IdentityNameTaken, KeycloakAdmin
 
@@ -66,6 +67,23 @@ class SharedIdentityTest(unittest.TestCase):
     self.store.users["alice"] = {"id": "legacy", "username": "alice"}
     with self.assertRaisesRegex(IdentityError, "migration"):
       self.admit()
+
+  def test_universal_seed_profile_is_restored_and_linked_idempotently(self):
+    seed = {"seed.admin": {"username": "seed.admin", "displayName": "Seed", "role": "system_admin",
+      "group": "Seed Group", "enabled": True, "passwordHash": "known-hash", "universalSeedKey": "seed.admin"}}
+    with patch("identity_common.UNIVERSAL_SEED_USERNAMES", ("seed.admin",)):
+      store = AccountStore(Path(self.directory.name) / "seed-accounts.json", seed)
+      store.identity_db = IdentityDatabase(store.database.engine)
+      store.users.pop("seed.admin")
+      store.database.sync(store.state())
+      profile = store.ensure_universal_seed_users()[0]
+      identity = {"sub": "seed-subject", "username": "seed.admin", "customerId": UNIVERSAL_CUSTOMER_ID,
+        "micu": {"tokenId": 99, "apiKey": "synthetic-key"}}
+      store.link_universal_seed(ISSUER, identity, "seed.admin")
+      store.link_universal_seed(ISSUER, identity, "seed.admin")
+    self.assertEqual(profile["customerId"], UNIVERSAL_CUSTOMER_ID)
+    self.assertEqual(store.identity_db.linked_user_id(ISSUER, "seed-subject"), profile["id"])
+    self.assertNotIn("passwordHash", profile)
 
   def test_changed_username_or_customer_fails_closed(self):
     self.admit()
@@ -163,6 +181,28 @@ class SharedIdentityTest(unittest.TestCase):
     authority.admin.user.return_value["enabled"] = False
     with self.assertRaises(IdentityError):
       authority.binding("subject-1", "business")
+
+  def test_universal_seed_reuses_keycloak_identity_and_binding(self):
+    authority, provider = self.authority()
+    self.db.put(self.db.customers, UNIVERSAL_CUSTOMER_ID, {"id": UNIVERSAL_CUSTOMER_ID, "enabled": True})
+    authority.admin.find.return_value = {"id": "seed-subject", "username": "chen.audit", "enabled": True,
+      "attributes": {"customerId": [UNIVERSAL_CUSTOMER_ID]}}
+    first = authority.universal_seed("chen.audit", "10.00")
+    second = authority.universal_seed("chen.audit", "10.00")
+    self.assertEqual(first, second)
+    self.assertEqual(first["customerId"], UNIVERSAL_CUSTOMER_ID)
+    provider.assert_called_once_with("chen.audit", "10.00")
+    authority.admin.create.assert_not_called()
+
+  def test_dedicated_binding_accepts_universal_customer(self):
+    authority, _ = self.authority()
+    self.db.put(self.db.customers, UNIVERSAL_CUSTOMER_ID, {"id": UNIVERSAL_CUSTOMER_ID, "enabled": True})
+    identity = {"sub": "seed-subject", "username": "chen.audit", "customerId": UNIVERSAL_CUSTOMER_ID,
+      "micu": {"tokenId": 99}}
+    self.db.put(self.db.bindings, "seed-subject", identity, username_key="chen.audit")
+    authority.admin.user.return_value = {"id": "seed-subject", "username": "chen.audit", "enabled": True,
+      "attributes": {"customerId": [UNIVERSAL_CUSTOMER_ID]}}
+    self.assertEqual(authority.binding("seed-subject", "business"), identity)
 
   def test_service_authentication_requires_bearer_and_scoped_token(self):
     authority, _ = self.authority()

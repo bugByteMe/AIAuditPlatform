@@ -25,6 +25,16 @@ old platform/Micu spelling using the admin-only `platformUsername` attribute,
 even when Keycloak normalizes login case. Do not edit linked usernames, this
 attribute, or customer assignments outside a reviewed migration.
 
+The built-in seed profiles are an explicit exception to ordinary customer
+membership. Their existing Keycloak identities must have `customerId=universal`.
+Every OIDC-enabled platform reconciles those local profiles and issuer/subject
+links before serving requests; it never creates or resets the Keycloak accounts.
+A dedicated platform admits its own customer plus `universal`, while workspace
+owners must still belong to one of those two scopes. The `universal` customer is
+reserved: it is hidden from customer selection and cannot be used for invitations,
+reassignment, or deletion. Startup fails closed if a central identity is missing,
+disabled, assigned elsewhere, or conflicts with an existing local identity link.
+
 ## Configuration
 
 Identity settings are environment-only. Keep completed files outside Git.
@@ -71,7 +81,8 @@ hosts. Central Keycloak service-account credentials must exist on main only.
 Management roles use `GET /api/customers`; main also accepts
 `POST /api/customers` with `{id, name}`. IDs are immutable lowercase letters,
 digits, underscores/hyphens, up to 64 characters. `public` is reserved for
-non-business users and created automatically; groups are independent.
+non-business users and created automatically; `universal` is reserved for the
+built-in platform seed identities; groups are independent.
 
 In OIDC mode, system/platform admins issue batches and revoke unused invitations.
 `POST /api/accounts/batch` adds `customerId`. Main administrators choose a
@@ -99,7 +110,10 @@ Dedicated servers use authenticated main-platform endpoints:
 - `POST /api/internal/identity/provision`: fixed customer, operation ID, and
   configured per-client initial-budget ceiling.
 - `POST /api/internal/identity/binding`: enabled, customer-matching subject's
-  existing Micu binding; no username-only lookup or credit grant.
+  existing Micu binding; universal bindings are accepted for dedicated clients.
+- `POST /api/internal/identity/universal-seed`: resolves only a configured seed
+  username, verifies its existing Keycloak assignment, and idempotently ensures
+  the central Micu binding. It cannot create a Keycloak identity.
 
 There is **no balance-proxy endpoint**. Dedicated recharge orders/imports,
 reset-budget requests, callback reconciliation, and key mutations are blocked.

@@ -2,11 +2,12 @@
 from urllib.parse import unquote
 
 from identity_config import IDENTITY
+from identity_common import UNIVERSAL_CUSTOMER_ID, customer_allowed
 from workspace_store import StorageError
 
 
 def visible_customer(account):
-  return not IDENTITY.enabled or not IDENTITY.customer_id or account.get("customerId") == IDENTITY.customer_id
+  return not IDENTITY.enabled or customer_allowed(account.get("customerId", ""), IDENTITY.customer_id)
 
 
 def allowed_browser_origin(origin):
@@ -18,6 +19,8 @@ def invitation_customer(payload, actor):
   if not IDENTITY.enabled:
     return ""
   requested = str(payload.get("customerId") or "")
+  if requested == UNIVERSAL_CUSTOMER_ID:
+    raise StorageError("forbidden", "The universal customer is reserved for platform seed identities")
   if IDENTITY.customer_id:
     if requested and requested != IDENTITY.customer_id:
       raise StorageError("forbidden", "Invitation customer cannot be overridden")

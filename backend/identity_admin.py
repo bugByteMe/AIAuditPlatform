@@ -5,6 +5,7 @@ from urllib.parse import quote
 from identity_config import IDENTITY
 from oidc_client import IdentityError, identity_username
 from workspace_store import StorageError
+from identity_common import UNIVERSAL_CUSTOMER_ID
 
 
 def require_central_admin(handler):
@@ -23,6 +24,8 @@ def full_delete(handler, identifier):
   user = ACCOUNT_STORE.user_by_identifier(identifier)
   if not user or not user.get("oidcSubject") or user.get("oidcIssuer") != IDENTITY.issuer:
     raise IdentityError("An explicitly linked central identity is required")
+  if user.get("customerId") == UNIVERSAL_CUSTOMER_ID:
+    raise IdentityError("Universal seed identities cannot be deleted")
   handler.validate_admin_deletion(actor, {user["id"]})
   if handler.read_json().get("confirmSubject") != user["oidcSubject"]:
     raise IdentityError("Full deletion requires confirmation of the central subject")
@@ -49,6 +52,8 @@ def change_customer(handler, identifier):
   if set(payload) != {"customerId"}:
     raise IdentityError("Only customerId may be changed through this endpoint")
   customer = str(payload["customerId"])
+  if customer == UNIVERSAL_CUSTOMER_ID or user.get("customerId") == UNIVERSAL_CUSTOMER_ID:
+    raise IdentityError("Universal seed customer assignments cannot be changed")
   _, db, authority, _, _ = services()
   db.require_customer(customer)
   with ACCOUNT_STORE.lock, db.exclusive("admit:" + user["oidcSubject"]):

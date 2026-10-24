@@ -3,6 +3,7 @@ import hmac
 import re
 
 from oidc_client import IdentityError, IdentityNameTaken, KeycloakAdmin, customer_of, identity_username, request_json
+from identity_common import UNIVERSAL_CUSTOMER_ID, UNIVERSAL_SEED_USERNAMES, customer_allowed
 
 
 def canonical_username(value):
@@ -34,6 +35,8 @@ class IdentityAuthority:
 
   def provision(self, operation, username, password, customer, initial_budget):
     username = canonical_username(username)
+    if customer == UNIVERSAL_CUSTOMER_ID:
+      raise IdentityError("The universal customer is reserved for platform seed identities")
     self.db.require_customer(customer)
     fingerprint = {"username": username, "customerId": customer, "initialBudgetCny": str(initial_budget)}
     with self.db.exclusive("operation:" + operation), self.db.exclusive("provision:" + username):
@@ -72,11 +75,35 @@ class IdentityAuthority:
       self.db.put(self.db.operations, operation, record)
       return result
 
+  def universal_seed(self, username, initial_budget):
+    username = canonical_username(username)
+    if username not in UNIVERSAL_SEED_USERNAMES:
+      raise IdentityError("Unknown universal seed identity")
+    self.db.require_customer(UNIVERSAL_CUSTOMER_ID)
+    with self.db.exclusive("universal-seed:" + username):
+      identity = self.admin.find(username)
+      if (not identity or not identity.get("enabled") or identity_username(identity) != username
+          or customer_of(identity) != UNIVERSAL_CUSTOMER_ID):
+        raise IdentityError("Universal seed Keycloak identity is missing, disabled, or incorrectly assigned")
+      subject = str(identity.get("id") or "")
+      if not subject:
+        raise IdentityError("Universal seed Keycloak identity has no subject")
+      result = self.db.get(self.db.bindings, subject)
+      if result:
+        if (result.get("username") != username or result.get("customerId") != UNIVERSAL_CUSTOMER_ID
+            or not isinstance(result.get("micu"), dict)):
+          raise IdentityError("Universal seed binding conflicts with the Keycloak identity")
+        return result
+      binding = self.provision_micu(username, initial_budget)
+      result = {"sub": subject, "username": username, "customerId": UNIVERSAL_CUSTOMER_ID, "micu": binding}
+      self.db.put(self.db.bindings, subject, result, username_key=username.casefold())
+      return result
+
   def binding(self, subject, customer=""):
     identity = self.admin.user(subject)
     actual_customer = customer_of(identity)
     self.db.require_customer(actual_customer)
-    if not identity.get("enabled") or (customer and actual_customer != customer):
+    if not identity.get("enabled") or (customer and not customer_allowed(actual_customer, customer)):
       raise IdentityError("Identity is disabled or customer does not match")
     result = self.db.get(self.db.bindings, subject)
     if not result or result["username"] != identity_username(identity) or result["customerId"] != actual_customer:
@@ -107,3 +134,8 @@ class IdentityGateway:
     if self.settings.customer_id:
       return self.call("binding", {"sub": subject})
     return self.authority.binding(subject)
+
+  def universal_seed(self, username, budget):
+    if self.settings.customer_id:
+      return self.call("universal-seed", {"username": username})
+    return self.authority.universal_seed(username, budget)
