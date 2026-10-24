@@ -342,6 +342,15 @@ function viewFromLocation() {
 
 function switchView(view) {
   const nextView = VALID_VIEWS.has(view) ? view : "workspace";
+  if (nextView !== "chat" && state.isChatFocusMode) {
+    if (state.focusPanelState) {
+      state.isSessionPanelCollapsed = state.focusPanelState.sessions;
+      state.isFileExplorerCollapsed = state.focusPanelState.files;
+    }
+    state.isChatFocusMode = false;
+    state.focusPanelState = null;
+    renderPanelState();
+  }
   document.body.classList.toggle("chat-view-active", nextView === "chat");
   document.querySelectorAll(".nav-item").forEach((button) => {
     button.classList.toggle("active", button.dataset.view === nextView);

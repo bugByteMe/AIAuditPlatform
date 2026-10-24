@@ -216,6 +216,23 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('grid-template-rows: auto minmax(0, 1fr)', chat_css)
         self.assertIn('height: 100dvh', chat_css)
 
+    def test_chat_focus_layout_and_compact_metadata_are_wired(self) -> None:
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        state_source = (FRONTEND_ROOT / "js" / "state.js").read_text(encoding="utf-8")
+        render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        bindings = (FRONTEND_ROOT / "js" / "appEventBindings.js").read_text(encoding="utf-8")
+        chat_css = (FRONTEND_ROOT / "css" / "chat.css").read_text(encoding="utf-8")
+        shell_css = (FRONTEND_ROOT / "css" / "shell.css").read_text(encoding="utf-8")
+        self.assertIn('id="chat-focus-mode"', html)
+        self.assertIn('class="chat-head-meta"', html)
+        self.assertIn("isChatFocusMode: false", state_source)
+        self.assertIn('classList.toggle("chat-focus-mode"', render_source)
+        self.assertIn("setChatFocusMode(!state.isChatFocusMode)", bindings)
+        self.assertIn('grid-template-areas: "chat"', chat_css)
+        self.assertIn("position: absolute", chat_css)
+        self.assertIn("width: min(100%, 82ch)", chat_css)
+        self.assertIn("body.chat-focus-mode .sidebar", shell_css)
+
     def test_file_trees_load_deeper_folders_on_demand(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")

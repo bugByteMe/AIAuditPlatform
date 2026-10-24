@@ -4,6 +4,31 @@ from chat_runtime_test_support import *
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def test_turn_history_compacts_terminal_runs_but_keeps_active_run_messages(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "History")
+    runtime.append_event(session["id"], "user", "Earlier question", "run-old")
+    runtime.append_event(session["id"], "progress", "Working", "run-old")
+    runtime.append_event(session["id"], "assistant", "Earlier answer", "run-old")
+    runtime.append_event(session["id"], "completed", "Completed", "run-old")
+    runtime.append_event(session["id"], "user", "Current question", "run-active")
+    runtime.append_event(session["id"], "progress", "Current progress", "run-active")
+    runtime.append_event(session["id"], "assistant", "Partial answer", "run-active")
+    stored = runtime.chat_store.get_session(session["id"])
+    stored.update({"status": "running", "latestRunId": "run-active"})
+    runtime.chat_store.save_session(stored)
+
+    history = runtime.turn_history(workspace["id"], session["id"], self.users["li.review"], limit=20)
+
+    self.assertEqual([event["message"] for event in history["events"]], [
+      "Earlier question", "Earlier answer", "Current question", "Current progress", "Partial answer",
+    ])
+    self.assertEqual(history["events"][1]["hiddenCount"], 2)
+    self.assertNotIn("compactTurn", history["events"][-1])
+    detail = runtime.turn_events(workspace["id"], session["id"], "run-old", self.users["li.review"])
+    self.assertEqual([event["message"] for event in detail["events"]], ["Working", "Earlier answer", "Completed"])
+
   def test_session_list_batch_loads_sessions_and_latest_runs(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())

@@ -61,3 +61,21 @@ test("historical tool starts do not replace a newer coalesced result", () => {
   assert.deepEqual(session.events.map((event) => event[4]), [5, 20]);
   assert.equal(session.events[1][1], "done");
 });
+
+test("compact turn metadata survives history merging for lazy expansion", () => {
+  const session = { id: "chat-1", events: [] };
+  mergeHistoricalEvents(session, [{
+    id: 7,
+    type: "completed",
+    message: "done",
+    runId: "run-1",
+    compactTurn: true,
+    turnUserEventId: 2,
+    hiddenCount: 4,
+  }]);
+  assert.deepEqual(session.events[0][7], {
+    compactTurn: true,
+    turnUserEventId: 2,
+    hiddenCount: 4,
+  });
+});

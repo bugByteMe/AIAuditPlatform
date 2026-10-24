@@ -25,6 +25,29 @@ class ChatExecutionMixin:
       raise StorageError("not_found", "chat session not found")
     return self.chat_store.events(session_id, after, before=before, limit=limit, latest=latest)
 
+  def turn_history(
+    self, workspace_id: str, session_id: str, user: dict, *, before: int | None = None, limit: int = 20,
+  ) -> dict:
+    self.store.get_workspace(workspace_id, user)
+    session = self.chat_store.get_session(session_id)
+    if not session or session["workspaceId"] != workspace_id:
+      raise StorageError("not_found", "chat session not found")
+    active_run_id = str(session.get("latestRunId") or "") if session.get("status") in RUNNING_STATES else ""
+    return self.chat_store.turn_history(
+      session_id, before=before, limit=limit, active_run_id=active_run_id,
+    )
+
+  def turn_events(
+    self, workspace_id: str, session_id: str, run_id: str, user: dict, *, after: int = 0, limit: int = 200,
+  ) -> dict:
+    self.store.get_workspace(workspace_id, user)
+    session = self.chat_store.get_session(session_id)
+    if not session or session["workspaceId"] != workspace_id:
+      raise StorageError("not_found", "chat session not found")
+    if session.get("status") in RUNNING_STATES and str(session.get("latestRunId") or "") == run_id:
+      raise StorageError("session_run_active", "active run messages are not folded")
+    return self.chat_store.turn_events(session_id, run_id, after=after, limit=limit)
+
   def wait_events(self, workspace_id: str, session_id: str, after: int, user: dict, timeout: float = 15) -> list[dict]:
     deadline = time.monotonic() + timeout
     with self.condition:

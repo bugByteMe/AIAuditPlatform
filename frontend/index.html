@@ -218,28 +218,33 @@
 
             <section class="panel chat-panel">
               <div class="panel-head chat-head">
-                <div>
+                <div class="chat-title-group">
                   <h2 data-i18n="chat.title">实时会话</h2>
                   <p id="chat-session-title">收入确认异常分析</p>
                 </div>
-                <div class="run-state">
-                  <span class="status-dot running"></span>
-                  <span id="run-state-label" data-i18n="chat.running">运行中</span>
+                <div class="chat-head-meta">
+                  <div class="run-state">
+                    <span class="status-dot running"></span>
+                    <span id="run-state-label" data-i18n="chat.running">运行中</span>
+                  </div>
+                  <span class="runtime-summary"><span data-i18n="chat.tokens">本次消耗</span> <strong id="token-count">0</strong></span>
+                  <details class="runtime-details">
+                    <summary data-i18n="chat.runtimeDetails">运行详情</summary>
+                    <div class="runtime-strip" aria-label="Runtime details">
+                      <span><strong data-i18n="chat.worker">节点</strong> <span id="chat-worker-id">-</span></span>
+                      <span><strong data-i18n="chat.container">容器</strong> <span id="chat-container-id">-</span></span>
+                      <span><strong data-i18n="chat.lock">工作区锁</strong> <span id="chat-lock-label">-</span></span>
+                      <div class="chat-resource-status">
+                        <div class="resource-line"><span id="chat-cpu-label">CPU 可用 0 / 0</span><div class="meter"><span id="chat-cpu-meter" style="width: 0%"></span></div></div>
+                        <div class="resource-line"><span id="chat-memory-label">内存 可用 0 / 0</span><div class="meter green"><span id="chat-memory-meter" style="width: 0%"></span></div></div>
+                      </div>
+                    </div>
+                  </details>
+                  <button type="button" class="rail-toggle focus-mode-toggle" id="chat-focus-mode" aria-pressed="false" data-i18n-title="chat.enterFocus" data-i18n-aria-label="chat.enterFocus" title="专注模式" aria-label="专注模式">
+                    <span aria-hidden="true">⛶</span>
+                  </button>
                 </div>
               </div>
-
-              <details class="runtime-details">
-                <summary><span data-i18n="chat.runtimeDetails">运行详情</span><span class="runtime-summary"><span data-i18n="chat.tokens">本次消耗</span> <strong id="token-count">0</strong></span></summary>
-                <div class="runtime-strip" aria-label="Runtime details">
-                  <span><strong data-i18n="chat.worker">节点</strong> <span id="chat-worker-id">-</span></span>
-                  <span><strong data-i18n="chat.container">容器</strong> <span id="chat-container-id">-</span></span>
-                  <span><strong data-i18n="chat.lock">工作区锁</strong> <span id="chat-lock-label">-</span></span>
-                  <div class="chat-resource-status">
-                    <div class="resource-line"><span id="chat-cpu-label">CPU 可用 0 / 0</span><div class="meter"><span id="chat-cpu-meter" style="width: 0%"></span></div></div>
-                    <div class="resource-line"><span id="chat-memory-label">内存 可用 0 / 0</span><div class="meter green"><span id="chat-memory-meter" style="width: 0%"></span></div></div>
-                  </div>
-                </div>
-              </details>
 
               <div class="event-stream" id="event-stream" aria-live="polite"></div>
 

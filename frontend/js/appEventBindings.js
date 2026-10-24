@@ -29,6 +29,7 @@ export function createEventBindings(context) {
   const currentSessionObject = (...args) => context.currentSessionObject(...args);
   const startChatStreamForSession = (...args) => context.startChatStreamForSession(...args);
   const loadOlderSessionHistory = (...args) => context.loadOlderSessionHistory(...args);
+  const loadTurnDetails = (...args) => context.loadTurnDetails(...args);
   const maybeStartChatStream = (...args) => context.maybeStartChatStream(...args);
   const loadWorkspaces = (...args) => context.loadWorkspaces(...args);
   const startNativeDownload = (...args) => context.startNativeDownload(...args);
@@ -88,6 +89,23 @@ export function createEventBindings(context) {
   const expandDestinationFolder = (...args) => context.expandDestinationFolder(...args);
   const confirmDestinationPicker = (...args) => context.confirmDestinationPicker(...args);
   const acceptNativeUpload = (...args) => context.acceptNativeUpload(...args);
+  const setChatFocusMode = (enabled) => {
+    if (enabled === state.isChatFocusMode) return;
+    if (enabled) {
+      state.focusPanelState = {
+        sessions: state.isSessionPanelCollapsed,
+        files: state.isFileExplorerCollapsed,
+      };
+      state.isSessionPanelCollapsed = true;
+      state.isFileExplorerCollapsed = true;
+    } else if (state.focusPanelState) {
+      state.isSessionPanelCollapsed = state.focusPanelState.sessions;
+      state.isFileExplorerCollapsed = state.focusPanelState.files;
+      state.focusPanelState = null;
+    }
+    state.isChatFocusMode = enabled;
+    renderPanelState();
+  };
   const deleteCurrentWorkspacePath = (...args) => context.deleteCurrentWorkspacePath(...args);
   const deleteSelectedWorkspacePaths = (...args) => context.deleteSelectedWorkspacePaths(...args);
   const deleteWorkspace = (...args) => context.deleteWorkspace(...args);
@@ -110,6 +128,27 @@ export function createEventBindings(context) {
           session.historyLoadError = false;
           if (session.historyLoaded) loadOlderSessionHistory();
           else maybeStartChatStream();
+        }
+        return;
+      }
+      const turnToggle = event.target.closest("[data-chat-turn-toggle]");
+      if (turnToggle) {
+        const workspace = safeCurrentWorkspace();
+        const session = currentSessionObject();
+        const runId = turnToggle.dataset.runId || "";
+        if (!workspace || !session || !runId) return;
+        const key = `${session.id}:${runId}`;
+        if (state.chatTurnLoadErrors.has(key)) {
+          loadTurnDetails(workspace.id, session.id, runId);
+          return;
+        }
+        if (state.expandedChatTurns.has(key)) {
+          state.expandedChatTurns.delete(key);
+          renderDynamic();
+        } else {
+          state.expandedChatTurns.add(key);
+          renderDynamic();
+          if (turnToggle.dataset.chatTurnLazy === "true") loadTurnDetails(workspace.id, session.id, runId);
         }
         return;
       }
@@ -346,6 +385,11 @@ export function createEventBindings(context) {
         if (panelToggle.dataset.togglePanel === "sessions") state.isSessionPanelCollapsed = !state.isSessionPanelCollapsed;
         if (panelToggle.dataset.togglePanel === "files") state.isFileExplorerCollapsed = !state.isFileExplorerCollapsed;
         renderPanelState();
+        return;
+      }
+
+      if (event.target.closest("#chat-focus-mode")) {
+        setChatFocusMode(!state.isChatFocusMode);
         return;
       }
 
@@ -755,6 +799,7 @@ export function createEventBindings(context) {
         return;
       }
       if (event.key === "Escape") {
+        if (state.isChatFocusMode) setChatFocusMode(false);
         document.querySelectorAll(".action-menu[open]").forEach((menu) => { menu.open = false; });
         closePreviewModal();
         closeWorkspaceModal();

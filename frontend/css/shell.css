@@ -176,6 +176,24 @@
   flex-wrap: wrap;
 }
 
+body.chat-focus-mode .app-shell {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+body.chat-focus-mode .sidebar,
+body.chat-focus-mode .topbar {
+  display: none;
+}
+
+body.chat-focus-mode .main {
+  padding: 0;
+}
+
+body.chat-focus-mode .chat-layout {
+  border: 0;
+  border-radius: 0;
+}
+
 .segmented {
   display: inline-flex;
   padding: 3px;

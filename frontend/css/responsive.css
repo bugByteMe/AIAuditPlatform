@@ -53,20 +53,37 @@
     grid-template-columns: 1fr;
   }
 
-  .chat-layout,
-  .chat-layout:not(.files-collapsed),
-  .chat-layout.sessions-collapsed,
-  .chat-layout.sessions-collapsed:not(.files-collapsed) {
+  .chat-layout {
     grid-template-columns: 1fr;
     grid-template-areas:
       "sessions"
-      "sessionsRail"
-      "chat"
-      "filesRail"
-      "files";
-    grid-template-rows: auto auto minmax(0, 1fr) auto auto;
+      "chat";
+    grid-template-rows: auto minmax(0, 1fr);
     height: auto;
     min-height: 0;
+  }
+
+  .chat-layout:not(.files-collapsed) {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "sessions"
+      "chat"
+      "files";
+    grid-template-rows: auto minmax(0, 1fr) auto;
+  }
+
+  .chat-layout.sessions-collapsed {
+    grid-template-columns: 1fr;
+    grid-template-areas: "chat";
+    grid-template-rows: minmax(0, 1fr);
+  }
+
+  .chat-layout.sessions-collapsed:not(.files-collapsed) {
+    grid-template-columns: 1fr;
+    grid-template-areas:
+      "chat"
+      "files";
+    grid-template-rows: minmax(0, 1fr) auto;
   }
 
   .chat-view-active .chat-layout,
@@ -90,11 +107,15 @@
   .sessions-collapsed .session-rail,
   .files-collapsed .file-rail {
     display: flex;
-    min-height: 34px;
-    writing-mode: horizontal-tb;
-    border: 0;
-    border-bottom: 1px solid var(--line);
+    width: 30px;
+    min-width: 30px;
+    min-height: 88px;
+    writing-mode: vertical-rl;
+    border: 1px solid var(--line-strong);
   }
+
+  .sessions-collapsed .session-rail { border-left: 0; }
+  .files-collapsed .file-rail { border-right: 0; }
 
   .event-stream { min-height: 0; }
 
@@ -104,6 +125,10 @@
 
   .chat-head {
     flex-shrink: 0;
+  }
+
+  .runtime-strip {
+    width: min(560px, calc(100vw - 32px));
   }
 }
 
@@ -147,6 +172,11 @@
 
   .event {
     grid-template-columns: 1fr;
+  }
+
+  .chat-turn-toggle,
+  .chat-turn-status {
+    margin-left: 12px;
   }
 
   .composer-actions .btn,

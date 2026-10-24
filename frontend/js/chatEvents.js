@@ -33,7 +33,11 @@ export function mergeSessionEvents(session, events, cursors) {
         toolCallId && ["command", "tool"].includes(event.type)
           ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
           : -1;
-      const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId];
+      const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId, {
+        compactTurn: Boolean(event.compactTurn),
+        turnUserEventId: Number(event.turnUserEventId) || 0,
+        hiddenCount: Math.max(0, Number(event.hiddenCount) || 0),
+      }];
       if (existingToolIndex >= 0) session.events[existingToolIndex] = tuple;
       else session.events.push(tuple);
       cursor = eventId;
@@ -60,7 +64,11 @@ export function mergeHistoricalEvents(session, events) {
         toolCallId && ["command", "tool"].includes(event.type)
           ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
           : -1;
-      const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId];
+      const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId, {
+        compactTurn: Boolean(event.compactTurn),
+        turnUserEventId: Number(event.turnUserEventId) || 0,
+        hiddenCount: Math.max(0, Number(event.hiddenCount) || 0),
+      }];
       if (existingToolIndex < 0) {
         session.events.push(tuple);
         changed = true;

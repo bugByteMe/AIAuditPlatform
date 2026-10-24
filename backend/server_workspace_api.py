@@ -189,6 +189,7 @@ class WorkspaceHandlerMixin:
     elif method == "GET" and action == "events" and not tail:
       params = parse_query(query)
       session_id = (params.get("sessionId") or [""])[0]
+      view = (params.get("view") or [""])[0]
       after = int((params.get("after") or ["0"])[0] or 0)
       before_value = (params.get("before") or [""])[0]
       before = int(before_value) if before_value else None
@@ -196,6 +197,24 @@ class WorkspaceHandlerMixin:
         raise ValueError("before and after cannot be used together")
       limit = min(500, max(1, int((params.get("limit") or ["200"])[0] or 200)))
       latest = (params.get("latest") or [""])[0].lower() in {"1", "true", "yes"}
+      if view == "turns":
+        history = CHAT_RUNTIME.turn_history(
+          workspace_id, session_id, user, before=before, limit=min(limit, 100),
+        )
+        public_session = CHAT_RUNTIME.public_session(session_id, include_events=False)
+        self.write_json({
+          **history,
+          "events": [browser_event(event) for event in history["events"]],
+          "sessionStatus": public_session.get("status"), "session": public_session,
+        })
+        return
+      turn_run_id = (params.get("turnRunId") or [""])[0]
+      if turn_run_id:
+        detail = CHAT_RUNTIME.turn_events(
+          workspace_id, session_id, turn_run_id, user, after=after, limit=limit,
+        )
+        self.write_json({**detail, "events": [browser_event(event) for event in detail["events"]]})
+        return
       if before is not None or latest or "limit" in params:
         events = CHAT_RUNTIME.events(workspace_id, session_id, after, user, before=before, limit=limit, latest=latest)
       else:

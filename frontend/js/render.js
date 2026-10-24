@@ -281,6 +281,7 @@ export function renderWorkspaceManagement() {
 export function renderPanelState() {
   const layout = document.querySelector(".chat-layout");
   if (!layout) return;
+  document.body.classList.toggle("chat-focus-mode", state.isChatFocusMode);
   layout.style.setProperty("--sessions-width", `${state.sessionPanelWidth}px`);
   layout.style.setProperty("--files-width", `${state.filePanelWidth}px`);
   layout.classList.toggle("sessions-collapsed", state.isSessionPanelCollapsed);
@@ -293,6 +294,15 @@ export function renderPanelState() {
     button.dataset.i18nTitle = state.isFileExplorerCollapsed ? "files.expand" : "files.collapse";
     button.title = t(button.dataset.i18nTitle);
   });
+  const focusButton = document.querySelector("#chat-focus-mode");
+  if (focusButton) {
+    const labelKey = state.isChatFocusMode ? "chat.exitFocus" : "chat.enterFocus";
+    focusButton.setAttribute("aria-pressed", String(state.isChatFocusMode));
+    focusButton.dataset.i18nTitle = labelKey;
+    focusButton.dataset.i18nAriaLabel = labelKey;
+    focusButton.title = t(labelKey);
+    focusButton.setAttribute("aria-label", t(labelKey));
+  }
 }
 
 export function renderChatSessions() {
@@ -386,16 +396,13 @@ export function renderEvents() {
   const signature = JSON.stringify([
     state.lang, session.id, session.status, session.events, session.historyLoaded,
     session.historyHasMore, session.historyLoading, session.historyLoadError,
+    [...state.expandedChatTurns], [...state.loadedChatTurns], [...state.loadingChatTurns], [...state.chatTurnLoadErrors],
   ]);
   if (renderedEventSessionId === session.id && renderedEventSignature === signature) return;
   const switchingSession = renderedEventSessionId !== session.id;
   const scrollPosition = switchingSession ? null : captureEventScroll(stream);
-  let previousRunId = "";
-  const events = session.events
-    .map(([type, zh, en, runId, eventId, status]) => {
+  const renderEvent = ([type, zh, en, , eventId, status]) => {
       const message = state.lang === "zh" ? zh : en;
-      const divider = runId && previousRunId && runId !== previousRunId ? `<div class="run-divider" aria-hidden="true"></div>` : "";
-      previousRunId = runId || previousRunId;
       const flattened = String(message).replace(/\s+/g, " ").trim();
       const body =
         type === "assistant"
@@ -404,9 +411,50 @@ export function renderEvents() {
             ? `<details class="event-fold" data-multiline="${String(message).includes("\n")}"><summary title="${escapeHtml(flattened)}">${escapeHtml(flattened)}</summary><pre>${escapeHtml(message)}</pre></details>`
             : `<p>${escapeHtml(message)}</p>`;
       const statusBadge = status ? `<span class="event-status event-status-${safeClass(status)}">${escapeHtml(t(`chat.${status}`) || status)}</span>` : "";
-      return `${divider}<article class="event event-${safeClass(type)}" data-event-id="${Number(eventId) || 0}"><span class="event-type">${escapeHtml(eventTypeLabel(type))}${statusBadge}</span>${body}</article>`;
-    })
-    .join("");
+      return `<article class="event event-${safeClass(type)}" data-event-id="${Number(eventId) || 0}"><span class="event-type">${escapeHtml(eventTypeLabel(type))}${statusBadge}</span>${body}</article>`;
+  };
+  const groups = [];
+  session.events.forEach((event) => {
+    if (event[0] === "user") {
+      groups.push({ user: event, responses: [], runId: event[3] || "" });
+      return;
+    }
+    let group = groups[groups.length - 1];
+    if (!group || (group.runId && event[3] && group.runId !== event[3])) {
+      group = { user: null, responses: [], runId: event[3] || "" };
+      groups.push(group);
+    }
+    group.responses.push(event);
+    group.runId = group.runId || event[3] || "";
+  });
+  let previousRunId = "";
+  const events = groups.map((group) => {
+    const divider = group.runId && previousRunId && group.runId !== previousRunId ? `<div class="run-divider" aria-hidden="true"></div>` : "";
+    previousRunId = group.runId || previousRunId;
+    const user = group.user ? renderEvent(group.user) : "";
+    if (!group.responses.length) return divider + user;
+    const compactEvent = group.responses.find((event) => event[7]?.compactTurn);
+    const displayEvent = compactEvent || [...group.responses].reverse().find((event) => event[0] === "assistant") || group.responses[group.responses.length - 1];
+    const compactMeta = compactEvent?.[7] || {};
+    const hiddenCount = Math.max(Number(compactMeta.hiddenCount) || 0, group.responses.length - 1);
+    const active = ACTIVE_CHAT_STATES.has(session.status) && group.runId && group.runId === session.latestRunId;
+    if (active || hiddenCount <= 0) return divider + user + group.responses.map(renderEvent).join("");
+    const key = `${session.id}:${group.runId}`;
+    const expanded = state.expandedChatTurns.has(key);
+    const loaded = state.loadedChatTurns.has(key) || !compactMeta.compactTurn;
+    const failed = state.chatTurnLoadErrors.has(key);
+    const label = failed
+      ? t("chat.retryFoldedMessages")
+      : expanded
+        ? t("chat.hideEarlierMessages")
+        : t("chat.showEarlierMessages").replace("{count}", hiddenCount.toLocaleString());
+    const toggle = `<button type="button" class="chat-turn-toggle" data-chat-turn-toggle data-run-id="${escapeHtml(group.runId)}" data-chat-turn-lazy="${String(Boolean(compactMeta.compactTurn && !loaded))}" aria-expanded="${String(expanded)}"><span aria-hidden="true">${expanded ? "▾" : "▸"}</span>${escapeHtml(label)}</button>`;
+    const detailStatus = expanded && !loaded
+      ? `<div class="chat-turn-status ${failed ? "error" : ""}" role="${failed ? "alert" : "status"}">${escapeHtml(t(failed ? "chat.foldLoadFailed" : "chat.loadingFoldedMessages"))}</div>`
+      : "";
+    const responses = expanded && loaded ? group.responses.map(renderEvent).join("") : renderEvent(displayEvent);
+    return `${divider}${user}<section class="chat-turn-group">${toggle}${detailStatus}${responses}</section>`;
+  }).join("");
   const thinking = ACTIVE_CHAT_STATES.has(session.status)
     ? `<article class="event event-running-dots" role="status" aria-label="${escapeHtml(t("chat.thinking"))}"><span class="event-type">${escapeHtml(t("chat.thinking"))}</span><span class="running-dots" aria-hidden="true"><span></span><span></span><span></span></span></article>`
     : "";

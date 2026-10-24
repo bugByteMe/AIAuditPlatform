@@ -204,13 +204,17 @@ export function createChatStream(context) {
     try {
       const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
         sessionId: session.id,
-        latest: "true",
-        limit: "200",
+        view: "turns",
+        limit: "20",
       }).toString()}`);
       const events = result.events || [];
       mergeSessionEvents(session, events, state.chatLastEventIds);
-      session.historyBefore = events.length ? Math.min(...events.map((event) => Number(event.id) || 0)) : 0;
-      session.historyHasMore = Boolean(result.hasMore && events.length);
+      state.chatLastEventIds[session.id] = Math.max(
+        Number(state.chatLastEventIds[session.id]) || 0,
+        Number(result.latestEventId) || 0,
+      );
+      session.historyBefore = Number(result.beforeTurn) || 0;
+      session.historyHasMore = Boolean(result.hasMore && session.historyBefore);
       session.historyLoaded = true;
     } catch (error) {
       session.historyLoadError = true;
@@ -238,14 +242,15 @@ export function createChatStream(context) {
     try {
       const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/chat/events?${new URLSearchParams({
         sessionId: session.id,
+        view: "turns",
         before,
-        limit: "200",
+        limit: "20",
       }).toString()}`);
       const current = findSessionById(state.workspaces, workspace.id, session.id);
       if (!current) return;
       const events = result.events || [];
-      if (events.length) current.historyBefore = Math.min(...events.map((event) => Number(event.id) || before));
-      current.historyHasMore = Boolean(result.hasMore && events.length);
+      current.historyBefore = Number(result.beforeTurn) || current.historyBefore;
+      current.historyHasMore = Boolean(result.hasMore && result.beforeTurn);
       if (mergeHistoricalEvents(current, events)) renderDynamic();
     } catch (error) {
       const current = findSessionById(state.workspaces, workspace.id, session.id);
@@ -257,6 +262,38 @@ export function createChatStream(context) {
         current.historyLoading = false;
         current.historyLoadingKind = "";
       }
+      renderDynamic();
+    }
+  }
+
+  async function loadTurnDetails(workspaceId, sessionId, runId) {
+    const key = `${sessionId}:${runId}`;
+    if (!workspaceId || !sessionId || !runId || state.loadingChatTurns.has(key) || state.loadedChatTurns.has(key)) return;
+    state.loadingChatTurns.add(key);
+    state.chatTurnLoadErrors.delete(key);
+    renderDynamic();
+    let after = 0;
+    try {
+      while (true) {
+        const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
+          sessionId,
+          turnRunId: runId,
+          after: String(after),
+          limit: "200",
+        }).toString()}`);
+        const session = findSessionById(state.workspaces, workspaceId, sessionId);
+        if (!session) return;
+        const events = result.events || [];
+        mergeHistoricalEvents(session, events);
+        if (events.length) after = Math.max(after, ...events.map((event) => Number(event.id) || 0));
+        if (!result.hasMore || !events.length) break;
+      }
+      state.loadedChatTurns.add(key);
+    } catch (error) {
+      state.chatTurnLoadErrors.add(key);
+      console.warn("Folded chat messages could not be loaded", error);
+    } finally {
+      state.loadingChatTurns.delete(key);
       renderDynamic();
     }
   }
@@ -281,5 +318,5 @@ export function createChatStream(context) {
     startChatStreamForSession(workspace.id, session.id);
   }
 
-  return { stopChatStream, currentSessionObject, chatPollInterval, scheduleChatPoll, pollChatEvents, markStreamHealthy, scheduleStreamReconnect, activatePollingFallback, openChatStream, startChatStreamForSession, loadLatestSessionHistory, loadOlderSessionHistory, maybeStartChatStream };
+  return { stopChatStream, currentSessionObject, chatPollInterval, scheduleChatPoll, pollChatEvents, markStreamHealthy, scheduleStreamReconnect, activatePollingFallback, openChatStream, startChatStreamForSession, loadLatestSessionHistory, loadOlderSessionHistory, loadTurnDetails, maybeStartChatStream };
 }

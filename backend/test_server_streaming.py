@@ -62,6 +62,20 @@ class RawTerminalChatRuntime(FakeChatRuntime):
     return self.events(workspace_id, session_id, after, user)
 
 
+class CompactHistoryRuntime(FakeChatRuntime):
+  def turn_history(self, workspace_id, session_id, user, *, before=None, limit=20):
+    return {
+      "events": [
+        {"id": 1, "type": "user", "message": "question", "runId": "run-1"},
+        {"id": 4, "type": "assistant", "message": "answer", "runId": "run-1", "compactTurn": True, "hiddenCount": 2},
+      ],
+      "beforeTurn": 1, "hasMore": False, "latestEventId": 5,
+    }
+
+  def turn_events(self, workspace_id, session_id, run_id, user, *, after=0, limit=200):
+    return {"events": [{"id": 2, "type": "progress", "message": "working", "runId": run_id}], "hasMore": False}
+
+
 class FakeUploadManager:
   def __init__(self):
     self.source = None
@@ -306,6 +320,18 @@ class ServerStreamingTest(unittest.TestCase):
     self.assertEqual(responses[0]["latestEventId"], 2)
     self.assertFalse(responses[0]["hasMore"])
     self.assertIn("raw", runtime.stored_events[0])
+
+  def test_compact_turn_history_and_lazy_detail_routes(self) -> None:
+    handler = object.__new__(Handler)
+    handler.require_user = lambda: {"username": "user", "role": "user", "group": "Audit"}
+    responses = []
+    handler.write_json = lambda payload, status=200, headers=None: responses.append(payload)
+    with patch("server.CHAT_RUNTIME", CompactHistoryRuntime()):
+      Handler.chat_api(handler, "GET", "workspace-1", "events", "", "sessionId=chat-1&view=turns&limit=20")
+      Handler.chat_api(handler, "GET", "workspace-1", "events", "", "sessionId=chat-1&turnRunId=run-1&after=0")
+    self.assertEqual(responses[0]["latestEventId"], 5)
+    self.assertEqual(responses[0]["events"][1]["hiddenCount"], 2)
+    self.assertEqual(responses[1]["events"][0]["message"], "working")
 
   def test_upload_chunk_passes_request_stream_without_reading_it_into_memory(self) -> None:
     handler = object.__new__(Handler)

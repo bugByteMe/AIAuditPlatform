@@ -99,6 +99,104 @@ test("chat cards show their creator and recharge highlights remaining usage", as
   } finally { await page.close(); }
 });
 
+test("terminal turns fold lazily while an active turn stays fully visible", async () => {
+  const compact = {
+    id: "session", title: "Example chat", createdBy: "example.member", status: "completed",
+    latestRunId: "run-old", tokens: 0, historyLoaded: true,
+    events: [
+      ["user", "Question", "Question", "run-old", 1, "", "", {}],
+      ["completed", "Completed", "Completed", "run-old", 5, "completed", "", { compactTurn: true, turnUserEventId: 1, hiddenCount: 3 }],
+    ],
+  };
+  const { page, requests } = await openApp("platform_admin", { width: 1280, height: 900 }, { sessions: [compact] });
+  try {
+    await page.locator('[data-view="chat"]').click();
+    const toggle = page.locator("[data-chat-turn-toggle]");
+    assert.equal(await toggle.getAttribute("aria-expanded"), "false");
+    assert.match(await toggle.innerText(), /3/);
+    assert.equal(await page.locator("#event-stream .event").count(), 2);
+    await toggle.click();
+    await page.waitForFunction(() => document.querySelector('[data-chat-turn-toggle]')?.getAttribute("aria-expanded") === "true");
+    assert.equal(requests.filter((request) => request.path.endsWith("/chat/events")).length, 1);
+  } finally { await page.close(); }
+
+  const active = {
+    id: "session", title: "Example chat", createdBy: "example.member", status: "running",
+    latestRunId: "run-active", tokens: 0, historyLoaded: true,
+    events: [
+      ["user", "Question", "Question", "run-active", 1, "", "", {}],
+      ["progress", "Working", "Working", "run-active", 2, "", "", {}],
+      ["assistant", "Partial", "Partial", "run-active", 3, "", "", {}],
+    ],
+  };
+  const { page: activePage } = await openApp("platform_admin", { width: 1280, height: 900 }, { sessions: [active] });
+  try {
+    await activePage.locator('[data-view="chat"]').click();
+    assert.equal(await activePage.locator("[data-chat-turn-toggle]").count(), 0);
+    assert.equal(await activePage.locator("#event-stream .event").count(), 4);
+  } finally { await activePage.close(); }
+});
+
+test("collapsed chat panels, compact metadata and focus mode maximize readable history", async () => {
+  const longMessage = "This is a deliberately long assistant response used to verify that readable prose does not stretch across the full chat viewport. ".repeat(12);
+  const sessions = [{
+    id: "session",
+    title: "Example chat",
+    createdBy: "example.member",
+    status: "completed",
+    updated: "now",
+    events: [["assistant", longMessage, longMessage, "run", 1, "completed"]],
+    tokens: 1200,
+    historyLoaded: true,
+  }];
+  const { page } = await openApp("platform_admin", { width: 1280, height: 900 }, { sessions });
+  try {
+    await page.locator('[data-view="chat"]').click();
+    const header = await page.locator(".chat-head").boundingBox();
+    assert.ok(header.height <= 72, `compact chat header is ${header.height}px tall`);
+    assert.equal(await page.locator(".runtime-details").evaluate((node) => node.parentElement.classList.contains("chat-head-meta")), true);
+
+    await page.locator('.sessions-panel [data-toggle-panel="sessions"]').click();
+    const layout = await page.locator(".chat-layout").boundingBox();
+    const chat = await page.locator(".chat-panel").boundingBox();
+    assert.ok(Math.abs(chat.x - layout.x) <= 2, "collapsed session panel must not reserve a grid column");
+    assert.ok(Math.abs(chat.width - layout.width) <= 2, "collapsed side panels must leave the chat at full layout width");
+    assert.equal(await page.locator(".session-rail").isVisible(), true);
+
+    await page.locator(".session-rail").click();
+    await page.locator("#chat-focus-mode").click();
+    assert.equal(await page.locator("body").evaluate((node) => node.classList.contains("chat-focus-mode")), true);
+    assert.equal(await page.locator("#chat-focus-mode").getAttribute("aria-pressed"), "true");
+    assert.equal(await page.locator(".sidebar").isVisible(), false);
+    assert.equal(await page.locator(".topbar").isVisible(), false);
+    assert.equal(await page.locator(".chat-layout").evaluate((node) => node.classList.contains("sessions-collapsed") && node.classList.contains("files-collapsed")), true);
+    const focusedChat = await page.locator(".chat-panel").boundingBox();
+    assert.ok(focusedChat.width >= 1278, `focus mode chat width is ${focusedChat.width}px`);
+
+    const prose = await page.locator(".event-markdown").boundingBox();
+    assert.ok(prose.width < focusedChat.width * 0.8, "assistant prose should retain a readable line length");
+    assert.ok(prose.width <= 850, `assistant prose width is ${prose.width}px`);
+
+    await page.keyboard.press("Escape");
+    assert.equal(await page.locator("body").evaluate((node) => node.classList.contains("chat-focus-mode")), false);
+    assert.equal(await page.locator(".sessions-panel").isVisible(), true);
+    assert.equal(await page.locator(".file-panel").isVisible(), false);
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  } finally { await page.close(); }
+
+  const { page: narrowPage } = await openApp("platform_admin", { width: 390, height: 844 }, { sessions });
+  try {
+    await narrowPage.locator('[data-view="chat"]').click();
+    await narrowPage.locator("#chat-focus-mode").click();
+    const focusedChat = await narrowPage.locator(".chat-panel").boundingBox();
+    assert.ok(focusedChat.width >= 388, `narrow focus mode chat width is ${focusedChat.width}px`);
+    await narrowPage.locator(".runtime-details > summary").click();
+    const diagnostics = await narrowPage.locator(".runtime-strip").boundingBox();
+    assert.ok(diagnostics.x >= 0 && diagnostics.x + diagnostics.width <= 390, `runtime diagnostics must remain inside the narrow viewport: ${JSON.stringify(diagnostics)}`);
+    assert.ok(await narrowPage.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+  } finally { await narrowPage.close(); }
+});
+
 test("workspace search, secondary actions and modal focus remain usable", async () => {
   const { page } = await openApp();
   try {

@@ -112,9 +112,19 @@
 - Token usage and budget warnings are streamed.
 - Page reload can reconstruct chat history from persisted events.
 - History pages and live SSE events omit stored `raw` command output while preserving the visible message, event IDs, status, tool-call IDs, and pagination cursors; persisted events retain the original payload.
+- Compact history pages return terminal turns as the user message plus the final assistant output (or final event), and expanding a turn lazily retrieves all omitted events without changing the live cursor.
+- The latest queued, starting, running, or stopping run is excluded from compaction so all of its persisted messages remain visible; it becomes foldable only after reaching a terminal state.
 - Scrolling to the top loads older event pages without moving the live-event cursor, changing the current session status, or replacing newer tool results.
 - Chat deletion is limited to the workspace owner, a system administrator, or a platform administrator; it rejects active runs, permits an empty workspace, and removes terminal run, event, Codex-home, and fork-checkpoint state without deleting independent forks.
 - Live event refreshes follow the bottom only when the reader is already there and preserve position while older history is being read.
+- Collapsed session and file panels reserve no grid width; their floating edge
+  controls remain keyboard-accessible without creating horizontal overflow.
+- Chat focus mode hides global chrome, collapses both side panels, fills the
+  viewport, and restores the previous panel state on button or Escape exit.
+- Run state, token usage, diagnostics, and the focus toggle share a compact
+  header; diagnostics stay inside desktop and narrow viewports.
+- Assistant prose retains a readable line length while command and preformatted
+  output can use the available chat width.
 
 ## Artifacts
 

@@ -4,7 +4,7 @@ import json
 from contextlib import contextmanager
 from pathlib import Path
 
-from sqlalchemy import JSON, BigInteger, Column, Index, MetaData, String, Table, create_engine, delete, func, insert, select, update
+from sqlalchemy import JSON, BigInteger, Column, Index, MetaData, String, Table, case, create_engine, delete, func, insert, select, update
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import IntegrityError
 
@@ -55,6 +55,14 @@ class ChatStore:
       Column("username", String(255), primary_key=True), Column("total_tokens", BigInteger, nullable=False, default=0),
     )
     Index("chat_events_session_cursor", self.event_table.c.session_id, self.event_table.c.event_id)
+    self.event_turn_index = Index(
+      "chat_events_session_type_cursor",
+      self.event_table.c.session_id, self.event_table.c.event_type, self.event_table.c.event_id,
+    )
+    self.event_run_index = Index(
+      "chat_events_session_run_cursor",
+      self.event_table.c.session_id, self.event_table.c.run_id, self.event_table.c.event_id,
+    )
     Index("chat_runner_receipt_event", self.receipt_table.c.session_id, self.receipt_table.c.event_id)
     self.ensure_layout()
 
@@ -62,6 +70,8 @@ class ChatStore:
     self.root.mkdir(parents=True, exist_ok=True)
     self.events_dir.mkdir(parents=True, exist_ok=True)
     self.metadata.create_all(self.engine)
+    self.event_turn_index.create(self.engine, checkfirst=True)
+    self.event_run_index.create(self.engine, checkfirst=True)
     self.import_legacy_if_empty()
 
   @contextmanager
@@ -387,6 +397,102 @@ class ChatStore:
     statement = statement.where(self.event_table.c.event_id > int(after)).order_by(self.event_table.c.event_id).limit(page_size)
     with self.engine.connect() as connection:
       return [dict(row.payload) for row in connection.execute(statement)]
+
+  def turn_history(
+    self, session_id: str, *, before: int | None = None, limit: int = 20,
+    active_run_id: str = "",
+  ) -> dict:
+    """Return terminal turns as user/final-message pairs and an active run in full."""
+    page_size = min(100, max(1, int(limit)))
+    users = select(
+      self.event_table.c.event_id, self.event_table.c.run_id, self.event_table.c.payload,
+    ).where(
+      self.event_table.c.session_id == session_id,
+      self.event_table.c.event_type == "user",
+    )
+    if active_run_id:
+      users = users.where(self.event_table.c.run_id != active_run_id)
+    if before is not None:
+      users = users.where(self.event_table.c.event_id < int(before))
+    users = users.order_by(self.event_table.c.event_id.desc()).limit(page_size + 1)
+
+    with self.engine.connect() as connection:
+      user_rows = list(connection.execute(users))
+      has_more = len(user_rows) > page_size
+      user_rows = list(reversed(user_rows[:page_size]))
+      run_ids = [str(row.run_id or "") for row in user_rows if row.run_id]
+      response_stats: dict[str, tuple[int, int, int]] = {}
+      response_payloads: dict[int, dict] = {}
+      if run_ids:
+        stats = select(
+          self.event_table.c.run_id,
+          func.count(self.event_table.c.event_id).label("response_count"),
+          func.max(self.event_table.c.event_id).label("last_event_id"),
+          func.max(case(
+            (self.event_table.c.event_type == "assistant", self.event_table.c.event_id),
+            else_=None,
+          )).label("last_assistant_id"),
+        ).where(
+          self.event_table.c.session_id == session_id,
+          self.event_table.c.run_id.in_(run_ids),
+          self.event_table.c.event_type != "user",
+        ).group_by(self.event_table.c.run_id)
+        for row in connection.execute(stats):
+          response_stats[str(row.run_id)] = (
+            int(row.response_count), int(row.last_event_id), int(row.last_assistant_id or 0),
+          )
+        final_ids = [assistant_id or last_id for _, last_id, assistant_id in response_stats.values()]
+        if final_ids:
+          payloads = select(self.event_table.c.event_id, self.event_table.c.payload).where(
+            self.event_table.c.session_id == session_id,
+            self.event_table.c.event_id.in_(final_ids),
+          )
+          response_payloads = {int(row.event_id): dict(row.payload) for row in connection.execute(payloads)}
+
+      visible = []
+      for user_row in user_rows:
+        user_event = dict(user_row.payload)
+        visible.append(user_event)
+        count, last_id, assistant_id = response_stats.get(str(user_row.run_id or ""), (0, 0, 0))
+        selected_id = assistant_id or last_id
+        if selected_id:
+          final_event = response_payloads[selected_id]
+          final_event["compactTurn"] = True
+          final_event["turnUserEventId"] = int(user_row.event_id)
+          final_event["hiddenCount"] = max(0, count - 1)
+          visible.append(final_event)
+
+      if active_run_id and before is None:
+        active = select(self.event_table.c.payload).where(
+          self.event_table.c.session_id == session_id,
+          self.event_table.c.run_id == active_run_id,
+        ).order_by(self.event_table.c.event_id)
+        visible.extend(dict(row.payload) for row in connection.execute(active))
+
+    visible.sort(key=lambda event: int(event.get("id") or 0))
+    # Terminal lifecycle events may follow the selected assistant message. Use
+    # the same aggregate snapshot for the cursor so those intentionally hidden
+    # events are not replayed, while concurrently appended events remain unseen.
+    terminal_cursor = max((last_id for _, last_id, _ in response_stats.values()), default=0)
+    latest_event_id = max(terminal_cursor, *(int(event.get("id") or 0) for event in visible)) if visible else terminal_cursor
+    return {
+      "events": visible,
+      "hasMore": has_more,
+      "beforeTurn": int(user_rows[0].event_id) if user_rows else 0,
+      "latestEventId": latest_event_id,
+    }
+
+  def turn_events(self, session_id: str, run_id: str, after: int = 0, limit: int = 200) -> dict:
+    page_size = min(500, max(1, int(limit)))
+    statement = select(self.event_table.c.payload).where(
+      self.event_table.c.session_id == session_id,
+      self.event_table.c.run_id == run_id,
+      self.event_table.c.event_type != "user",
+      self.event_table.c.event_id > int(after),
+    ).order_by(self.event_table.c.event_id).limit(page_size + 1)
+    with self.engine.connect() as connection:
+      rows = [dict(row.payload) for row in connection.execute(statement)]
+    return {"events": rows[:page_size], "hasMore": len(rows) > page_size}
 
   def replace_events(self, session_id: str, events: list[dict]) -> None:
     with self.engine.begin() as connection:

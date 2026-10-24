@@ -136,11 +136,23 @@ delta; only then does the control plane mark the chat stopped and acknowledge th
 worker result. A run stopped while still queued captures a stat-only pre-run view
 and commits an incremental delta directly, without invoking the legacy full scan.
 
-Chat history loads the newest bounded page when a session is selected and fetches
-older pages when the user scrolls near the top. Initial and older-page requests
-display an accessible loading indicator. Older-page insertion preserves the first
-visible event as a scroll anchor; failures expose an inline retry action, and the
-top boundary explicitly indicates when the start of the conversation is reached.
+Chat history loads the newest bounded page of turns when a session is selected
+and fetches older turns when the user scrolls near the top. A terminal turn
+contains its user message and only the final assistant output in the compact
+response (or the final following event when no assistant output exists); the
+response also carries the number of omitted events. Expanding the
+turn fetches those events lazily by session and run, caches them in the browser,
+and exposes loading and retry states. Messages belonging to the latest active run
+are never compacted: its user message and all currently persisted run events are
+returned and rendered while the run remains queued, starting, running, or
+stopping.
+
+Initial and older-page requests display an accessible loading indicator.
+Older-page insertion preserves the first visible event as a scroll anchor;
+failures expose an inline retry action, and the top boundary explicitly indicates
+when the start of the conversation is reached. The compact history response also
+returns the true latest persisted event ID, including omitted events, so SSE can
+resume without replaying folded history.
 
 Each runner event is committed in one database transaction with its application
 event row, worker cursor, run state, session summary, and any positive usage
