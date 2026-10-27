@@ -9,7 +9,7 @@ alone does not change login; this change performs no production migration.
 | Journey | Result |
 | --- | --- |
 | Existing account, current platform | Keycloak verifies the existing password; an explicit issuer/subject link loads the same local ID, group, role, resources, and Micu binding. |
-| Existing identity, new platform | Matching customer on dedicated (any enabled registered customer on main) gets an ordinary local profile in the configured default group. No invitation or credit grant. |
+| Existing identity, new platform | A matching customer on dedicated (any enabled registered customer on main) gets an ordinary local profile in the configured default group, or the first-created existing group when no default group ID is configured. No invitation or credit grant. |
 | Invitation registration | Existing form reserves the invitation, centrally provisions identity/Micu, activates the invitation's local group and limits, then redirects through OIDC login. Registration itself issues no session. |
 | Existing identity with invitation | Enter the code and choose **Already registered? Sign in**. A new local profile receives its group/limits; an existing profile is unchanged and does not consume the invitation. |
 
@@ -17,8 +17,8 @@ Keycloak manages credentials and one admin-assigned `customerId`. Each platform
 manages groups, roles, sessions, and resources. Customer admission has no admin
 bypass. Local disabling/deletion never revokes central identity or shared keys.
 Local account/group deletion removes identity links atomically with profiles,
-allowing later ordinary-user readmission in the default group or an invitation's
-group. Disable rather than delete to block returning users.
+allowing later ordinary-user readmission in the resolved default group or an
+invitation's group. Disable rather than delete to block returning users.
 
 New usernames are stripped/case-folded and globally unique. Migration preserves
 old platform/Micu spelling using the admin-only `platformUsername` attribute,
@@ -45,7 +45,7 @@ Identity settings are environment-only. Keep completed files outside Git.
 | `OIDC_ISSUER` | Stable HTTPS realm issuer. |
 | `OIDC_CLIENT_ID`, `OIDC_CLIENT_SECRET` | Separate confidential login client for each platform. |
 | `PUBLIC_URL` | Platform HTTPS origin, no path. |
-| `OIDC_DEFAULT_GROUP_ID` | Existing local group for automatic admission; required at startup. |
+| `OIDC_DEFAULT_GROUP_ID` | Optional existing local group for automatic admission. If unset, startup selects the first-created existing group (group ID breaks timestamp ties). |
 | `DEPLOYMENT_CUSTOMER_ID` | Empty on main; fixed business customer on dedicated. |
 | `OIDC_REVALIDATE_SECONDS` | Default 300; allowed range 30–900. |
 | `REGISTRATION_PAUSED` | `true` pauses registration for maintenance/migration. |
@@ -67,9 +67,10 @@ Configure Keycloak following [deployment](keycloak-deployment.md):
    imported users. Do not mandate email/first/last-name fields unless the
    username/password onboarding form is extended.
 
-Create default groups and an initial local administrator before switching a new
-installation to OIDC; migrate that administrator explicitly. Automatic admission
-never grants administrator permissions.
+Create at least one group and an initial local administrator before switching a
+new installation to OIDC; migrate that administrator explicitly. Set a default
+group ID to select it explicitly, or leave it unset to use the first-created
+existing group. Automatic admission never grants administrator permissions.
 
 Dedicated instances use their own Micu management credentials for direct balance
 and pre-run checks. Application guards prevent dedicated recharge/key-lifecycle

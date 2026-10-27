@@ -40,8 +40,18 @@ class IdentitySettings:
         raise ValueError(name + " must be a trusted HTTPS URL")
     if urlparse(self.public_url).path not in {"", "/"}:
       raise ValueError("PUBLIC_URL must be an origin without a path")
-    if not self.client_id or not self.client_secret or self.default_group not in groups:
-      raise ValueError("OIDC requires client credentials and an existing OIDC_DEFAULT_GROUP_ID")
+    if not self.client_id or not self.client_secret:
+      raise ValueError("OIDC requires client credentials")
+    if not self.default_group and groups:
+      first_group_id, _ = min(
+        groups.items(),
+        key=lambda item: (str(item[1].get("createdAt") or ""), str(item[0])),
+      )
+      self.default_group = str(first_group_id)
+    if self.default_group and self.default_group not in groups:
+      raise ValueError("OIDC_DEFAULT_GROUP_ID must reference an existing group when configured")
+    if not self.default_group:
+      raise ValueError("OIDC requires at least one local group")
     if not 30 <= self.revalidate_seconds <= 900:
       raise ValueError("OIDC_REVALIDATE_SECONDS must be between 30 and 900")
     if self.customer_id:

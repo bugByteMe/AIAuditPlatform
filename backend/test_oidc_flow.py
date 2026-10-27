@@ -144,6 +144,46 @@ class OidcFlowTest(unittest.TestCase):
       with self.assertRaisesRegex(ValueError, "reserved universal"):
         IdentitySettings().validate(self.store.groups)
 
+  def test_unset_default_admission_group_uses_first_existing_group(self):
+    later = self.store.create_group("Later")
+    self.store.groups[self.group["id"]]["createdAt"] = "2026-01-01 00:00:00"
+    self.store.groups[later["id"]]["createdAt"] = "2026-01-02 00:00:00"
+    with patch.dict("os.environ", {
+        "AI_AUDIT_AUTH_MODE": "oidc", "AI_AUDIT_OIDC_ISSUER": self.settings.issuer,
+        "AI_AUDIT_PUBLIC_URL": self.settings.public_url, "AI_AUDIT_OIDC_CLIENT_ID": "app",
+        "AI_AUDIT_OIDC_CLIENT_SECRET": "secret", "AI_AUDIT_DEPLOYMENT_CUSTOMER_ID": "business",
+        "AI_AUDIT_IDENTITY_CENTRAL_URL": "https://central.example.test",
+        "AI_AUDIT_IDENTITY_CENTRAL_TOKEN": "x" * 32,
+      }, clear=True):
+      settings = IdentitySettings()
+      settings.validate(self.store.groups)
+      self.assertEqual(settings.default_group, self.group["id"])
+      user = self.store.admit_identity(settings.issuer, self.identity, settings.default_group)
+      self.assertEqual(user["groupId"], self.group["id"])
+
+  def test_unset_default_admission_group_requires_an_existing_group(self):
+    with patch.dict("os.environ", {
+        "AI_AUDIT_AUTH_MODE": "oidc", "AI_AUDIT_OIDC_ISSUER": self.settings.issuer,
+        "AI_AUDIT_PUBLIC_URL": self.settings.public_url, "AI_AUDIT_OIDC_CLIENT_ID": "app",
+        "AI_AUDIT_OIDC_CLIENT_SECRET": "secret", "AI_AUDIT_DEPLOYMENT_CUSTOMER_ID": "business",
+        "AI_AUDIT_IDENTITY_CENTRAL_URL": "https://central.example.test",
+        "AI_AUDIT_IDENTITY_CENTRAL_TOKEN": "x" * 32,
+      }, clear=True):
+      with self.assertRaisesRegex(ValueError, "at least one local group"):
+        IdentitySettings().validate({})
+
+  def test_configured_default_admission_group_must_exist(self):
+    with patch.dict("os.environ", {
+        "AI_AUDIT_AUTH_MODE": "oidc", "AI_AUDIT_OIDC_ISSUER": self.settings.issuer,
+        "AI_AUDIT_PUBLIC_URL": self.settings.public_url, "AI_AUDIT_OIDC_CLIENT_ID": "app",
+        "AI_AUDIT_OIDC_CLIENT_SECRET": "secret", "AI_AUDIT_OIDC_DEFAULT_GROUP_ID": "missing",
+        "AI_AUDIT_DEPLOYMENT_CUSTOMER_ID": "business",
+        "AI_AUDIT_IDENTITY_CENTRAL_URL": "https://central.example.test",
+        "AI_AUDIT_IDENTITY_CENTRAL_TOKEN": "x" * 32,
+      }, clear=True):
+      with self.assertRaisesRegex(ValueError, "must reference an existing group"):
+        IdentitySettings().validate(self.store.groups)
+
   def test_dedicated_recharge_routes_are_blocked(self):
     with patch("identity_policy.IDENTITY", self.settings):
       for path in ("/api/recharge/orders", "/api/accounts/alice/reset-budget", "/api/admin/recharge-imports"):
