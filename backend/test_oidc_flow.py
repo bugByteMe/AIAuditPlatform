@@ -1,7 +1,9 @@
 import json
 import tempfile
+import threading
 import time
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import ExitStack
 from pathlib import Path
 from types import SimpleNamespace
@@ -16,7 +18,7 @@ from identity_database import IdentityDatabase
 from identity_config import IdentitySettings
 from identity_policy import invitation_customer, guard_identity_route
 from identity_common import UNIVERSAL_CUSTOMER_ID
-from oidc_client import IdentityError, IdentityNameTaken, OidcClient, request_json
+from oidc_client import IdentityError, IdentityNameTaken, KeycloakAdmin, OidcClient, request_json
 import server_oidc
 
 
@@ -290,6 +292,66 @@ class OidcTokenTest(unittest.TestCase):
     self.assertEqual(query["code_challenge_method"], ["S256"])
     self.assertEqual(query["redirect_uri"], ["https://app.example.test/api/oidc/callback"])
     self.assertNotIn("client_secret", query)
+
+
+class IdentityHttpClientTest(unittest.TestCase):
+  @staticmethod
+  def response(payload, status=200):
+    return SimpleNamespace(status_code=status, content=b"{}", json=lambda: payload)
+
+  def settings(self):
+    return SimpleNamespace(
+      issuer="https://identity.example.test/realms/audit",
+      admin_client="admin-service",
+      admin_secret="synthetic-admin-secret",
+    )
+
+  def test_request_json_uses_the_supplied_persistent_client(self):
+    http_client = MagicMock()
+    http_client.request.return_value = self.response({"ok": True})
+    with patch("oidc_client.httpx.request") as one_shot_request:
+      self.assertEqual(
+        request_json("GET", "https://identity.example.test/status", client=http_client),
+        {"ok": True},
+      )
+    http_client.request.assert_called_once()
+    one_shot_request.assert_not_called()
+
+  def test_keycloak_admin_reuses_one_service_token_concurrently(self):
+    class FakeClient:
+      def __init__(self, response):
+        self.response = response
+        self.lock = threading.Lock()
+        self.token_requests = 0
+
+      def request(self, method, url, **kwargs):
+        if url.endswith("/protocol/openid-connect/token"):
+          with self.lock:
+            self.token_requests += 1
+          time.sleep(0.02)
+          return self.response({"access_token": "service-token", "expires_in": 300})
+        return self.response({"id": url.rsplit("/", 1)[-1], "enabled": True})
+
+    http_client = FakeClient(self.response)
+    admin = KeycloakAdmin(self.settings(), http_client)
+    with ThreadPoolExecutor(max_workers=5) as pool:
+      users = list(pool.map(admin.user, [f"subject-{index}" for index in range(5)]))
+    self.assertEqual(http_client.token_requests, 1)
+    self.assertEqual([user["id"] for user in users], [f"subject-{index}" for index in range(5)])
+
+  def test_keycloak_admin_refreshes_cached_token_once_after_unauthorized(self):
+    http_client = MagicMock()
+    http_client.request.side_effect = [
+      self.response({"access_token": "stale-token", "expires_in": 300}),
+      self.response({}, status=401),
+      self.response({"access_token": "fresh-token", "expires_in": 300}),
+      self.response({"id": "subject-1", "enabled": True}),
+    ]
+    admin = KeycloakAdmin(self.settings(), http_client)
+    self.assertEqual(admin.user("subject-1")["id"], "subject-1")
+    calls = http_client.request.call_args_list
+    self.assertEqual(calls[1].kwargs["headers"]["Authorization"], "Bearer stale-token")
+    self.assertEqual(calls[3].kwargs["headers"]["Authorization"], "Bearer fresh-token")
 
 
 if __name__ == "__main__":

@@ -22,14 +22,28 @@ _services = None
 def services():
   global _services
   from server_state import ACCOUNT_STORE, provision_micu
+  from oidc_client import identity_http_client
   with _lock:
     if _services is None or _services[0] is not ACCOUNT_STORE:
+      if _services is not None:
+        _services[4].close()
+      http_client = identity_http_client()
       database = IdentityDatabase(ACCOUNT_STORE.database.engine)
       ACCOUNT_STORE.identity_db = database
-      authority = IdentityAuthority(IDENTITY, database, provision_micu, lambda: list(ACCOUNT_STORE.users.values()))
-      gateway = IdentityGateway(IDENTITY, authority)
-      _services = (ACCOUNT_STORE, database, authority, gateway, OidcClient(IDENTITY))
+      authority = IdentityAuthority(
+        IDENTITY, database, provision_micu, lambda: list(ACCOUNT_STORE.users.values()), http_client,
+      )
+      gateway = IdentityGateway(IDENTITY, authority, http_client)
+      _services = (ACCOUNT_STORE, database, authority, gateway, OidcClient(IDENTITY, http_client))
   return _services
+
+
+def close_identity_services():
+  global _services
+  with _lock:
+    current, _services = _services, None
+  if current is not None:
+    current[4].close()
 
 
 def validate_identity_startup():

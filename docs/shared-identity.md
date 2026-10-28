@@ -77,6 +77,13 @@ and pre-run checks. Application guards prevent dedicated recharge/key-lifecycle
 mutations, but cannot make a broad provider credential read-only. Protect those
 hosts. Central Keycloak service-account credentials must exist on main only.
 
+Each control-plane process keeps one pooled HTTP client for OIDC, central
+identity, and Keycloak administration traffic. The main platform also caches its
+Keycloak service-account access token until shortly before expiry, so concurrent
+administration checks share one token request. A Keycloak HTTP 401 invalidates
+that process-local token and retries the administration call once. Multiple
+server workers have independent connection pools and token caches.
+
 ## Customers and invitations
 
 Management roles use `GET /api/customers`; main also accepts

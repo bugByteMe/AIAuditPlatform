@@ -270,6 +270,7 @@ async def app_lifespan(_app: FastAPI):
   try:
     yield
   finally:
+    from server_oidc import close_identity_services
     WECHAT_RECONCILE_STOP.set()
     UPLOAD_MANAGER.shutdown()
     pools, WORKLOAD_POOLS = WORKLOAD_POOLS, None
@@ -277,6 +278,7 @@ async def app_lifespan(_app: FastAPI):
       pools.shutdown()
     CHAT_RUNTIME.set_event_callback(None)
     SSE_BROKER.unbind()
+    close_identity_services()
 
 
 app = FastAPI(lifespan=app_lifespan)

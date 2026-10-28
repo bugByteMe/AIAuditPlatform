@@ -14,10 +14,10 @@ def canonical_username(value):
 
 
 class IdentityAuthority:
-  def __init__(self, settings, database, provision_micu, profiles=None):
+  def __init__(self, settings, database, provision_micu, profiles=None, http_client=None):
     self.settings = settings
     self.db = database
-    self.admin = KeycloakAdmin(settings)
+    self.admin = KeycloakAdmin(settings, http_client)
     self.provision_micu = provision_micu
     self.profiles = profiles or (lambda: [])
 
@@ -117,12 +117,13 @@ class IdentityAuthority:
 
 
 class IdentityGateway:
-  def __init__(self, settings, authority):
+  def __init__(self, settings, authority, http_client=None):
     self.settings, self.authority = settings, authority
+    self.http_client = http_client
 
   def call(self, action, payload):
     return request_json("POST", self.settings.central_url + "/api/internal/identity/" + action,
-      headers={"Authorization": "Bearer " + self.settings.central_token}, json=payload)
+      client=self.http_client, headers={"Authorization": "Bearer " + self.settings.central_token}, json=payload)
 
   def provision(self, operation, username, password, customer, budget):
     if self.settings.customer_id:
