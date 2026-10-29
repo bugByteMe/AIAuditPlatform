@@ -3,6 +3,8 @@ import { t } from "./i18n.js";
 const API_BASE_KEY = "aiAuditApiBase";
 const SESSION_TOKEN_KEY = "aiAuditSessionToken";
 const DEFAULT_BACKEND_BASE = "http://127.0.0.1:8765";
+const SESSION_EXPIRED_EVENT = "ai-audit:session-expired";
+let sessionExpirationNotified = false;
 
 function unique(values) {
   return [...new Set(values.filter((value) => value !== null && value !== undefined))];
@@ -43,9 +45,31 @@ function rememberSessionToken(path, payload) {
   }
   if (["/api/login", "/api/register"].includes(path) && payload.sessionToken) {
     window.localStorage.setItem(SESSION_TOKEN_KEY, payload.sessionToken);
+    sessionExpirationNotified = false;
   }
   if (path === "/api/logout") {
     window.localStorage.removeItem(SESSION_TOKEN_KEY);
+  }
+}
+
+function shouldNotifySessionExpiry(path, options) {
+  if (options.suppressSessionExpiry) return false;
+  if (options.notifySessionExpiry) return true;
+  let pathname = String(path || "");
+  try {
+    pathname = new URL(pathname, window.location.href).pathname;
+  } catch {
+    // Preserve the raw relative path when URL parsing is unavailable.
+  }
+  return !["/api/login", "/api/register"].includes(pathname);
+}
+
+function notifySessionExpired(path, options = {}) {
+  if (!shouldNotifySessionExpiry(path, options) || sessionExpirationNotified) return;
+  sessionExpirationNotified = true;
+  window.localStorage.removeItem(SESSION_TOKEN_KEY);
+  if (typeof window.dispatchEvent === "function" && typeof Event === "function") {
+    window.dispatchEvent(new Event(SESSION_EXPIRED_EVENT));
   }
 }
 
@@ -58,8 +82,10 @@ function responseErrorMessage(payload) {
 }
 
 async function fetchJson(path, options, base) {
-  const headers = { ...(options.headers || {}) };
-  if (!(options.body instanceof FormData)) {
+  const { suppressSessionExpiry, notifySessionExpiry, ...fetchOptions } = options;
+  const requestPolicy = { suppressSessionExpiry, notifySessionExpiry };
+  const headers = { ...(fetchOptions.headers || {}) };
+  if (!(fetchOptions.body instanceof FormData)) {
     headers["Content-Type"] = headers["Content-Type"] || "application/json";
   }
   const token = window.localStorage.getItem(SESSION_TOKEN_KEY);
@@ -69,12 +95,13 @@ async function fetchJson(path, options, base) {
     response = await fetch(buildUrl(path, base), {
       credentials: "include",
       headers,
-      ...options,
+      ...fetchOptions,
     });
   } catch (error) {
     error.retryable = true;
     throw error;
   }
+  if (response.status === 401) notifySessionExpired(path, requestPolicy);
   const contentType = response.headers.get("Content-Type") || "";
   if (!contentType.includes("application/json")) {
     const error = new Error("api_not_json");
@@ -121,7 +148,7 @@ export async function api(path, options = {}) {
   throw lastError || new Error("request_failed");
 }
 
-function xhrBinary(path, body, base, onProgress, signal) {
+function xhrBinary(path, body, base, onProgress, signal, requestPolicy = {}) {
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest();
     if (signal?.aborted) return reject(new DOMException("Upload aborted", "AbortError"));
@@ -138,6 +165,7 @@ function xhrBinary(path, body, base, onProgress, signal) {
     signal?.addEventListener("abort", () => xhr.abort(), { once: true });
     xhr.onload = () => {
       const contentType = xhr.getResponseHeader("Content-Type") || "";
+      if (xhr.status === 401) notifySessionExpired(path, requestPolicy);
       if (!contentType.includes("application/json")) return reject(Object.assign(new Error("api_not_json"), { retryable: true, status: xhr.status }));
       const payload = JSON.parse(xhr.responseText || "{}");
       if (xhr.status < 200 || xhr.status >= 300) {
@@ -158,7 +186,7 @@ export async function uploadChunkApi(path, blob, onProgress, options = {}) {
   let lastError = null;
   for (const base of backendCandidates()) {
     try {
-      const payload = await xhrBinary(path, blob, base, onProgress, options.signal);
+      const payload = await xhrBinary(path, blob, base, onProgress, options.signal, options);
       rememberApiBase(base);
       return payload;
     } catch (error) {

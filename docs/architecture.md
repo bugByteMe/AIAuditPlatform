@@ -22,6 +22,11 @@ The initial HTML gates both login and the application shell behind a neutral
 startup screen. Runtime configuration must load before session resolution;
 only an HTTP 401 session response reveals login. Configuration/network/server
 failures show a retry screen rather than falling back to local authentication.
+After startup, any authenticated API or upload request returning HTTP 401 clears
+the browser credential, stops chat streaming, displays a localized session-
+expired notice, and returns to the login screen. EventSource failures verify the
+session through the ordinary API because the EventSource interface does not
+expose the failed HTTP status. Concurrent failures are coalesced into one notice.
 After session resolution the shell appears immediately, with loading/error
 placeholders for workspace/chat, account/worker/audit, and recharge panels.
 Workspace and management requests can run concurrently; real empty states appear

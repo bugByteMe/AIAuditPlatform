@@ -329,7 +329,13 @@ async function loadWorkspaces() {
   maybeStartChatStream();
 }
 
-function startNativeDownload(url) {
+async function startNativeDownload(url) {
+  try {
+    await api("/api/session");
+  } catch (error) {
+    if (error.status !== 401) showToast(error.message || t("toast.downloadDelayed"));
+    return null;
+  }
   let progress = null;
   return startMonitoredDownload(apiUrl(url), {
     onPreparing: () => { progress = setOperationProgress(t("progress.preparingDownload"), 100, true); },
@@ -718,7 +724,7 @@ async function bootstrap() {
     applyLocale();
     const signedIn = await resolveStartup({
       loadConfig: loadRuntimeConfig,
-      loadSession: () => api("/api/session"),
+      loadSession: () => api("/api/session", { suppressSessionExpiry: true }),
       authenticated: showAuthenticated,
       login: showLogin,
     });
@@ -900,6 +906,13 @@ const {
 } = appContext;
 window.addEventListener("hashchange", syncRouteFromLocation);
 window.addEventListener("popstate", syncRouteFromLocation);
+window.addEventListener("ai-audit:session-expired", () => {
+  stopChatStream();
+  if (state.workspaceCreateUploadController) state.workspaceCreateUploadController.abort();
+  showLogin();
+  document.querySelector("#login-error").textContent = t("auth.sessionExpired");
+  showToast(t("toast.sessionExpired"));
+});
 window.setInterval(refreshWorkerStatus, 5_000);
 
 bindGlobalClicks();

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { markdownToHtml, workspaceLinkPath } from "./chatMarkdown.js";
+import { formulaToHtml, markdownToHtml, workspaceLinkPath } from "./chatMarkdown.js";
 
 test("agent workspace links render as safe download actions", () => {
   const html = markdownToHtml("[点击打开或下载：ZA-货币资金_已编制.xlsx](/workspace/ZA-货币资金_已编制.xlsx)");
@@ -24,4 +24,36 @@ test("unsafe or unrelated paths never become workspace downloads", () => {
   assert.doesNotMatch(markdownToHtml("[bad](/other/report.xlsx)"), /<a /);
   assert.doesNotMatch(markdownToHtml("```\n[code](/workspace/file.xlsx)\n```"), /<a /);
   assert.match(markdownToHtml("[site](https://example.com)"), /href="https:\/\/example\.com" target="_blank"/);
+});
+
+test("GitHub-style tables preserve alignment and inline formatting", () => {
+  const html = markdownToHtml("| Account | Amount | Note |\n| :--- | ---: | :---: |\n| Revenue | **120** | $x^2$ |");
+  assert.match(html, /<div class="event-table-wrap"><table>/);
+  assert.match(html, /<th class="align-left">Account<\/th>/);
+  assert.match(html, /<td class="align-right"><strong>120<\/strong><\/td>/);
+  assert.match(html, /<td class="align-center"><math/);
+});
+
+test("inline and display formulas render as safe MathML", () => {
+  const inline = markdownToHtml("Ratio: $R=\\frac{a}{b}$ and \\(x_1\\)");
+  assert.match(inline, /<math class="chat-math"/);
+  assert.match(inline, /<mfrac>/);
+  assert.match(inline, /<msub>/);
+  const display = markdownToHtml("$$\\sqrt{x^2}$$");
+  assert.match(display, /chat-math-display/);
+  assert.match(display, /<msqrt>/);
+  assert.doesNotMatch(formulaToHtml("<script>alert(1)</script>"), /<script>/);
+});
+
+test("code blocks and inline code do not execute table or formula markup", () => {
+  const html = markdownToHtml("`$not_math$`\n```\n| A | B |\n| --- | --- |\n$$x$$\n```");
+  assert.match(html, /<code>\$not_math\$<\/code>/);
+  assert.match(html, /<pre><code>\n\| A \| B \|/);
+  assert.equal((html.match(/<math/g) || []).length, 0);
+});
+
+test("currency amounts are not mistaken for formula delimiters", () => {
+  const html = markdownToHtml("Revenue was $100 and costs were $80.");
+  assert.doesNotMatch(html, /<math/);
+  assert.match(html, /\$100 and costs were \$80/);
 });

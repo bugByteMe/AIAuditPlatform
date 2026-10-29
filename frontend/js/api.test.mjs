@@ -15,9 +15,18 @@ globalThis.window = {
     setItem(key, value) { storage.set(key, String(value)); },
     removeItem(key) { storage.delete(key); },
   },
+  addEventListener(name, callback) {
+    this.listeners ||= new Map();
+    const callbacks = this.listeners.get(name) || [];
+    callbacks.push(callback);
+    this.listeners.set(name, callbacks);
+  },
+  dispatchEvent(event) {
+    (this.listeners?.get(event.type) || []).forEach((callback) => callback(event));
+  },
 };
 
-const { api } = await import("./api.js");
+const { api, uploadChunkApi } = await import("./api.js");
 const { state } = await import("./state.js");
 
 test("OIDC runtime configuration discards legacy bearer tokens", async () => {
@@ -73,4 +82,53 @@ test("queue saturation errors use localized workload-specific messages", async (
       return true;
     });
   }
+});
+
+test("an authenticated 401 clears credentials and emits one session-expired event", async () => {
+  storage.set("aiAuditSessionToken", "expired-token");
+  let notifications = 0;
+  window.addEventListener("ai-audit:session-expired", () => { notifications += 1; });
+  globalThis.fetch = async () => ({
+    ok: false, status: 401,
+    headers: { get: () => "application/json" },
+    json: async () => ({ error: "unauthorized" }),
+  });
+
+  await assert.rejects(api("/api/workspaces"), (error) => error.status === 401);
+  await assert.rejects(api("/api/workspaces"), (error) => error.status === 401);
+  assert.equal(storage.has("aiAuditSessionToken"), false);
+  assert.equal(notifications, 1);
+});
+
+test("upload 401 uses the same expiration path while startup session probes can suppress it", async () => {
+  let notifications = 0;
+  window.addEventListener("ai-audit:session-expired", () => { notifications += 1; });
+  globalThis.fetch = async () => ({
+    ok: true, status: 200,
+    headers: { get: () => "application/json" },
+    json: async () => ({ sessionToken: "fresh-token", user: { id: "user-1" } }),
+  });
+  await api("/api/login", { method: "POST", body: "{}" });
+
+  globalThis.XMLHttpRequest = class {
+    constructor() { this.upload = {}; }
+    open() {}
+    setRequestHeader() {}
+    getResponseHeader() { return "application/json"; }
+    send() {
+      this.status = 401;
+      this.responseText = '{"error":"unauthorized"}';
+      queueMicrotask(() => this.onload());
+    }
+  };
+  await assert.rejects(uploadChunkApi("/api/uploads/upload-1/files/0", new Blob(["x"])), (error) => error.status === 401);
+  assert.equal(notifications, 1);
+
+  globalThis.fetch = async () => ({
+    ok: false, status: 401,
+    headers: { get: () => "text/html" },
+    json: async () => ({}),
+  });
+  await assert.rejects(api("/api/session", { suppressSessionExpiry: true }), (error) => error.status === 401);
+  assert.equal(notifications, 1);
 });

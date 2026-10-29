@@ -38,6 +38,11 @@ When a user starts a chat:
 
 Users can select model and reasoning effort before starting a run. These settings are stored on the run record.
 The composer offers `gpt-5.6-sol`, `gpt-6-astra`, `gpt-6-sol`, and `gpt-6.1-sol`, with high or medium reasoning effort. The runner writes the selected effort to the session-scoped Codex `config.toml` as `model_reasoning_effort` for each run. Chat-session cards show the session creator, which remains distinct from the user initiating any later run.
+Public chat-session payloads include the latest run's model and reasoning effort.
+When the user enters a chat, the composer applies those settings once; ordinary
+event rerenders do not overwrite a manual selection. Run creation also inherits
+the latest settings when a client omits them, so the behavior is enforced by the
+backend rather than depending only on browser state.
 
 The group live-run limit counts runs in `queued`, `starting`, `running`, and `stopping` states across every workspace owned or used by group members. Run creation and the limit check share the chat lifecycle lock, so simultaneous requests cannot exceed the configured limit. Lowering a limit does not terminate existing work; it prevents new runs until the live count falls below the limit.
 
@@ -54,6 +59,13 @@ The frontend receives events through websocket or SSE. Events should include:
 - Artifact discovery after run completion.
 
 The backend should persist the event stream so a user can reload the page and recover the visible run history.
+
+Assistant Markdown supports aligned pipe tables and common TeX-style inline and
+display formulas. Formula delimiters are `$...$`, `\(...\)`, `$$...$$`, and
+`\[...\]`. The browser converts supported formula syntax to native MathML;
+unsupported or malformed expressions fall back to escaped code. Raw HTML is
+never accepted, and workspace links continue through the validated download
+action rather than becoming direct filesystem URLs.
 
 ## Stopping a Chat
 

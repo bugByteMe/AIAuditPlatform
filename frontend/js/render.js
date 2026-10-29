@@ -1,5 +1,6 @@
 import { t } from "./i18n.js";
 import { markdownToHtml } from "./chatMarkdown.js";
+import { applyChatModelSettings } from "./chatModelSettings.js";
 import { dataPanelMarkup } from "./startupUi.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { isEventStreamNearBottom } from "./scrollPosition.js";
@@ -324,6 +325,7 @@ export function renderChatSessions() {
   document.querySelector("#new-chat-button").disabled = !canCollaborate;
   document.querySelector("#stop-run").disabled = !canCollaborate || !["queued", "starting", "running"].includes(status);
   if (!workspace || !session) {
+    state.composerSettingsSessionId = "";
     document.querySelector("#chat-workspace-name").innerHTML = workspace
       ? editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace))
       : "";
@@ -336,6 +338,9 @@ export function renderChatSessions() {
     renderChatResources(state.resourceStatus);
     document.querySelector("#chat-session-list").innerHTML = "";
     return;
+  }
+  if (state.composerSettingsSessionId !== session.id) {
+    state.composerSettingsSessionId = applyChatModelSettings(document, session, state.composerSettingsSessionId);
   }
   document.querySelector("#chat-workspace-name").innerHTML = editableName("workspace", workspace.id, workspace.name, `chat-workspace:${workspace.id}`, canRenameWorkspace(workspace));
   document.querySelector("#chat-session-title").innerHTML = editableName("session", session.id, session.title, `chat-session-current:${session.id}`, canCollaborate);

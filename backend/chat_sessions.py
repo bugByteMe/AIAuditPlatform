@@ -264,6 +264,9 @@ class ChatSessionMixin:
         session = self.chat_store.get_session(session_id)
         if session["workspaceId"] != workspace_id:
           raise StorageError("bad_request", "chat session belongs to another workspace")
+      previous_run = self.chat_store.get_run(str(session.get("latestRunId") or ""))
+      inherited_model = str((previous_run or {}).get("model") or "gpt-5.6-sol")
+      inherited_reasoning = str((previous_run or {}).get("reasoning") or "high")
       timestamp = now_string()
       run = {
         "id": generated_id("run"),
@@ -273,8 +276,8 @@ class ChatSessionMixin:
         "groupId": group_id,
         "status": "queued",
         "prompt": prompt,
-        "model": str(payload.get("model") or "gpt-5.6-sol"),
-        "reasoning": str(payload.get("reasoning") or "high"),
+        "model": str(payload.get("model") or inherited_model),
+        "reasoning": str(payload.get("reasoning") or inherited_reasoning),
         "worker": "queued",
         "workerId": None,
         "requestedCpu": self.requested_cpu,

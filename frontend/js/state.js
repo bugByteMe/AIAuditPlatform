@@ -48,6 +48,7 @@ export const state = {
   isChatFocusMode: false,
   focusPanelState: null,
   operationProgress: null,
+  composerSettingsSessionId: "",
   workspaceCreateUploadController: null,
   nameEditor: null,
 };

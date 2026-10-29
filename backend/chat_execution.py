@@ -393,6 +393,8 @@ class ChatExecutionMixin:
     session["container"] = str(run.get("container") or "")
     session["requestedCpu"] = float(run.get("requestedCpu") or self.requested_cpu)
     session["requestedMemoryBytes"] = int(run.get("requestedMemoryBytes") or self.requested_memory_bytes)
+    session["model"] = str(run.get("model") or "gpt-5.6-sol")
+    session["reasoning"] = str(run.get("reasoning") or "high")
     if run.get("status") == "queued":
       if queued_positions is None:
         queued = sorted(

@@ -4,6 +4,24 @@ from chat_runtime_test_support import *
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def test_session_exposes_and_inherits_latest_model_settings(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    first = runtime.start_run(workspace["id"], self.users["li.review"], {
+      "prompt": "First", "model": "gpt-6-sol", "reasoning": "medium",
+    })
+    self.wait_for_status(runtime, workspace["id"], first["session"]["id"], "completed")
+    public = runtime.public_session(first["session"]["id"], include_events=False)
+    self.assertEqual(public["model"], "gpt-6-sol")
+    self.assertEqual(public["reasoning"], "medium")
+
+    second = runtime.start_run(workspace["id"], self.users["li.review"], {
+      "prompt": "Second", "sessionId": first["session"]["id"],
+    })
+    self.assertEqual(second["run"]["model"], "gpt-6-sol")
+    self.assertEqual(second["run"]["reasoning"], "medium")
+    self.wait_for_status(runtime, workspace["id"], first["session"]["id"], "completed")
+
   def test_turn_history_compacts_terminal_runs_but_keeps_active_run_messages(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())

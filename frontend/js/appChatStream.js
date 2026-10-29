@@ -178,6 +178,7 @@ export function createChatStream(context) {
     activeChatStream.onerror = () => {
       if (generation !== activeStreamGeneration) return;
       activatePollingFallback(workspaceId, sessionId, generation);
+      void api("/api/session", { notifySessionExpiry: true }).catch(() => null);
     };
   }
 
