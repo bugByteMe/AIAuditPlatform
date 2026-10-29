@@ -65,6 +65,11 @@ def normalize_relative_path(raw_path: str) -> str:
   parts = path.split("/")
   if any(part in {"", ".", ".."} for part in parts):
     raise StorageError("unsafe_path", f"unsafe path: {raw_path}")
+  return path
+
+def normalize_upload_relative_path(raw_path: str) -> str:
+  path = normalize_relative_path(raw_path)
+  parts = path.split("/")
   if Path(parts[-1]).suffix.lower() in BLOCKED_SUFFIXES:
     raise StorageError("blocked_file_type", f"blocked file type: {raw_path}")
   return path

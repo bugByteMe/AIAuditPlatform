@@ -11,7 +11,7 @@ from pathlib import Path
 
 from checkpoint_delta import stat_fields
 from config import SETTINGS
-from workspace_store import StorageError, UploadedFile, ensure_under_root, normalize_relative_path
+from workspace_store import StorageError, UploadedFile, ensure_under_root, normalize_upload_relative_path
 
 
 class UploadStreamTimeout(RuntimeError):
@@ -76,7 +76,7 @@ class WorkerUploadStore:
       for index, item in enumerate(payload.get("files") or []):
         files.append({
           "index": index,
-          "path": normalize_relative_path(str(item.get("path") or "")),
+          "path": normalize_upload_relative_path(str(item.get("path") or "")),
           "size": int(item.get("size") or 0),
           "lastModified": int(item.get("lastModified") or 0),
           "offset": 0,

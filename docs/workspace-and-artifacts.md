@@ -35,6 +35,11 @@ Users create workspaces by uploading files or folders through the web UI. The ba
 
 Folder uploads use persisted, resumable upload sessions. The browser first sends a file manifest to the control plane, which validates permissions, paths, file count, declared sizes, blocked file types, and group quota before accepting bytes. It then sends bounded binary chunks through the authenticated control-plane API. The control plane streams each chunk to a reserved compute worker without buffering the file or request body in memory.
 
+Blocked file extensions are an upload-ingress policy, not a workspace path rule.
+Files created by an agent during a run, including shell scripts, remain valid
+workspace files and must be checkpointed, listed, selected, and downloaded like
+other generated artifacts.
+
 Upload coordination is stored per session in SQL and normal chunk/status
 operations lock only that upload ID. A bounded background collector expires
 abandoned sessions, retries worker staging cleanup, and removes terminal rows
@@ -222,6 +227,14 @@ The backend builds each package in a temporary file under the bundle directory a
 streams that file to the client, preserving workspace-relative paths. The temporary
 file is deleted after the response completes; startup cleanup removes abandoned
 download bundles older than one hour.
+
+Attachment responses use identity content encoding so the application gzip
+middleware does not recompress ZIP or other binary downloads. They also send
+`X-Accel-Buffering: no` so Nginx forwards bytes as they arrive. The browser adds
+an opaque per-download token and shows an indeterminate preparation indicator;
+the attachment response sets a short-lived acknowledgment cookie when the
+response begins, allowing the browser to clear the indicator without buffering
+the file in JavaScript memory.
 
 ```text
 artifacts-run-<run_id>/

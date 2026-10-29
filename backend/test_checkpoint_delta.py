@@ -53,6 +53,27 @@ class CheckpointDeltaTest(unittest.TestCase):
     self.assertEqual(self.store.database.file_versions(self.workspace["id"], "reports/summary.md")["current"]["blob"], untouched["blob"])
     self.assertEqual(self.store.database.file_versions(self.workspace["id"], "workpapers/income.txt")["current"]["blob"], files["workpapers/income.txt"]["blob"])
 
+  def test_agent_created_shell_script_is_checkpointed(self) -> None:
+    metadata = self.store.load_workspace_metadata(self.workspace["id"])
+    workspace = metadata["workspaces"][self.workspace["id"]]
+    snapshot = metadata["snapshots"][workspace["latestSnapshotId"]]
+    run = {"id": "run-shell-script", "checkpointBaseRef": write_baseline(
+      self.store.root, "run-shell-script", snapshot["id"], snapshot["files"],
+    )}
+    run["checkpointPreRef"] = capture_pre_run(self.store.root, self.store.workspace_path(self.workspace["id"]), run)
+    script = self.store.workspace_path(self.workspace["id"]) / "scripts" / "reconcile.sh"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\necho reconciled\n", encoding="utf-8")
+    script.chmod(0o755)
+
+    delta = scan_delta(self.store.root, self.store.workspace_path(self.workspace["id"]), self.store.blob_dir, run)
+    self.assertIn("scripts/reconcile.sh", delta["upserts"])
+    self.assertEqual(delta["upserts"]["scripts/reconcile.sh"]["mode"], 0o755)
+    self.store.apply_workspace_delta(metadata, workspace, "completed", "run-shell-script", delta)
+    current = self.store.database.file_versions(self.workspace["id"], "scripts/reconcile.sh")["current"]
+    self.assertEqual(current["mode"], 0o755)
+    self.assertEqual(current["checksum"], delta["upserts"]["scripts/reconcile.sh"]["checksum"])
+
 
 if __name__ == "__main__":
   unittest.main()

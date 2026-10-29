@@ -12,7 +12,7 @@ from urllib.parse import quote, unquote, urlparse
 
 from chat_common import browser_event
 from server_state import *
-from server_utils import static_content_type, static_cache_headers, static_not_modified
+from server_utils import download_started_cookie, static_content_type, static_cache_headers, static_not_modified
 from wechat_pay import WechatPayError
 from workspace_store import StorageError, parse_query
 
@@ -410,6 +410,12 @@ class BaseHandler(BaseHTTPRequestHandler):
       self.send_header("Content-Length", str(file_path.stat().st_size))
       self.send_header("Content-Disposition", f"{disposition}; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(filename)}")
       self.send_header("X-Content-Type-Options", "nosniff")
+      self.send_header("X-Accel-Buffering", "no")
+      if disposition == "attachment":
+        self.send_header("Content-Encoding", "identity")
+      started_cookie = download_started_cookie(self.path, disposition)
+      if started_cookie:
+        self.send_header("Set-Cookie", started_cookie)
       self.send_header("Cache-Control", "no-store")
       self.send_header("Connection", "close")
       origin = self.headers.get("Origin")

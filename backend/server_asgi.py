@@ -24,7 +24,9 @@ from server_api import Handler
 from server_state import CHAT_RUNTIME, FRONTEND_DIR, UPLOAD_MANAGER, WECHAT_RECONCILE_STOP, reconcile_micu_accounts
 from server_recharge import reconcile_wechat_orders
 from server_transport import RequestStopped, SSE_BROKER
-from server_utils import ascii_download_filename, static_content_type, static_cache_headers, static_not_modified
+from server_utils import (
+  ascii_download_filename, download_started_cookie, static_content_type, static_cache_headers, static_not_modified,
+)
 from server_workloads import WorkloadBusy, WorkloadPools, classify_request
 from worker_upload import UploadStreamTimeout
 from workspace_store import StorageError, parse_query
@@ -86,9 +88,15 @@ class AsgiHandler(Handler):
       **cors_headers(self.request),
       "Content-Disposition": f"{disposition}; filename=\"{ascii_filename}\"; filename*=UTF-8''{quote(filename)}",
       "X-Content-Type-Options": "nosniff",
+      "X-Accel-Buffering": "no",
       "Cache-Control": "no-store",
       "Connection": "close",
     }
+    if disposition == "attachment":
+      headers["Content-Encoding"] = "identity"
+    started_cookie = download_started_cookie(self.path, disposition)
+    if started_cookie:
+      headers["Set-Cookie"] = started_cookie
     background = BackgroundTask(file_path.unlink, missing_ok=True) if delete_after else None
     self.response = FileResponse(file_path, media_type=content_type, headers=headers, background=background)
 

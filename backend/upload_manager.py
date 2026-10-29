@@ -10,7 +10,9 @@ from compute_nodes import WorkerUnavailable
 from config import SETTINGS
 from upload_database import TERMINAL_UPLOAD_STATES, UploadDatabase
 from worker_upload import TrackedReader, UploadStreamTimeout, WorkerUploadStore
-from workspace_store import StorageError, ensure_under_root, generated_id, normalize_relative_path
+from workspace_store import (
+  StorageError, ensure_under_root, generated_id, normalize_relative_path, normalize_upload_relative_path,
+)
 
 ACTIVE_UPLOAD_STATES = {"uploading", "processing", "committing"}
 
@@ -81,9 +83,9 @@ class UploadManager:
         destination = normalize_relative_path(f"{destination}/__folder__").rsplit("/", 1)[0]
       files, seen, total = [], set(), 0
       for source in raw_files:
-        path = normalize_relative_path(str(source.get("path") or ""))
+        path = normalize_upload_relative_path(str(source.get("path") or ""))
         if destination:
-          path = normalize_relative_path(posixpath.join(destination, path))
+          path = normalize_upload_relative_path(posixpath.join(destination, path))
         if path in seen:
           raise StorageError("bad_request", f"duplicate upload path: {path}")
         seen.add(path)

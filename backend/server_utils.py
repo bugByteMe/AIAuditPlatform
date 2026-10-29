@@ -3,11 +3,13 @@ from __future__ import annotations
 import hashlib
 import hmac
 import mimetypes
+import re
 import secrets
 import time
 from email.utils import formatdate, parsedate_to_datetime
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.parse import parse_qs, urlparse
 
 from config import SETTINGS
 
@@ -67,3 +69,12 @@ def ascii_download_filename(filename: str, fallback: str = "download") -> str:
   safe = "".join(char if ord(char) < 128 and (char.isalnum() or char in {".", "-", "_"}) else "_" for char in filename)
   safe = safe.strip("._")
   return safe or fallback
+
+
+def download_started_cookie(raw_url: str, disposition: str) -> str | None:
+  if disposition != "attachment":
+    return None
+  token = (parse_qs(urlparse(raw_url).query).get("downloadToken") or [""])[0]
+  if not re.fullmatch(r"[A-Za-z0-9_-]{16,80}", token):
+    return None
+  return f"ai_audit_download_{token}=1; Path=/; Max-Age=120; SameSite=Lax"

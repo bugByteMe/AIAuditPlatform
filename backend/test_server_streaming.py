@@ -4,6 +4,7 @@ import sys
 import asyncio
 import io
 import threading
+import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -139,6 +140,28 @@ class ServerStreamingTest(unittest.TestCase):
       self.assertEqual(by_date.status_code, 304)
       html = client.get("/")
       self.assertEqual(html.headers["cache-control"], "public, no-cache")
+
+  def test_attachment_download_skips_gzip_and_proxy_buffering(self) -> None:
+    with tempfile.TemporaryDirectory() as directory:
+      file_path = Path(directory) / "archive.zip"
+      file_path.write_bytes(b"PK\x03\x04" + b"x" * 2048)
+
+      def dispatch(request, body):
+        handler = server.server_asgi.AsgiHandler(request, body)
+        handler.write_file(file_path, "application/zip", "archive.zip", "attachment")
+        return handler.response
+
+      token = "0123456789abcdef0123456789abcdef"
+      with TestClient(app) as client, patch("server_asgi.dispatch_request", side_effect=dispatch):
+        response = client.get(
+          f"/api/workspaces/workspace-1/files/raw?downloadToken={token}",
+          headers={"Accept-Encoding": "gzip"},
+        )
+      self.assertEqual(response.status_code, 200)
+      self.assertEqual(response.content, file_path.read_bytes())
+      self.assertEqual(response.headers["content-encoding"], "identity")
+      self.assertEqual(response.headers["x-accel-buffering"], "no")
+      self.assertIn(f"ai_audit_download_{token}=1", response.headers["set-cookie"])
 
   def test_sse_is_never_gzip_buffered(self) -> None:
     with TestClient(app) as client, patch.object(Handler, "require_user", return_value={"username": "user"}), patch("server.CHAT_RUNTIME", TerminalChatRuntime()):

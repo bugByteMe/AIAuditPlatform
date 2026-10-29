@@ -164,6 +164,11 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual((self.store.workspace_path(result["workspaceId"]) / "folder" / "data.bin").read_bytes(), content)
     self.assertEqual(result["workspace"]["fileCount"], 1)
 
+  def test_blocked_suffix_is_rejected_at_upload_admission(self):
+    with self.assertRaises(StorageError) as context:
+      self.manager.create(USER, {"mode": "create", "files": [{"path": "scripts/reconcile.sh", "size": 10}]})
+    self.assertEqual(context.exception.code, "blocked_file_type")
+
   def test_duplicate_chunk_is_idempotent_but_conflicting_content_is_rejected(self):
     upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
     self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)

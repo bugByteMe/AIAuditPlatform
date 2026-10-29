@@ -36,6 +36,7 @@ import { isEventStreamNearTop } from "./js/scrollPosition.js";
 import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSettingsPayload, groupSettingsPayload } from "./js/adminPermissions.js";
 import { renderPaymentNotice } from "./js/paymentNotice.js";
 import { resolveStartup, setStartupScreen } from "./js/startupUi.js";
+import { startMonitoredDownload } from "./js/nativeDownload.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 
@@ -263,11 +264,14 @@ async function commitNameEdit() {
 }
 
 function setOperationProgress(label, value = 0, indeterminate = false) {
-  state.operationProgress = { label, value, indeterminate };
+  const progress = { label, value, indeterminate };
+  state.operationProgress = progress;
   renderOperationProgress();
+  return progress;
 }
 
-function clearOperationProgress() {
+function clearOperationProgress(expected = null) {
+  if (expected && state.operationProgress !== expected) return;
   state.operationProgress = null;
   renderOperationProgress();
 }
@@ -326,13 +330,18 @@ async function loadWorkspaces() {
 }
 
 function startNativeDownload(url) {
-  const anchor = document.createElement("a");
-  anchor.href = apiUrl(url);
-  anchor.rel = "noopener";
-  anchor.style.display = "none";
-  document.body.append(anchor);
-  anchor.click();
-  window.setTimeout(() => anchor.remove(), 1_000);
+  let progress = null;
+  return startMonitoredDownload(apiUrl(url), {
+    onPreparing: () => { progress = setOperationProgress(t("progress.preparingDownload"), 100, true); },
+    onStarted: () => {
+      clearOperationProgress(progress);
+      showToast(t("toast.download"));
+    },
+    onTimeout: () => {
+      clearOperationProgress(progress);
+      showToast(t("toast.downloadDelayed"));
+    },
+  });
 }
 
 function viewFromLocation() {
@@ -490,7 +499,6 @@ function downloadCurrentWorkspace(mode) {
   const params = new URLSearchParams({ mode: "full" });
   selectedPaths.forEach((path) => params.append("paths", path));
   startNativeDownload(authenticatedApiUrl(`/api/workspaces/${encodeURIComponent(workspace.id)}/download?${params.toString()}`));
-  showToast(t("toast.download"));
 }
 
 function fileUrl(workspaceId, action, path, extra = {}) {

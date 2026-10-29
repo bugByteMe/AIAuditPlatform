@@ -317,6 +317,7 @@ const dictionaries = {
     "toast.send": "任务已提交，事件流已更新。",
     "toast.codexSettingsSaved": "Codex 设置已保存。",
     "toast.download": "已准备下载当前工作区的所选成果。",
+    "toast.downloadDelayed": "下载仍在准备中，请查看浏览器下载状态。",
     "toast.copySession": "已复制会话。",
     "toast.deleteSession": "已删除会话。",
     "toast.deleteWorkspace": "已删除工作区。",
@@ -350,6 +351,7 @@ const dictionaries = {
     "progress.processingUpload": "正在处理上传文件",
     "progress.committingUpload": "正在提交工作区",
     "progress.fork": "正在复刻工作区",
+    "progress.preparingDownload": "正在准备下载",
   },
   en: {
     "brand.subtitle": "Audit agent platform",
@@ -667,6 +669,7 @@ const dictionaries = {
     "toast.send": "Task submitted and event stream updated.",
     "toast.codexSettingsSaved": "Codex settings saved.",
     "toast.download": "Selected artifacts for this workspace are ready to download.",
+    "toast.downloadDelayed": "The download is still preparing. Check your browser's download status.",
     "toast.copySession": "Session copied.",
     "toast.deleteSession": "Session deleted.",
     "toast.deleteWorkspace": "Workspace deleted.",
@@ -700,6 +703,7 @@ const dictionaries = {
     "progress.processingUpload": "Processing uploaded files",
     "progress.committingUpload": "Committing workspace",
     "progress.fork": "Forking workspace",
+    "progress.preparingDownload": "Preparing download",
   },
 };
 

@@ -197,6 +197,12 @@ class WorkspaceStoreTest(unittest.TestCase):
     with self.assertRaises(StorageError):
       normalize_relative_path("/absolute.txt")
 
+  def test_blocked_upload_suffix_does_not_block_workspace_paths(self) -> None:
+    self.assertEqual(normalize_relative_path("scripts/reconcile.sh"), "scripts/reconcile.sh")
+    with self.assertRaises(StorageError) as context:
+      self.store.create_workspace(OWNER, "Blocked", False, [UploadedFile("scripts/reconcile.sh", b"#!/bin/sh\n")])
+    self.assertEqual(context.exception.code, "blocked_file_type")
+
   def test_multipart_upload_rejects_unsafe_relative_path(self) -> None:
     boundary = "test-boundary"
     body = (
@@ -471,6 +477,22 @@ class WorkspaceStoreTest(unittest.TestCase):
         manifest_name = next(name for name in names if name.endswith("/manifest.json"))
         manifest = json.loads(archive.read(manifest_name).decode("utf-8"))
         self.assertEqual([item["path"] for item in manifest["included"]], ["output.txt"])
+    finally:
+      bundle_path.unlink(missing_ok=True)
+
+  def test_agent_created_shell_script_can_be_downloaded(self) -> None:
+    workspace = self.create_workspace()
+    script = self.store.workspace_path(workspace["id"]) / "scripts" / "reconcile.sh"
+    script.parent.mkdir()
+    script.write_text("#!/bin/sh\necho reconciled\n", encoding="utf-8")
+    script.chmod(0o755)
+    self.store.refresh_artifacts(workspace["id"], OWNER)
+
+    _, bundle_path = self.store.build_download_zip(workspace["id"], OWNER, "changes", ["scripts/reconcile.sh"])
+    try:
+      with zipfile.ZipFile(bundle_path) as archive:
+        script_name = next(name for name in archive.namelist() if name.endswith("/files/scripts/reconcile.sh"))
+        self.assertEqual(archive.read(script_name), b"#!/bin/sh\necho reconciled\n")
     finally:
       bundle_path.unlink(missing_ok=True)
 

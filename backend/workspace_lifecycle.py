@@ -21,13 +21,13 @@ from workspace_database import WorkspaceDatabase
 from workspace_common import (
   BLOCKED_SUFFIXES, MAX_FILE_BYTES, MAX_FILE_COUNT, MAX_TEXT_PREVIEW_BYTES, MAX_WORKSPACE_BYTES,
   OFFICE_SUFFIXES, TEXT_SUFFIXES, StorageError, UploadedFile, ensure_under_root, generated_id, human_size,
-  normalize_relative_path, now_string,
+  normalize_relative_path, normalize_upload_relative_path, now_string,
 )
 
 class WorkspaceLifecycleMixin:
   def create_workspace(self, user: dict, name: str, shared: bool, files: list[UploadedFile]) -> dict:
     with self.coordination_locks.hold(f"group:{user.get('groupId') or user.get('group') or user['username']}"):
-      upload_sizes = {normalize_relative_path(item.path): len(item.content) for item in files}
+      upload_sizes = {normalize_upload_relative_path(item.path): len(item.content) for item in files}
       self.assert_group_quota(user, sum(upload_sizes.values()))
       return self._create_workspace(user, name, shared, files)
 
@@ -41,7 +41,7 @@ class WorkspaceLifecycleMixin:
     total = 0
     try:
       for item in files:
-        relative = normalize_relative_path(item.path)
+        relative = normalize_upload_relative_path(item.path)
         size = len(item.content)
         if size > MAX_FILE_BYTES:
           raise StorageError("file_too_large", f"{relative} exceeds the per-file limit")
@@ -133,7 +133,7 @@ class WorkspaceLifecycleMixin:
         if path.is_file()
       }
       for item in files:
-        sizes[normalize_relative_path(item.path)] = len(item.content)
+        sizes[normalize_upload_relative_path(item.path)] = len(item.content)
       projected_size = sum(sizes.values())
       quota_owner = self.workspace_quota_owner(workspace, user)
       self.assert_group_quota(quota_owner, max(0, projected_size - int(workspace.get("sizeBytes") or 0)), metadata)
@@ -158,7 +158,7 @@ class WorkspaceLifecycleMixin:
     total_size = sum(sizes.values())
     normalized_files: list[tuple[str, UploadedFile]] = []
     for item in files:
-      relative = normalize_relative_path(item.path)
+      relative = normalize_upload_relative_path(item.path)
       size = len(item.content)
       if size > MAX_FILE_BYTES:
         raise StorageError("file_too_large", f"{relative} exceeds the per-file limit")
