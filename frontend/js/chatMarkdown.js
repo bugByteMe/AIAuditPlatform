@@ -8,10 +8,13 @@ function unescapeHtml(value) {
 }
 
 export function workspaceLinkPath(href) {
-  if (!href.startsWith("/workspace/")) return null;
+  const rawHref = String(href || "").trim().replace(/^<|>$/g, "");
+  const prefix = ["/workspace/", "sandbox:/workspace/", "file:///workspace/"]
+    .find((candidate) => rawHref.startsWith(candidate));
+  if (!prefix) return null;
   let path;
   try {
-    path = decodeURIComponent(href.slice("/workspace/".length));
+    path = decodeURIComponent(rawHref.slice(prefix.length));
   } catch {
     return null;
   }
@@ -157,12 +160,19 @@ function inlineMarkdown(value) {
   source = escapeHtml(source)
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/\*([^*]+)\*/g, "<em>$1</em>")
-    .replace(/\[([^\]]+)\]\(((?:https?:\/\/|\/workspace\/)[^)\s]+)\)/g, (match, label, escapedHref) => {
-      if (escapedHref.startsWith("/workspace/")) {
-        const path = workspaceLinkPath(unescapeHtml(escapedHref));
-        return path === null ? match : `<a href="#" data-workspace-file="${escapeHtml(path)}">${label}</a>`;
+    .replace(/\[([^\]]+)\]\(\s*(&lt;|<)?((?:https?:\/\/|\/workspace\/|sandbox:\/workspace\/|file:\/\/\/workspace\/)[^)\n]+?)(&gt;|>)?\s*\)/g, (match, label, open, escapedHref, close) => {
+      if (Boolean(open) !== Boolean(close)) return match;
+      const href = unescapeHtml(escapedHref).trim();
+      const path = workspaceLinkPath(href);
+      if (path !== null) return `<a href="#" data-workspace-file="${escapeHtml(path)}">${label}</a>`;
+      if (/\s/.test(href)) return match;
+      try {
+        const external = new URL(href);
+        if (!["http:", "https:"].includes(external.protocol)) return match;
+      } catch {
+        return match;
       }
-      return `<a href="${escapedHref}" target="_blank" rel="noreferrer">${label}</a>`;
+      return `<a href="${escapeHtml(href)}" target="_blank" rel="noreferrer">${label}</a>`;
     });
   return source.replace(/\u0000(\d+)\u0000/g, (match, index) => protectedItems[Number(index)] || "");
 }

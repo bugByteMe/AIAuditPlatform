@@ -185,8 +185,11 @@ event payload is available. Event rendering follows new output only when the
 reader is already near the bottom; otherwise it preserves the visible event
 anchor across refreshes.
 
-Assistant Markdown links to `/workspace/<relative-file-path>` appear as download
-links. The browser resolves them against the selected workspace at click time
+Assistant Markdown links rooted at `/workspace/<relative-file-path>` appear as
+download links. Live output may express the same root as `/workspace/`,
+`sandbox:/workspace/`, or `file:///workspace/`, and may use Markdown angle
+brackets or unescaped spaces; the browser normalizes these forms to one validated
+workspace-relative path. The browser resolves it against the selected workspace at click time
 and uses the authenticated workspace raw-file endpoint with `download=1`;
 the runner's `/workspace` path is never served directly. Invalid or escaping
 paths remain plain text, and the endpoint still checks workspace access and

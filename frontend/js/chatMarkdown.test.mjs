@@ -15,8 +15,19 @@ test("workspace links preserve encoded paths and escape labels and filenames", (
   assert.equal(workspaceLinkPath("/workspace/reports/My%20File.xlsx"), "reports/My File.xlsx");
 });
 
+test("new live chats normalize safe workspace sandbox links and unescaped spaces", () => {
+  for (const href of [
+    "sandbox:/workspace/reports/New report.xlsx",
+    "file:///workspace/reports/New report.xlsx",
+    "</workspace/reports/New report.xlsx>",
+  ]) {
+    const html = markdownToHtml(`[download](${href})`);
+    assert.match(html, /data-workspace-file="reports\/New report\.xlsx"/);
+  }
+});
+
 test("unsafe or unrelated paths never become workspace downloads", () => {
-  for (const path of ["/workspace/../secret", "/workspace/%2e%2e/secret", "/workspace/%2fetc/passwd", "/workspace/a%5cb", "/workspace/a//b", "/workspace/%ZZ", "/workspace/"]) {
+  for (const path of ["/workspace/../secret", "/workspace/%2e%2e/secret", "/workspace/%2fetc/passwd", "/workspace/a%5cb", "/workspace/a//b", "/workspace/%ZZ", "/workspace/", "sandbox:/other/secret", "file:///etc/passwd"]) {
     assert.equal(workspaceLinkPath(path), null);
     assert.doesNotMatch(markdownToHtml(`[bad](${path})`), /data-workspace-file=/);
   }
