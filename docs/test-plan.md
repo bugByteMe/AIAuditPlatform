@@ -5,6 +5,20 @@
 - A user cannot open, chat against, or download artifacts from another user's private workspace.
 - A group member can access a group-shared workspace.
 - A user outside the group cannot access a group-shared workspace.
+- A selected active group member can access a restricted workspace, while an
+  unselected member of the same group cannot.
+- A restricted or whole-group collaborator can upload and delete files, subject
+  to the same write locks, upload policy, path checks, and owner-group quota as
+  the owner.
+- A collaborator cannot rename/delete the workspace, change access, or change
+  the exclusive run-lock setting. A group admin receives no implicit exception.
+- Restricted access rejects empty selections and pending, disabled, deleted,
+  owner, or out-of-group account IDs.
+- Changing access takes effect for subsequent requests without terminating an
+  already active run. A fork is private and copies no selected-user grants.
+- Moving an account to another group removes its grants; owned workspaces also
+  become private in the new group and clear all selected-user grants. Group
+  renames update workspace labels.
 - A platform admin can list/open private workspaces in other groups, rename, fork, share/unshare, delete, edit files, and create/update/run/fork/delete chats there; the session summary identifies the creator.
 - Cross-group file changes obey the workspace owner's group quota, run-lock setting changes remain owner-only, and active-run locks still block incompatible workspace mutations.
 - A disabled user cannot start or resume a chat.
@@ -77,6 +91,8 @@
 - Worker upload endpoints require cluster authentication and no worker credential or internal upload URL is returned to browsers.
 - Workspace fork creates an independent workspace from the selected snapshot.
 - Group-shared workspace is visible to group members.
+- Restricted workspace listing is database-filtered to its selected group
+  members, owner, and system/platform administrators.
 - Snapshot comparison detects added, modified, and deleted files.
 - Repeated checkpoints retain current plus at most one previous distinct content version independently for each file path.
 - Deleting a file retains its last content as the previous version; deleting the workspace collects that blob unless another workspace references it.

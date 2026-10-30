@@ -57,6 +57,67 @@ class WorkspaceCoreMixin:
 
   def set_account_provider(self, provider: Callable[[], tuple[dict[str, dict], dict[str, dict]]]) -> None:
     self.account_provider = provider
+    users, _ = provider()
+    self.database.backfill_workspace_groups({
+      str(user.get("username") or username): (str(user.get("groupId") or ""), str(user.get("group") or ""))
+      for username, user in users.items()
+    })
+
+  @staticmethod
+  def workspace_visibility(workspace: dict) -> str:
+    value = str(workspace.get("visibility") or "")
+    return value if value in {"private", "restricted", "group"} else ("group" if workspace.get("shared") else "private")
+
+  def active_group_members(self, group_id: str, *, exclude_username: str = "") -> list[dict]:
+    users, _ = self.account_provider() if self.account_provider else ({}, {})
+    members = []
+    for username, account in users.items():
+      if str(account.get("groupId") or "") != group_id or username == exclude_username:
+        continue
+      if not bool(account.get("enabled", True)) or str(account.get("status") or "active") != "active":
+        continue
+      account_id = str(account.get("id") or "")
+      if not account_id:
+        continue
+      members.append({
+        "id": account_id,
+        "username": str(account.get("username") or username),
+        "displayName": str(account.get("displayName") or account.get("username") or username),
+      })
+    return sorted(members, key=lambda item: (item["displayName"].casefold(), item["username"].casefold()))
+
+  def validate_workspace_access(self, owner: dict, visibility: str, user_ids: list | set | tuple | None) -> set[str]:
+    if visibility not in {"private", "restricted", "group"}:
+      raise StorageError("bad_request", "workspace visibility is invalid")
+    group_id = str(owner.get("groupId") or "")
+    requested = {str(value) for value in (user_ids or []) if str(value)}
+    if not group_id and visibility != "private":
+      raise StorageError("bad_request", "an ungrouped workspace must be private")
+    if visibility != "restricted":
+      if requested:
+        raise StorageError("bad_request", "userIds are allowed only for restricted visibility")
+      return set()
+    eligible = {item["id"] for item in self.active_group_members(group_id, exclude_username=str(owner.get("username") or ""))}
+    if not requested:
+      raise StorageError("bad_request", "restricted visibility requires at least one user")
+    if requested - eligible:
+      raise StorageError("bad_request", "workspace access includes an ineligible user")
+    return requested
+
+  def can_manage_workspace_access(self, user: dict, workspace: dict) -> bool:
+    return workspace.get("owner") == user.get("username") or user.get("role") in {"system_admin", "platform_admin"}
+
+  def workspace_access_config(self, workspace: dict, user: dict) -> dict:
+    if not self.can_manage_workspace_access(user, workspace):
+      raise StorageError("forbidden", "only the owner or an administrator can manage workspace access")
+    selected_ids = self.database.access_grant_ids(workspace["id"])
+    candidates = self.active_group_members(str(workspace.get("groupId") or ""), exclude_username=str(workspace.get("owner") or ""))
+    return {
+      "visibility": self.workspace_visibility(workspace),
+      "group": {"id": str(workspace.get("groupId") or ""), "name": str(workspace.get("group") or "")},
+      "selectedUsers": [item for item in candidates if item["id"] in selected_ids],
+      "candidates": candidates,
+    }
 
   def usage_summaries(self, metadata: dict | None = None) -> tuple[dict[str, dict], dict[str, dict]]:
     users, groups = self.account_provider() if self.account_provider else ({}, {})
@@ -245,7 +306,17 @@ class WorkspaceCoreMixin:
       return True
     if workspace["owner"] == user["username"]:
       return True
-    return bool(workspace.get("shared")) and workspace.get("group") and workspace.get("group") == user.get("group")
+    group_matches = (
+      bool(workspace.get("groupId")) and workspace.get("groupId") == user.get("groupId")
+    ) or (
+      not workspace.get("groupId") and workspace.get("group") and workspace.get("group") == user.get("group")
+    )
+    if not group_matches:
+      return False
+    visibility = self.workspace_visibility(workspace)
+    if visibility == "group":
+      return True
+    return visibility == "restricted" and str(user.get("id") or "") in self.database.access_grant_ids(workspace["id"])
 
   def user_can_collaborate(self, user: dict, workspace: dict) -> bool:
     return self.user_can_access(user, workspace)
@@ -257,6 +328,8 @@ class WorkspaceCoreMixin:
   def list_workspaces(self, user: dict) -> list[dict]:
     workspaces = self.database.list_workspace_headers(
       username=str(user.get("username") or ""),
+      account_id=str(user.get("id") or ""),
+      group_id=str(user.get("groupId") or ""),
       group_name=str(user.get("group") or ""),
       system_admin=user.get("role") in {"system_admin", "platform_admin"},
     )
@@ -281,9 +354,10 @@ class WorkspaceCoreMixin:
   def public_workspace_summary(self, workspace: dict) -> dict:
     return {
       "id": workspace["id"], "name": workspace["name"], "owner": workspace["owner"],
-      "group": workspace.get("group", ""), "fileCount": workspace.get("fileCount", 0),
+      "group": workspace.get("group", ""), "groupId": workspace.get("groupId", ""), "fileCount": workspace.get("fileCount", 0),
       "sizeBytes": workspace.get("sizeBytes", 0), "size": human_size(workspace.get("sizeBytes", 0)),
-      "updated": workspace["updated"], "shared": bool(workspace.get("shared")),
+      "updated": workspace["updated"], "shared": self.workspace_visibility(workspace) == "group",
+      "visibility": self.workspace_visibility(workspace), "accessCount": int(workspace.get("accessCount") or 0),
       "locked": bool(workspace.get("locked")), "runLockEnabled": bool(workspace.get("runLockEnabled")),
       "activeRunCount": 1 if workspace.get("activeRunId") else 0,
       "sessionCount": int(workspace.get("sessionCount") or 0),
@@ -303,11 +377,14 @@ class WorkspaceCoreMixin:
       "name": workspace["name"],
       "owner": workspace["owner"],
       "group": workspace.get("group", ""),
+      "groupId": workspace.get("groupId", ""),
       "fileCount": workspace.get("fileCount", 0),
       "sizeBytes": workspace.get("sizeBytes", 0),
       "size": human_size(workspace.get("sizeBytes", 0)),
       "updated": workspace["updated"],
-      "shared": bool(workspace.get("shared")),
+      "shared": self.workspace_visibility(workspace) == "group",
+      "visibility": self.workspace_visibility(workspace),
+      "accessCount": len(self.database.access_grant_ids(workspace_id)),
       "locked": bool(workspace.get("locked")),
       "runLockEnabled": bool(workspace.get("runLockEnabled")),
       "activeRunCount": active_run_count,

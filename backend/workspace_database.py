@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 
-SCHEMA_VERSION = 3
+SCHEMA_VERSION = 4
 
 
 class WorkspaceDatabase:
@@ -56,6 +56,8 @@ class WorkspaceDatabase:
           name TEXT NOT NULL,
           owner TEXT NOT NULL,
           group_name TEXT NOT NULL DEFAULT '',
+          group_id TEXT NOT NULL DEFAULT '',
+          visibility TEXT NOT NULL DEFAULT 'private',
           shared INTEGER NOT NULL DEFAULT 0,
           locked INTEGER NOT NULL DEFAULT 0,
           run_lock_enabled INTEGER NOT NULL DEFAULT 0,
@@ -80,6 +82,15 @@ class WorkspaceDatabase:
 
         CREATE INDEX IF NOT EXISTS workspaces_shared_group
           ON workspaces(shared, group_name);
+
+        CREATE TABLE IF NOT EXISTS workspace_access_grants (
+          workspace_id TEXT NOT NULL REFERENCES workspaces(id) ON DELETE CASCADE,
+          account_id TEXT NOT NULL,
+          PRIMARY KEY (workspace_id, account_id)
+        );
+
+        CREATE INDEX IF NOT EXISTS workspace_access_account
+          ON workspace_access_grants(account_id, workspace_id);
 
         CREATE TABLE IF NOT EXISTS snapshots (
           id TEXT PRIMARY KEY,
@@ -129,7 +140,7 @@ class WorkspaceDatabase:
       row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
       if row is None:
         connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
-      elif int(row["version"]) in {1, 2}:
+      elif int(row["version"]) in {1, 2, 3}:
         columns = {column[1] for column in connection.execute("PRAGMA table_info(workspaces)")}
         if "run_lock_enabled" not in columns:
           connection.execute("ALTER TABLE workspaces ADD COLUMN run_lock_enabled INTEGER NOT NULL DEFAULT 0")
@@ -137,9 +148,15 @@ class WorkspaceDatabase:
         for name in ("mtime_ns", "ctime_ns", "device", "inode"):
           if name not in file_columns:
             connection.execute(f"ALTER TABLE workspace_file_versions ADD COLUMN {name} INTEGER NOT NULL DEFAULT 0")
+        if "group_id" not in columns:
+          connection.execute("ALTER TABLE workspaces ADD COLUMN group_id TEXT NOT NULL DEFAULT ''")
+        if "visibility" not in columns:
+          connection.execute("ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
+          connection.execute("UPDATE workspaces SET visibility = CASE WHEN shared = 1 THEN 'group' ELSE 'private' END")
         connection.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))
       elif int(row["version"]) != SCHEMA_VERSION:
         raise RuntimeError(f"unsupported workspace database schema version: {row['version']}")
+      connection.execute("CREATE INDEX IF NOT EXISTS workspaces_visibility_group ON workspaces(visibility, group_id)")
 
   @staticmethod
   def _file_entry(row: sqlite3.Row) -> dict:
@@ -158,6 +175,7 @@ class WorkspaceDatabase:
   def _workspace_entry(row: sqlite3.Row) -> dict:
     workspace = {
       "id": row["id"], "name": row["name"], "owner": row["owner"], "group": row["group_name"],
+      "groupId": row["group_id"], "visibility": row["visibility"],
       "shared": bool(row["shared"]), "locked": bool(row["locked"]),
       "runLockEnabled": bool(row["run_lock_enabled"]), "created": row["created"], "updated": row["updated"],
       "fileCount": int(row["file_count"]), "sizeBytes": int(row["size_bytes"]),
@@ -167,6 +185,8 @@ class WorkspaceDatabase:
     }
     if "session_count" in row.keys():
       workspace["sessionCount"] = int(row["session_count"] or 0)
+    if "access_count" in row.keys():
+      workspace["accessCount"] = int(row["access_count"] or 0)
     if row["active_run_id"]:
       workspace["activeRunId"] = row["active_run_id"]
     if row["active_upload_id"]:
@@ -178,15 +198,23 @@ class WorkspaceDatabase:
       row = connection.execute("SELECT * FROM workspaces WHERE id = ?", (workspace_id,)).fetchone()
       return self._workspace_entry(row) if row else None
 
-  def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool) -> list[dict]:
+  def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool, account_id: str = "", group_id: str = "") -> list[dict]:
     with closing(self.connect()) as connection:
-      columns = "w.*, (SELECT COUNT(*) FROM workspace_sessions ws WHERE ws.workspace_id = w.id) AS session_count"
+      columns = "w.*, (SELECT COUNT(*) FROM workspace_sessions ws WHERE ws.workspace_id = w.id) AS session_count, (SELECT COUNT(*) FROM workspace_access_grants wag WHERE wag.workspace_id = w.id) AS access_count"
       if system_admin:
         rows = connection.execute(f"SELECT {columns} FROM workspaces w ORDER BY w.updated DESC")
       else:
         rows = connection.execute(
-          f"SELECT {columns} FROM workspaces w WHERE w.owner = ? OR (w.shared = 1 AND w.group_name <> '' AND w.group_name = ?) ORDER BY w.updated DESC",
-          (username, group_name),
+          f"""SELECT {columns} FROM workspaces w
+          WHERE w.owner = ?
+             OR (w.visibility = 'group' AND ((w.group_id <> '' AND w.group_id = ?) OR (w.group_id = '' AND w.group_name <> '' AND w.group_name = ?)))
+             OR (w.visibility = 'restricted'
+               AND ((w.group_id <> '' AND w.group_id = ?) OR (w.group_id = '' AND w.group_name <> '' AND w.group_name = ?))
+               AND EXISTS (
+               SELECT 1 FROM workspace_access_grants wag WHERE wag.workspace_id = w.id AND wag.account_id = ?
+             ))
+          ORDER BY w.updated DESC""",
+          (username, group_id, group_name, group_id, group_name, account_id),
         )
       return [self._workspace_entry(row) for row in rows]
 
@@ -231,6 +259,8 @@ class WorkspaceDatabase:
           "name": row["name"],
           "owner": row["owner"],
           "group": row["group_name"],
+          "groupId": row["group_id"],
+          "visibility": row["visibility"],
           "shared": bool(row["shared"]),
           "locked": bool(row["locked"]),
           "runLockEnabled": bool(row["run_lock_enabled"]),
@@ -326,13 +356,13 @@ class WorkspaceDatabase:
       connection.execute(
         """
         INSERT INTO workspaces(
-          id, name, owner, group_name, shared, locked, run_lock_enabled, created, updated, file_count, size_bytes,
+          id, name, owner, group_name, group_id, visibility, shared, locked, run_lock_enabled, created, updated, file_count, size_bytes,
           latest_snapshot_id, initial_snapshot_id, source_workspace_id, source_snapshot_id,
           active_run_id, active_upload_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
-          name=excluded.name, owner=excluded.owner, group_name=excluded.group_name,
-          shared=excluded.shared, locked=excluded.locked, run_lock_enabled=excluded.run_lock_enabled, created=excluded.created,
+          name=excluded.name, owner=excluded.owner,
+          locked=excluded.locked, run_lock_enabled=excluded.run_lock_enabled, created=excluded.created,
           updated=excluded.updated, file_count=excluded.file_count, size_bytes=excluded.size_bytes,
           latest_snapshot_id=excluded.latest_snapshot_id, initial_snapshot_id=excluded.initial_snapshot_id,
           source_workspace_id=excluded.source_workspace_id, source_snapshot_id=excluded.source_snapshot_id,
@@ -340,7 +370,9 @@ class WorkspaceDatabase:
         """,
         (
           workspace_id, str(workspace.get("name") or "Untitled workspace"), str(workspace.get("owner") or ""),
-          str(workspace.get("group") or ""), int(bool(workspace.get("shared"))), int(bool(workspace.get("locked"))),
+          str(workspace.get("group") or ""), str(workspace.get("groupId") or ""),
+          str(workspace.get("visibility") or ("group" if workspace.get("shared") else "private")),
+          int((workspace.get("visibility") or ("group" if workspace.get("shared") else "private")) == "group"), int(bool(workspace.get("locked"))),
           int(bool(workspace.get("runLockEnabled"))), str(workspace.get("created") or workspace.get("updated") or ""),
           str(workspace.get("updated") or workspace.get("created") or ""), int(workspace.get("fileCount") or 0),
           int(workspace.get("sizeBytes") or 0), workspace.get("latestSnapshotId"), workspace.get("initialSnapshotId"),
@@ -429,6 +461,64 @@ class WorkspaceDatabase:
         "SELECT DISTINCT blob FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)
       )}
       return old_references - new_references
+
+  def access_grant_ids(self, workspace_id: str) -> set[str]:
+    with closing(self.connect()) as connection:
+      return {str(row[0]) for row in connection.execute(
+        "SELECT account_id FROM workspace_access_grants WHERE workspace_id = ?", (workspace_id,)
+      )}
+
+  def replace_access_grants(self, workspace_id: str, account_ids: set[str]) -> None:
+    with closing(self.connect()) as connection, connection:
+      connection.execute("DELETE FROM workspace_access_grants WHERE workspace_id = ?", (workspace_id,))
+      connection.executemany(
+        "INSERT INTO workspace_access_grants(workspace_id, account_id) VALUES (?, ?)",
+        [(workspace_id, account_id) for account_id in sorted(account_ids)],
+      )
+
+  def replace_workspace_access(self, workspace_id: str, visibility: str, account_ids: set[str]) -> None:
+    with closing(self.connect()) as connection, connection:
+      connection.execute("BEGIN IMMEDIATE")
+      connection.execute(
+        "UPDATE workspaces SET visibility = ?, shared = ? WHERE id = ?",
+        (visibility, int(visibility == "group"), workspace_id),
+      )
+      connection.execute("DELETE FROM workspace_access_grants WHERE workspace_id = ?", (workspace_id,))
+      connection.executemany(
+        "INSERT INTO workspace_access_grants(workspace_id, account_id) VALUES (?, ?)",
+        [(workspace_id, account_id) for account_id in sorted(account_ids)],
+      )
+
+  def remove_account_access(self, account_id: str) -> None:
+    with closing(self.connect()) as connection, connection:
+      connection.execute("DELETE FROM workspace_access_grants WHERE account_id = ?", (account_id,))
+
+  def transfer_owner_workspaces(self, username: str, group_id: str, group_name: str) -> None:
+    with closing(self.connect()) as connection, connection:
+      connection.execute("BEGIN IMMEDIATE")
+      workspace_ids = [str(row[0]) for row in connection.execute("SELECT id FROM workspaces WHERE owner = ?", (username,))]
+      connection.execute(
+        "UPDATE workspaces SET group_id = ?, group_name = ?, visibility = 'private', shared = 0 WHERE owner = ?",
+        (group_id, group_name, username),
+      )
+      if workspace_ids:
+        placeholders = ",".join("?" for _ in workspace_ids)
+        connection.execute(f"DELETE FROM workspace_access_grants WHERE workspace_id IN ({placeholders})", workspace_ids)
+
+  def rename_workspace_group(self, group_id: str, group_name: str) -> None:
+    with closing(self.connect()) as connection, connection:
+      connection.execute(
+        "UPDATE workspaces SET group_name = ? WHERE group_id = ?",
+        (group_name, group_id),
+      )
+
+  def backfill_workspace_groups(self, owner_groups: dict[str, tuple[str, str]]) -> None:
+    with closing(self.connect()) as connection, connection:
+      for username, (group_id, group_name) in owner_groups.items():
+        connection.execute(
+          "UPDATE workspaces SET group_id = ?, group_name = ? WHERE owner = ? AND group_id = ''",
+          (group_id, group_name, username),
+        )
 
   def delete_workspace_state(self, workspace_id: str) -> tuple[dict | None, set[str]]:
     with closing(self.connect()) as connection, connection:

@@ -51,7 +51,8 @@ async function openApp(role = "platform_admin", viewport = { width: 1280, height
   });
   await page.goto(`http://127.0.0.1:${server.address().port}/`);
   await page.waitForFunction(() => window.aiAuditAppReady && !document.querySelector("#app-shell").classList.contains("hidden"));
-  await page.waitForFunction(() => document.querySelector("#workspace-overview-title").textContent === "示例小组的工作区");
+  const expectedTitle = role === "user" ? "示例小组的工作区" : "工作区";
+  await page.waitForFunction((title) => document.querySelector("#workspace-overview-title").textContent === title, expectedTitle);
   return { page, requests };
 }
 
@@ -237,8 +238,10 @@ test("workspace and admin user rows stay dense on desktop without overflowing na
 });
 
 test("platform administrators can manage workspaces and chats outside their group", async () => {
-  const { page, requests } = await openApp("platform_admin", { width: 1280, height: 900 }, { owner: "another.owner", shared: false });
+  const { page, requests } = await openApp("platform_admin", { width: 1280, height: 900 }, { owner: "another.owner", group: "Other group", shared: false });
   try {
+    assert.equal(await page.locator(".workspace-group").evaluate((element) => element.open), false);
+    await page.locator(".workspace-group > summary").click();
     await page.locator(".workspace-more > summary").click();
     for (const action of ["share", "fork", "delete"]) {
       assert.equal(await page.locator(`.workspace-more [data-action="${action}"]`).isVisible(), true);

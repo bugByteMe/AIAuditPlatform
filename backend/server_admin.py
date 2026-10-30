@@ -154,6 +154,7 @@ class AdminHandlerMixin:
       raise ValueError("liveRunLimit must be non-negative")
     if "name" in payload:
       group = ACCOUNT_STORE.update_group_name(group_id, str(payload.get("name") or ""))
+      WORKSPACE_STORE.database.rename_workspace_group(group_id, str(group["name"]))
       add_audit(actor["username"], "group name updated", f"{group_id} name={group['name']}")
     if "diskLimitBytes" in payload:
       group = ACCOUNT_STORE.update_group_disk_limit(group_id, disk_limit)
@@ -184,6 +185,8 @@ class AdminHandlerMixin:
         ACCOUNT_STORE.save_user(user)
         raise StorageError("budget_provider_unavailable", f"MicuAPI key cleanup failed: {exc}") from exc
     removed_users, removed_pending = ACCOUNT_STORE.remove_accounts(user_ids)
+    for account_id in user_ids:
+      WORKSPACE_STORE.database.remove_account_access(account_id)
     self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
     add_audit(actor["username"], "account deleted", str(account["id"]))
     self.write_json({"deleted": {"accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
@@ -212,6 +215,8 @@ class AdminHandlerMixin:
           ACCOUNT_STORE.save_user(member)
         raise StorageError("budget_provider_unavailable", f"MicuAPI key cleanup failed: {exc}") from exc
     removed_group, removed_users, removed_pending = ACCOUNT_STORE.remove_group_and_accounts(group_id, user_ids)
+    for account_id in user_ids:
+      WORKSPACE_STORE.database.remove_account_access(account_id)
     self.invalidate_user_sessions({str(item.get("username")) for item in removed_users})
     add_audit(actor["username"], "group deleted", f"{group_id} accounts={len(removed_users) + len(removed_pending)}")
     self.write_json({"deleted": {"group": removed_group, "accounts": len(removed_users) + len(removed_pending), **deleted_resources}})
@@ -313,6 +318,7 @@ class AdminHandlerMixin:
           raise StorageError("protected_admin", "at least one system administrator must remain")
     stored_user = user
     user = dict(user)
+    previous_group_id = str(user.get("groupId") or "")
     was_enabled = bool(user.get("enabled", True))
     if "groupId" in payload:
       group_id = str(payload.get("groupId") or "")
@@ -340,6 +346,13 @@ class AdminHandlerMixin:
       except MicuApiError as exc:
         user["enabled"] = was_enabled
         raise StorageError("budget_provider_unavailable", str(exc)) from exc
+    if not is_pending and str(user.get("groupId") or "") != previous_group_id:
+      WORKSPACE_STORE.database.transfer_owner_workspaces(
+        str(user.get("username") or username), str(user.get("groupId") or ""), str(user.get("group") or ""),
+      )
+      WORKSPACE_STORE.database.remove_account_access(str(user.get("id") or ""))
+    if not is_pending and "enabled" in payload and not bool(user.get("enabled")):
+      WORKSPACE_STORE.database.remove_account_access(str(user.get("id") or ""))
     stored_user.update(user)
     if is_pending:
       ACCOUNT_STORE.save_pending(user)

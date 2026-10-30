@@ -14,6 +14,8 @@ class PostgresWorkspaceDatabase:
       "workspaces", self.metadata,
       Column("id", String(160), primary_key=True), Column("name", Text, nullable=False),
       Column("owner", String(255), nullable=False, index=True), Column("group_name", Text, nullable=False, default=""),
+      Column("group_id", String(160), nullable=False, default=""),
+      Column("visibility", String(32), nullable=False, default="private"),
       Column("shared", Boolean, nullable=False, default=False), Column("locked", Boolean, nullable=False, default=False),
       Column("run_lock_enabled", Boolean, nullable=False, default=False), Column("created", String(32), nullable=False),
       Column("updated", String(32), nullable=False, index=True), Column("file_count", Integer, nullable=False, default=0),
@@ -25,6 +27,11 @@ class PostgresWorkspaceDatabase:
       "workspace_sessions", self.metadata,
       Column("workspace_id", String(160), ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True),
       Column("session_id", String(160), primary_key=True), Column("ordinal", Integer, nullable=False),
+    )
+    self.workspace_access_grants = Table(
+      "workspace_access_grants", self.metadata,
+      Column("workspace_id", String(160), ForeignKey("workspaces.id", ondelete="CASCADE"), primary_key=True),
+      Column("account_id", String(160), primary_key=True),
     )
     self.snapshots = Table(
       "snapshots", self.metadata,
@@ -54,10 +61,15 @@ class PostgresWorkspaceDatabase:
     )
     Index("workspace_sessions_order", self.workspace_sessions.c.workspace_id, self.workspace_sessions.c.ordinal)
     Index("workspaces_shared_group", self.workspaces.c.shared, self.workspaces.c.group_name)
+    Index("workspace_access_account", self.workspace_access_grants.c.account_id, self.workspace_access_grants.c.workspace_id)
     self.metadata.create_all(self.engine)
     with self.engine.begin() as connection:
       for name in ("mtime_ns", "ctime_ns", "device", "inode"):
         connection.execute(text(f"ALTER TABLE workspace_file_versions ADD COLUMN IF NOT EXISTS {name} BIGINT NOT NULL DEFAULT 0"))
+      connection.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS group_id VARCHAR(160) NOT NULL DEFAULT ''"))
+      connection.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS visibility VARCHAR(32) NOT NULL DEFAULT 'private'"))
+      connection.execute(text("UPDATE workspaces SET visibility = CASE WHEN shared THEN 'group' ELSE 'private' END WHERE visibility = 'private' AND shared"))
+      connection.execute(text("CREATE INDEX IF NOT EXISTS workspaces_visibility_group ON workspaces(visibility, group_id)"))
 
   @staticmethod
   def _entry(row) -> dict:
@@ -73,7 +85,10 @@ class PostgresWorkspaceDatabase:
     return {
       "id": workspace["id"], "name": str(workspace.get("name") or "Untitled workspace"),
       "owner": str(workspace.get("owner") or ""), "group_name": str(workspace.get("group") or ""),
-      "shared": bool(workspace.get("shared")), "locked": bool(workspace.get("locked")),
+      "group_id": str(workspace.get("groupId") or ""),
+      "visibility": str(workspace.get("visibility") or ("group" if workspace.get("shared") else "private")),
+      "shared": str(workspace.get("visibility") or ("group" if workspace.get("shared") else "private")) == "group",
+      "locked": bool(workspace.get("locked")),
       "run_lock_enabled": bool(workspace.get("runLockEnabled")),
       "created": str(workspace.get("created") or workspace.get("updated") or ""),
       "updated": str(workspace.get("updated") or workspace.get("created") or ""),
@@ -87,6 +102,7 @@ class PostgresWorkspaceDatabase:
   def _workspace_entry(row) -> dict:
     item = {
       "id": row["id"], "name": row["name"], "owner": row["owner"], "group": row["group_name"],
+      "groupId": row["group_id"], "visibility": row["visibility"],
       "shared": bool(row["shared"]), "locked": bool(row["locked"]), "runLockEnabled": bool(row["run_lock_enabled"]),
       "created": row["created"], "updated": row["updated"], "fileCount": int(row["file_count"]),
       "sizeBytes": int(row["size_bytes"]), "latestSnapshotId": row["latest_snapshot_id"],
@@ -95,6 +111,8 @@ class PostgresWorkspaceDatabase:
     }
     if "session_count" in row:
       item["sessionCount"] = int(row["session_count"] or 0)
+    if "access_count" in row:
+      item["accessCount"] = int(row["access_count"] or 0)
     if row["active_run_id"]:
       item["activeRunId"] = row["active_run_id"]
     if row["active_upload_id"]:
@@ -106,15 +124,28 @@ class PostgresWorkspaceDatabase:
       row = connection.execute(select(self.workspaces).where(self.workspaces.c.id == workspace_id)).mappings().first()
       return self._workspace_entry(row) if row else None
 
-  def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool) -> list[dict]:
+  def list_workspace_headers(self, *, username: str, group_name: str, system_admin: bool, account_id: str = "", group_id: str = "") -> list[dict]:
     session_count = select(func.count()).where(
       self.workspace_sessions.c.workspace_id == self.workspaces.c.id
     ).correlate(self.workspaces).scalar_subquery().label("session_count")
-    statement = select(self.workspaces, session_count)
+    access_count = select(func.count()).where(
+      self.workspace_access_grants.c.workspace_id == self.workspaces.c.id
+    ).correlate(self.workspaces).scalar_subquery().label("access_count")
+    statement = select(self.workspaces, session_count, access_count)
     if not system_admin:
       statement = statement.where(or_(
         self.workspaces.c.owner == username,
-        and_(self.workspaces.c.shared.is_(True), self.workspaces.c.group_name != "", self.workspaces.c.group_name == group_name),
+        and_(self.workspaces.c.visibility == "group", or_(
+          and_(self.workspaces.c.group_id != "", self.workspaces.c.group_id == group_id),
+          and_(self.workspaces.c.group_id == "", self.workspaces.c.group_name != "", self.workspaces.c.group_name == group_name),
+        )),
+        and_(self.workspaces.c.visibility == "restricted", or_(
+          and_(self.workspaces.c.group_id != "", self.workspaces.c.group_id == group_id),
+          and_(self.workspaces.c.group_id == "", self.workspaces.c.group_name != "", self.workspaces.c.group_name == group_name),
+        ), select(1).where(
+          self.workspace_access_grants.c.workspace_id == self.workspaces.c.id,
+          self.workspace_access_grants.c.account_id == account_id,
+        ).exists()),
       ))
     statement = statement.order_by(self.workspaces.c.updated.desc())
     with self.engine.connect() as connection:
@@ -161,6 +192,7 @@ class PostgresWorkspaceDatabase:
       for row in workspace_rows:
         item = {
           "id": row["id"], "name": row["name"], "owner": row["owner"], "group": row["group_name"],
+          "groupId": row["group_id"], "visibility": row["visibility"],
           "shared": bool(row["shared"]), "locked": bool(row["locked"]), "runLockEnabled": bool(row["run_lock_enabled"]),
           "created": row["created"], "updated": row["updated"], "fileCount": int(row["file_count"]),
           "sizeBytes": int(row["size_bytes"]), "latestSnapshotId": row["latest_snapshot_id"],
@@ -235,7 +267,10 @@ class PostgresWorkspaceDatabase:
       values = self._workspace_values(workspace)
       statement = pg_insert(self.workspaces).values(**values)
       connection.execute(statement.on_conflict_do_update(
-        index_elements=[self.workspaces.c.id], set_={key: value for key, value in values.items() if key != "id"},
+        index_elements=[self.workspaces.c.id], set_={
+          key: value for key, value in values.items()
+          if key not in {"id", "group_id", "group_name", "visibility", "shared"}
+        },
       ))
       self._replace_sessions(connection, workspace)
       for snapshot in snapshots.values():
@@ -302,6 +337,61 @@ class PostgresWorkspaceDatabase:
       ).scalars())
       connection.execute(delete(self.workspaces).where(self.workspaces.c.id == workspace_id))
       return self._workspace_entry(row), candidates
+
+  def access_grant_ids(self, workspace_id: str) -> set[str]:
+    with self.engine.connect() as connection:
+      return set(connection.execute(select(self.workspace_access_grants.c.account_id).where(
+        self.workspace_access_grants.c.workspace_id == workspace_id
+      )).scalars())
+
+  def replace_access_grants(self, workspace_id: str, account_ids: set[str]) -> None:
+    with self.engine.begin() as connection:
+      connection.execute(delete(self.workspace_access_grants).where(self.workspace_access_grants.c.workspace_id == workspace_id))
+      if account_ids:
+        connection.execute(insert(self.workspace_access_grants), [
+          {"workspace_id": workspace_id, "account_id": account_id} for account_id in sorted(account_ids)
+        ])
+
+  def replace_workspace_access(self, workspace_id: str, visibility: str, account_ids: set[str]) -> None:
+    with self.engine.begin() as connection:
+      connection.execute(update(self.workspaces).where(self.workspaces.c.id == workspace_id).values(
+        visibility=visibility, shared=visibility == "group",
+      ))
+      connection.execute(delete(self.workspace_access_grants).where(self.workspace_access_grants.c.workspace_id == workspace_id))
+      if account_ids:
+        connection.execute(insert(self.workspace_access_grants), [
+          {"workspace_id": workspace_id, "account_id": account_id} for account_id in sorted(account_ids)
+        ])
+
+  def remove_account_access(self, account_id: str) -> None:
+    with self.engine.begin() as connection:
+      connection.execute(delete(self.workspace_access_grants).where(self.workspace_access_grants.c.account_id == account_id))
+
+  def transfer_owner_workspaces(self, username: str, group_id: str, group_name: str) -> None:
+    with self.engine.begin() as connection:
+      workspace_ids = list(connection.execute(select(self.workspaces.c.id).where(
+        self.workspaces.c.owner == username
+      ).with_for_update()).scalars())
+      connection.execute(update(self.workspaces).where(self.workspaces.c.owner == username).values(
+        group_id=group_id, group_name=group_name, visibility="private", shared=False,
+      ))
+      if workspace_ids:
+        connection.execute(delete(self.workspace_access_grants).where(
+          self.workspace_access_grants.c.workspace_id.in_(workspace_ids)
+        ))
+
+  def rename_workspace_group(self, group_id: str, group_name: str) -> None:
+    with self.engine.begin() as connection:
+      connection.execute(update(self.workspaces).where(
+        self.workspaces.c.group_id == group_id,
+      ).values(group_name=group_name))
+
+  def backfill_workspace_groups(self, owner_groups: dict[str, tuple[str, str]]) -> None:
+    with self.engine.begin() as connection:
+      for username, (group_id, group_name) in owner_groups.items():
+        connection.execute(update(self.workspaces).where(
+          self.workspaces.c.owner == username, self.workspaces.c.group_id == "",
+        ).values(group_id=group_id, group_name=group_name))
 
   @staticmethod
   def _file_values(workspace_id: str, path: str, slot: str, entry, snapshot_id: str | None) -> dict:

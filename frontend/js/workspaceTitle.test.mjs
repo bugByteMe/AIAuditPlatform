@@ -17,6 +17,8 @@ test("workspace title follows asynchronous user and group loading with safe fall
   assert.equal(workspaceTitle(user, [{ id: "example" }]), "工作区");
   assert.equal(workspaceTitle({ groupId: "example", group: "  " }), "工作区");
   assert.equal(workspaceTitle({ group: "stale" }), "工作区");
+  assert.equal(workspaceTitle({ role: "system_admin", groupId: "example", group: "示例小组" }), "工作区");
+  assert.equal(workspaceTitle({ role: "platform_admin", groupId: "example", group: "示例小组" }), "工作区");
 });
 
 test("group names are rendered as text and title is localized", () => {

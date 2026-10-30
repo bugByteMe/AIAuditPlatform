@@ -17,8 +17,10 @@ Users may belong to one group. Groups are used for shared workspace access, shar
 
 The system should support these roles:
 
-- User: can create workspaces, use chat, access permitted shared workspaces, fork workspaces, and download permitted artifacts.
-- Group admin: can inspect group usage and manage group workspace access if enabled.
+- User: can create workspaces and, in workspaces they can access, use chat,
+  fork, download artifacts, and upload or delete workspace files.
+- Group admin: has the same workspace permissions as a user; the role does not
+  implicitly grant access-management authority.
 - System admin: can create users and groups, set budgets, disable accounts or groups, inspect usage, and view audit logs.
 - Platform admin (`platform_admin`): can list users/groups, assign user group membership, create/delete groups, and edit group names and concurrent live-run limits. Platform admins can list, open, rename, fork, share, delete, and edit files and chats in every workspace, including private ones outside their group. The owner's exclusive run-lock setting remains owner-only. Platform admins do not gain system-admin budget, invitation, worker, or audit-log privileges.
 
@@ -42,6 +44,13 @@ system-admin endpoints remain system-only. New roles must be one of `user`,
 `group_admin`, `platform_admin`, `system_admin`; unknown stored roles retain no
 management privileges. Existing role storage needs no schema migration.
 Role changes cannot demote the last system administrator.
+
+Workspace access management is separate from account roles. A workspace owner
+or system/platform administrator chooses private, selected-group-member, or
+whole-group visibility. Selected users are stored by immutable account ID and
+must be active, enabled members of the owner's current group. When an owner
+moves groups, their workspaces become private in the new group and existing
+selected-user grants are removed.
 
 The user settings dialog exposes a localized role selector only to system
 administrators. Platform admins see group assignment and group name/concurrency

@@ -98,12 +98,13 @@ class UploadManager:
       metadata = self.store.empty_metadata()
       parent_files, workspace_id, reserved = {}, generated_id("ws"), total
       workspace, quota_user = None, user
+      visibility, access_user_ids = "private", set()
       if mode == "append":
         workspace_id = str(payload.get("workspaceId") or "")
         metadata = self.store.load_workspace_metadata(workspace_id)
         workspace = self.store.get_workspace_from_metadata(metadata, workspace_id, user)
         if not self.store.user_can_mutate_workspace(user, workspace):
-          raise StorageError("forbidden", "only the owner or an administrator can add files")
+          raise StorageError("forbidden", "workspace file access denied")
         if destination:
           root = self.store.workspace_path(workspace_id)
           target = root
@@ -126,8 +127,11 @@ class UploadManager:
           raise StorageError("workspace_too_large", "workspace exceeds the total size limit")
         reserved = max(0, projected_size - int(workspace.get("sizeBytes") or 0))
         quota_user = self.store.workspace_quota_owner(workspace, user)
-      elif total > self.settings.max_workspace_bytes:
-        raise StorageError("workspace_too_large", "workspace exceeds the total size limit")
+      else:
+        if total > self.settings.max_workspace_bytes:
+          raise StorageError("workspace_too_large", "workspace exceeds the total size limit")
+        visibility = str(payload.get("visibility") or ("group" if payload.get("shared") else "private"))
+        access_user_ids = self.store.validate_workspace_access(user, visibility, payload.get("userIds"))
       group_id = str(quota_user.get("groupId") or "")
       pending = self.database.active_reserved_bytes(group_id, ACTIVE_UPLOAD_STATES)
       self.store.assert_group_quota(quota_user, reserved + pending, metadata)
@@ -140,7 +144,8 @@ class UploadManager:
       session = {
         "id": upload_id, "owner": user["username"], "group": user.get("group", ""), "groupId": group_id,
         "mode": mode, "workspaceId": workspace_id, "name": str(payload.get("name") or "").strip() or "Untitled workspace",
-        "shared": bool(payload.get("shared")), "files": files, "parentFiles": parent_files,
+        "visibility": visibility, "userIds": sorted(access_user_ids), "shared": visibility == "group",
+        "files": files, "parentFiles": parent_files,
         "parentSnapshotId": workspace.get("latestSnapshotId") if workspace else None, "snapshotId": snapshot_id,
         "reservedBytes": reserved, "workerId": node_id, "reservationHeld": bool(node_id),
         "status": "uploading", "createdAt": now, "updatedAt": now,

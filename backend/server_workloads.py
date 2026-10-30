@@ -115,6 +115,9 @@ def classify_request(method: str, path: str) -> tuple[str | None, str]:
   if parts[:2] == ["api", "uploads"]:
     return "upload", "uploads"
 
+  if parts == ["api", "workspaces"] and method == "POST":
+    return "file", "workspace.create"
+
   if parts[:2] == ["api", "workspaces"] and len(parts) >= 3:
     action = parts[3] if len(parts) > 3 else ""
     subaction = parts[4] if len(parts) > 4 else ""

@@ -413,6 +413,8 @@ function showLogin() {
   state.userBalanceLoading = false;
   state.workspaceQuery = "";
   document.querySelector("#workspace-search").value = "";
+  state.adminQuery = "";
+  document.querySelector("#admin-search").value = "";
   state.recharge = null;
   state.rechargeImport = null;
   document.querySelector("#recharge-base-url").value = "";
@@ -421,6 +423,7 @@ function showLogin() {
   rechargeKey.type = "password";
   document.querySelector("#recharge-key-visibility").textContent = t("recharge.show");
   document.querySelector("#recharge-import-modal").classList.add("hidden");
+  document.querySelector("#workspace-access-modal").classList.add("hidden");
   document.querySelector("#auth-screen").classList.remove("hidden");
   document.querySelector("#app-shell").classList.add("hidden");
   setAuthMode("login");
@@ -457,28 +460,151 @@ async function forkWorkspace(index = state.selectedWorkspace) {
   }
 }
 
-async function createWorkspaceFromModal(form) {
-  if (state.workspaceCreateUploadController) return;
-  if (!state.selectedUploadFiles.length) {
-    showToast(t("toast.createNeedsFiles"));
+function renderWorkspaceMemberPicker(kind, query = "") {
+  const list = document.querySelector(`#workspace-${kind}-member-list`);
+  if (!list) return;
+  const needle = String(query || "").trim().toLocaleLowerCase();
+  const members = state.workspaceAccessCandidates.filter((member) => !needle || [member.displayName, member.username]
+    .some((value) => String(value || "").toLocaleLowerCase().includes(needle)));
+  if (state.workspaceAccessLoading) {
+    list.innerHTML = `<p class="admin-empty">${escapeMarkup(t("workspace.membersLoading"))}</p>`;
     return;
   }
+  list.innerHTML = members.length ? members.map((member) => `
+    <label class="workspace-member-row">
+      <input type="checkbox" data-workspace-member-id="${escapeMarkup(member.id)}" ${state.workspaceAccessSelectedIds.has(member.id) ? "checked" : ""} />
+      <span>${escapeMarkup(member.displayName || member.username)}</span>
+      <small>${escapeMarkup(member.username)}</small>
+    </label>`).join("") : `<p class="admin-empty">${escapeMarkup(t("workspace.noEligibleMembers"))}</p>`;
+}
+
+function updateWorkspaceVisibilityControls(form, kind) {
+  const visibility = form.elements.visibility.value;
+  form.querySelectorAll('[name="visibility"][value="restricted"], [name="visibility"][value="group"]').forEach((input) => {
+    input.disabled = !state.workspaceAccessGroupId;
+  });
+  document.querySelector(`#workspace-${kind}-member-picker`).classList.toggle("hidden", visibility !== "restricted");
+}
+
+async function loadWorkspaceAccessCandidates() {
+  state.workspaceAccessLoading = true;
+  state.workspaceAccessCandidates = [];
+  state.workspaceAccessGroupId = "";
+  state.workspaceAccessSelectedIds = new Set();
+  updateWorkspaceVisibilityControls(document.querySelector("#workspace-create-form"), "create");
+  renderWorkspaceMemberPicker("create");
+  const status = document.querySelector("#workspace-create-member-status");
+  try {
+    const result = await api("/api/workspace-access/candidates");
+    state.workspaceAccessCandidates = result.members || [];
+    state.workspaceAccessGroupId = result.group?.id || "";
+    status.textContent = "";
+  } catch (error) {
+    status.textContent = error.message;
+  } finally {
+    state.workspaceAccessLoading = false;
+    renderWorkspaceMemberPicker("create", document.querySelector("#workspace-create-member-search").value);
+    updateWorkspaceVisibilityControls(document.querySelector("#workspace-create-form"), "create");
+  }
+}
+
+async function openWorkspaceAccessModal(index = state.selectedWorkspace) {
+  const workspace = workspaceAt(index);
+  if (!workspace) return;
+  const modal = document.querySelector("#workspace-access-modal");
+  const form = document.querySelector("#workspace-access-form");
+  form.reset();
+  form.elements.workspaceId.value = workspace.id;
+  document.querySelector("#workspace-access-workspace-name").textContent = workspace.name;
+  document.querySelector("#workspace-access-status").textContent = t("workspace.membersLoading");
+  document.querySelector("#workspace-access-submit").disabled = true;
+  modal.classList.remove("hidden");
+  state.workspaceAccessLoading = true;
+  state.workspaceAccessCandidates = [];
+  state.workspaceAccessGroupId = "";
+  state.workspaceAccessSelectedIds = new Set();
+  renderWorkspaceMemberPicker("access");
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/access`);
+    const access = result.access || {};
+    state.workspaceAccessCandidates = access.candidates || [];
+    state.workspaceAccessGroupId = access.group?.id || "";
+    state.workspaceAccessSelectedIds = new Set((access.selectedUsers || []).map((member) => member.id));
+    const visibility = form.querySelector(`[name="visibility"][value="${access.visibility || "private"}"]`);
+    if (visibility) visibility.checked = true;
+    document.querySelector("#workspace-access-submit").disabled = false;
+    document.querySelector("#workspace-access-status").textContent = t("workspace.accessRunWarning");
+  } catch (error) {
+    document.querySelector("#workspace-access-status").textContent = error.message;
+  } finally {
+    state.workspaceAccessLoading = false;
+    updateWorkspaceVisibilityControls(form, "access");
+    renderWorkspaceMemberPicker("access");
+  }
+}
+
+function closeWorkspaceAccessModal() {
+  document.querySelector("#workspace-access-modal").classList.add("hidden");
+}
+
+async function saveWorkspaceAccess(form) {
+  const workspaceId = String(form.elements.workspaceId.value || "");
+  const visibility = String(form.elements.visibility.value || "private");
+  const userIds = visibility === "restricted" ? [...state.workspaceAccessSelectedIds] : [];
+  if (visibility === "restricted" && !userIds.length) {
+    document.querySelector("#workspace-access-status").textContent = t("workspace.selectMemberRequired");
+    return;
+  }
+  const submit = document.querySelector("#workspace-access-submit");
+  submit.disabled = true;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/access`, {
+      method: "PUT",
+      body: JSON.stringify({ visibility, userIds }),
+    });
+    replaceWorkspace(result.workspace);
+    closeWorkspaceAccessModal();
+    renderDynamic();
+    showToast(t("toast.workspaceAccessSaved"));
+  } catch (error) {
+    document.querySelector("#workspace-access-status").textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
+}
+
+async function createWorkspaceFromModal(form) {
+  if (state.workspaceCreateUploadController) return;
   const formData = new FormData(form);
   const workspaceName = String(formData.get("workspaceName") || "").trim();
+  const hasFiles = state.selectedUploadFiles.length > 0;
   const controller = new AbortController();
   const submitButton = document.querySelector("#workspace-create-submit");
   state.workspaceCreateUploadController = controller;
   submitButton.disabled = true;
-  setOperationProgress(t("progress.uploadWorkspace"), 0);
+  setOperationProgress(t(hasFiles ? "progress.uploadWorkspace" : "progress.createWorkspace"), hasFiles ? 0 : 100, !hasFiles);
   try {
-    const workspace = await runResumableUpload({
-      items: state.selectedUploadFiles,
-      mode: "create",
-      name: workspaceName,
-      shared: document.querySelector("#workspace-shared-input").checked,
-      signal: controller.signal,
-      uploadLabel: t("progress.uploadWorkspace"),
-    });
+    const visibility = String(form.elements.visibility.value || "private");
+    const userIds = visibility === "restricted" ? [...state.workspaceAccessSelectedIds] : [];
+    if (visibility === "restricted" && !userIds.length) {
+      showToast(t("workspace.selectMemberRequired"));
+      return;
+    }
+    const workspace = hasFiles
+      ? await runResumableUpload({
+          items: state.selectedUploadFiles,
+          mode: "create",
+          name: workspaceName,
+          visibility,
+          userIds,
+          signal: controller.signal,
+          uploadLabel: t("progress.uploadWorkspace"),
+        })
+      : (await api("/api/workspaces", {
+          method: "POST",
+          body: JSON.stringify({ name: workspaceName, visibility, userIds }),
+          signal: controller.signal,
+        })).workspace;
     state.workspaceCreateUploadController = null;
     closeWorkspaceModal();
     await loadWorkspaces();
@@ -593,22 +719,6 @@ async function openFilePreview(path) {
   } catch (error) {
     meta.textContent = path;
     content.innerHTML = `<div class="preview-empty">${error.message || t("preview.failed")}</div>`;
-  }
-}
-
-async function toggleWorkspaceSharing(index = state.selectedWorkspace) {
-  const workspace = workspaceAt(index);
-  if (!workspace) return;
-  try {
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}`, {
-      method: "PATCH",
-      body: JSON.stringify({ shared: !workspace.shared }),
-    });
-    replaceWorkspace(result.workspace);
-    renderDynamic();
-    showToast(result.workspace.shared ? t("workspace.group") : t("workspace.private"));
-  } catch (error) {
-    showToast(error.message);
   }
 }
 
@@ -810,6 +920,12 @@ const appContext = {
   workspaceAt,
   openWorkspace,
   forkWorkspace,
+  renderWorkspaceMemberPicker,
+  updateWorkspaceVisibilityControls,
+  loadWorkspaceAccessCandidates,
+  openWorkspaceAccessModal,
+  closeWorkspaceAccessModal,
+  saveWorkspaceAccess,
   createWorkspaceFromModal,
   downloadCurrentWorkspace,
   fileUrl,
@@ -818,7 +934,6 @@ const appContext = {
   directTreeChildren,
   deselectTreePath,
   openFilePreview,
-  toggleWorkspaceSharing,
   updateWorkspaceRunLock,
   uploadFilesToCurrentWorkspace,
   deleteCurrentWorkspacePath,

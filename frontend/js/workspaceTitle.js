@@ -1,6 +1,7 @@
 import { t } from "./i18n.js";
 
 export function workspaceTitle(user, groups = []) {
+  if (["system_admin", "platform_admin"].includes(user?.role)) return t("workspace.title");
   if (!user?.groupId) return t("workspace.title");
   const group = groups.find((item) => item.id === user.groupId);
   const name = String(group ? group.name || "" : user.group || "").trim();

@@ -54,6 +54,9 @@ export function createWorkspaceActions(context) {
     state.selectedUploadFiles = [];
     document.querySelector("#workspace-create-form").reset();
     document.querySelector("#workspace-modal").classList.remove("hidden");
+    document.querySelector("#workspace-create-member-search").value = "";
+    context.updateWorkspaceVisibilityControls(document.querySelector("#workspace-create-form"), "create");
+    void context.loadWorkspaceAccessCandidates();
     document.querySelector("#workspace-name-input").focus();
     renderSelectedUploadFiles();
   }

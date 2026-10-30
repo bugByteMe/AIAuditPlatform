@@ -1,7 +1,7 @@
 ---
 title: Workspace and Artifacts
 form: design
-updated: 2026-10-16
+updated: 2026-10-30
 status: active
 tags: [workspace, uploads, artifacts]
 ---
@@ -31,7 +31,11 @@ Folder nodes also include `childCount`, the number of direct visible files and f
 
 Both frontend trees share loaded node data while retaining independent expanded/collapsed state. A workspace snapshot change invalidates lazily loaded descendants so deleted or replaced paths cannot remain visible. Folder selections are represented as subtree selections and are expanded by the backend for downloads, so selecting or operating on a folder does not require sending its full tree to the browser.
 
-Users create workspaces by uploading files or folders through the web UI. The backend writes uploaded content into a generated workspace path and stores metadata in the database.
+Users may create an empty workspace through `POST /api/workspaces` and add files
+later, or create one by selecting files or folders in the web UI. Empty
+workspaces receive an initial empty checkpoint. File-backed creation continues
+through resumable upload sessions; the backend writes uploaded content into a
+generated workspace path and stores metadata in the database.
 
 Folder uploads use persisted, resumable upload sessions. The browser first sends a file manifest to the control plane, which validates permissions, paths, file count, declared sizes, blocked file types, and group quota before accepting bytes. It then sends bounded binary chunks through the authenticated control-plane API. The control plane streams each chunk to a reserved compute worker without buffering the file or request body in memory.
 
@@ -61,7 +65,14 @@ The public upload lifecycle is:
 
 For append uploads, `POST /api/uploads` accepts an optional `destinationPath` that must resolve to an existing non-symlink workspace directory; omitted or empty means the workspace root. The server prefixes each uploaded relative file path before duplicate, file-count, and quota checks. A selected local folder keeps its own top-level name beneath the destination. The browser includes the destination in its resumable-session fingerprint.
 
-Workspace list and detail responses show `activeUpload: { id, status }` only to the workspace owner and system/platform administrators when an append upload holds the workspace lease; otherwise it is `null`. The catalog batches status lookups. Those users may cancel that upload via the existing DELETE endpoint while it is still `uploading`, including when another administrator started it. Processing and committing uploads remain non-cancellable; a race to finalization returns a conflict. New-workspace upload cancellation retains its original uploader/system-admin authorization.
+Workspace list and detail responses show `activeUpload: { id, status }` to
+authorized collaborators when an append upload holds the workspace lease;
+otherwise it is `null`. The catalog batches status lookups. A collaborator may
+cancel that upload via the existing DELETE endpoint while it is still
+`uploading`, including when another collaborator started it. Processing and
+committing uploads remain non-cancellable; a race to finalization returns a
+conflict. New-workspace upload cancellation retains its original
+uploader/system-admin authorization.
 
 Network progress and server processing are separate phases. The UI reports completion only after the worker result and authoritative metadata commit are complete. A browser reload requires the user to reselect the same folder; path, size, and modification time are matched to the persisted session. Expired pre-commit sessions release their quota and workspace reservations.
 
@@ -98,20 +109,51 @@ This model gives content deduplication without unbounded binary history or depen
 
 ## Permissions
 
-The workspace overview title uses the current user's actual group name:
+For ordinary users, the workspace overview title uses the current user's actual group name:
 `<group name>的工作区` in Chinese, with a localized English equivalent. Loaded
 group records take precedence over the user's serialized group name. Before user
 loading, for ungrouped users, or when the group has no usable name, the title
-falls back to the generic workspace label. Names are inserted as text.
+falls back to the generic workspace label. Names are inserted as text. System
+and platform administrators always see the generic title because their list may
+span every group. Their workspace list is grouped by the owner's current group;
+only the administrator's own group is expanded initially. Group names stored on
+workspace metadata remain a loading and legacy fallback. Search matches group
+names and temporarily expands all matching sections.
 
-Workspaces can be:
+Workspace visibility has three modes and defaults to private:
 
-- Private to the owner.
-- Shared with the owner's group.
-- Forked by a user with access.
+- **Private**: only the owner and system/platform administrators have access.
+- **Selected group members** (`restricted`): the owner selects active, enabled
+  accounts from the workspace's group by stable account ID.
+- **Everyone in the group** (`group`): every current member of the workspace's
+  group has access.
 
-Group-shared workspaces support collaborative access. Users with access can inspect files, start chats, and download artifacts.
-Platform administrators may list and open every workspace, including private workspaces outside their group, and rename, fork, share, delete, upload/delete files, and create or modify chats there. A fork belongs to the administrator and uses their own group quota; edits to an existing workspace use its owner's group quota. Active-run locks and the owner-only exclusive run-lock setting still apply. Normal owner/group-shared access continues to allow collaboration.
+Users with workspace access are collaborators. They can inspect and download
+files, create and use chats, fork the workspace, and upload or delete workspace
+files. They cannot rename or delete the workspace, change its visibility or
+member list, or change its exclusive run-lock setting. File mutations still
+respect the workspace write lock, path checks, blocked-upload policy, and the
+owner group's quota.
+
+The owner and system/platform administrators may replace the workspace access
+configuration. Group administrators have no implicit access-management power;
+they must be the owner or an explicitly selected collaborator like any other
+group member. Changing access affects subsequent requests immediately, but does
+not interrupt an already admitted worker run. Disabled, deleted, pending, and
+out-of-group accounts cannot be selected. Deleting or disabling an account
+removes its grants.
+
+Moving an account to another group removes that account's existing grants. If
+the account owns workspaces, those workspaces move to the new group, become
+private, and clear their selected-member grants. Renaming a group updates the
+stored workspace group label. Forks always start private with no copied grants.
+
+Platform administrators may list and open every workspace, including private
+workspaces outside their group, and rename, fork, manage access, delete,
+upload/delete files, and create or modify chats there. A fork belongs to the
+administrator and uses their own group quota; edits to an existing workspace use
+its owner's group quota. Active-run locks and the owner-only exclusive run-lock
+setting still apply.
 
 The owner controls an exclusive run lock while the workspace is idle. It is disabled by default. When enabled, only one mutating Codex run may be active. When disabled, runs from different chat sessions may share the live workspace after the initiating user confirms an overwrite and artifact-attribution warning. A chat session still permits only one active run.
 

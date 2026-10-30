@@ -327,7 +327,7 @@ class UploadManagerTest(unittest.TestCase):
     with self.assertRaises(StorageError):
       self.manager.create(USER, {"mode": "create", "destinationPath": "target", "files": [{"path": "a.txt", "size": 1}]})
 
-  def test_workspace_catalog_shows_active_upload_only_to_cancel_authorized_users(self):
+  def test_workspace_catalog_shows_active_upload_to_group_collaborators(self):
     workspace = self.store.create_workspace(USER, "Shared", True, [UploadedFile("a.txt", b"a")])
     uploader = {"username": "editor", "role": "platform_admin", "group": "Elsewhere"}
     upload = self.manager.create(uploader, {"mode": "append", "workspaceId": workspace["id"], "files": [{"path": "b.txt", "size": 1}]})
@@ -355,9 +355,9 @@ class UploadManagerTest(unittest.TestCase):
 
       viewer = Handler({"username": "viewer", "role": "user", "group": USER["group"]})
       viewer.list_workspaces()
-      self.assertIsNone(viewer.payload["workspaces"][0]["activeUpload"])
+      self.assertEqual(viewer.payload["workspaces"][0]["activeUpload"]["id"], upload["id"])
       viewer.workspace_api("GET", f"/api/workspaces/{workspace['id']}", "")
-      self.assertIsNone(viewer.payload["workspace"]["activeUpload"])
+      self.assertEqual(viewer.payload["workspace"]["activeUpload"]["id"], upload["id"])
 
   def test_offsets_survive_control_and_worker_store_reconstruction(self):
     upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "resume.txt", "size": 6}]})

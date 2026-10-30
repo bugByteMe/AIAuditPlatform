@@ -187,7 +187,9 @@ class BaseHandler(BaseHTTPRequestHandler):
       elif method == "GET" and path == "/api/workspaces":
         self.list_workspaces()
       elif method == "POST" and path == "/api/workspaces":
-        raise StorageError("upload_sessions_required", "use /api/uploads for workspace creation")
+        self.create_empty_workspace()
+      elif method == "GET" and path == "/api/workspace-access/candidates":
+        self.workspace_access_candidates()
       elif path == "/api/uploads" or path.startswith("/api/uploads/"):
         self.upload_api(method, path, query)
       elif path.startswith("/api/workspaces/"):

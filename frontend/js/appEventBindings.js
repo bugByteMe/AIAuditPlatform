@@ -32,6 +32,7 @@ export function createEventBindings(context) {
   const loadTurnDetails = (...args) => context.loadTurnDetails(...args);
   const maybeStartChatStream = (...args) => context.maybeStartChatStream(...args);
   const loadWorkspaces = (...args) => context.loadWorkspaces(...args);
+  const refreshWorkspaceById = (...args) => context.refreshWorkspaceById(...args);
   const startNativeDownload = (...args) => context.startNativeDownload(...args);
   const routeToView = (...args) => context.routeToView(...args);
   const showAuthenticated = (...args) => context.showAuthenticated(...args);
@@ -74,12 +75,16 @@ export function createEventBindings(context) {
   const workspaceAt = (...args) => context.workspaceAt(...args);
   const openWorkspace = (...args) => context.openWorkspace(...args);
   const forkWorkspace = (...args) => context.forkWorkspace(...args);
+  const openWorkspaceAccessModal = (...args) => context.openWorkspaceAccessModal(...args);
+  const closeWorkspaceAccessModal = (...args) => context.closeWorkspaceAccessModal(...args);
+  const saveWorkspaceAccess = (...args) => context.saveWorkspaceAccess(...args);
+  const renderWorkspaceMemberPicker = (...args) => context.renderWorkspaceMemberPicker(...args);
+  const updateWorkspaceVisibilityControls = (...args) => context.updateWorkspaceVisibilityControls(...args);
   const createWorkspaceFromModal = (...args) => context.createWorkspaceFromModal(...args);
   const downloadCurrentWorkspace = (...args) => context.downloadCurrentWorkspace(...args);
   const workspaceFileDownloadUrl = (...args) => context.workspaceFileDownloadUrl(...args);
   const deselectTreePath = (...args) => context.deselectTreePath(...args);
   const openFilePreview = (...args) => context.openFilePreview(...args);
-  const toggleWorkspaceSharing = (...args) => context.toggleWorkspaceSharing(...args);
   const updateWorkspaceRunLock = (...args) => context.updateWorkspaceRunLock(...args);
   const uploadFilesToCurrentWorkspace = (...args) => context.uploadFilesToCurrentWorkspace(...args);
   const cancelWorkspaceUpload = (...args) => context.cancelWorkspaceUpload(...args);
@@ -129,6 +134,10 @@ export function createEventBindings(context) {
           if (session.historyLoaded) loadOlderSessionHistory();
           else maybeStartChatStream();
         }
+        return;
+      }
+      if (event.target.closest("[data-close-workspace-access]")) {
+        closeWorkspaceAccessModal();
         return;
       }
       const turnToggle = event.target.closest("[data-chat-turn-toggle]");
@@ -409,6 +418,17 @@ export function createEventBindings(context) {
         return;
       }
 
+      const workspaceGroupSummary = event.target.closest(".workspace-group > summary");
+      if (workspaceGroupSummary) {
+        const section = workspaceGroupSummary.parentElement;
+        const key = section?.dataset.workspaceGroup;
+        if (key) {
+          if (section.open) state.expandedWorkspaceGroups.delete(key);
+          else state.expandedWorkspaceGroups.add(key);
+        }
+        return;
+      }
+
       const actionButton = event.target.closest("button[data-action]");
       if (actionButton) {
         event.preventDefault();
@@ -418,8 +438,8 @@ export function createEventBindings(context) {
           showToast(t("toast.workspaceMissing"));
           return;
         }
-        if (actionButton.dataset.action === "share") {
-          toggleWorkspaceSharing(index);
+        if (actionButton.dataset.action === "manage-access") {
+          openWorkspaceAccessModal(index);
           return;
         }
         if (actionButton.dataset.action === "fork") {
@@ -691,6 +711,11 @@ export function createEventBindings(context) {
       createWorkspaceFromModal(event.currentTarget);
     });
 
+    document.querySelector("#workspace-access-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveWorkspaceAccess(event.currentTarget);
+    });
+
     document.querySelector("#codex-settings-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -772,6 +797,29 @@ export function createEventBindings(context) {
       state.workspaceQuery = event.target.value;
       renderWorkspaces();
     });
+    document.querySelector("#admin-search").addEventListener("input", (event) => {
+      state.adminQuery = event.target.value;
+      context.renderAdmin();
+    });
+    document.querySelector("#refresh-workspaces").addEventListener("click", async (event) => {
+      const button = event.currentTarget;
+      if (button.disabled) return;
+      button.disabled = true;
+      button.classList.add("is-loading");
+      button.setAttribute("aria-busy", "true");
+      try {
+        await loadWorkspaces();
+        if (!state.workspaceLoadError) {
+          const workspaceId = safeCurrentWorkspace()?.id;
+          const refreshed = workspaceId ? await refreshWorkspaceById(workspaceId) : true;
+          if (refreshed) showToast(t("toast.workspacesRefreshed"));
+        }
+      } finally {
+        button.disabled = false;
+        button.classList.remove("is-loading");
+        button.removeAttribute("aria-busy");
+      }
+    });
     document.querySelector("#event-stream").addEventListener("scroll", (event) => {
       if (isEventStreamNearTop(event.currentTarget)) loadOlderSessionHistory();
     }, { passive: true });
@@ -781,7 +829,20 @@ export function createEventBindings(context) {
     });
     document.addEventListener("input", (event) => {
       if (event.target.matches("[data-name-editor]") && state.nameEditor) state.nameEditor.draft = event.target.value;
+      if (event.target.matches("[data-workspace-member-id]")) {
+        const id = event.target.dataset.workspaceMemberId;
+        if (event.target.checked) state.workspaceAccessSelectedIds.add(id);
+        else state.workspaceAccessSelectedIds.delete(id);
+      }
     });
+    document.querySelector("#workspace-create-member-search").addEventListener("input", (event) => renderWorkspaceMemberPicker("create", event.target.value));
+    document.querySelector("#workspace-access-member-search").addEventListener("input", (event) => renderWorkspaceMemberPicker("access", event.target.value));
+    document.querySelectorAll('#workspace-create-form [name="visibility"]').forEach((input) => input.addEventListener("change", () => {
+      updateWorkspaceVisibilityControls(document.querySelector("#workspace-create-form"), "create");
+    }));
+    document.querySelectorAll('#workspace-access-form [name="visibility"]').forEach((input) => input.addEventListener("change", () => {
+      updateWorkspaceVisibilityControls(document.querySelector("#workspace-access-form"), "access");
+    }));
 
     document.addEventListener("focusout", (event) => {
       if (event.target.matches("[data-name-editor]")) commitNameEdit();
@@ -803,6 +864,7 @@ export function createEventBindings(context) {
         document.querySelectorAll(".action-menu[open]").forEach((menu) => { menu.open = false; });
         closePreviewModal();
         closeWorkspaceModal();
+        closeWorkspaceAccessModal();
         closeCodexSettingsModal();
         closeBatchAccountModal();
         closeRechargeImport();

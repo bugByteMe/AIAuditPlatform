@@ -20,6 +20,8 @@ body { line-height: 1.55; }
 
 .btn { min-height: 40px; padding-inline: 14px; font-weight: 600; }
 .btn.icon-btn { width: 40px; min-width: 40px; }
+.btn.icon-btn.workspace-refresh-button { width: 36px; min-width: 36px; min-height: 36px; }
+.workspace-refresh-button.is-loading > span { display: none; }
 .btn.primary { box-shadow: 0 3px 9px rgb(17 103 117 / 13%); }
 .btn.danger:hover:not(:disabled) { border-color: var(--danger); background: #fceced; }
 .segment { min-height: 36px; }

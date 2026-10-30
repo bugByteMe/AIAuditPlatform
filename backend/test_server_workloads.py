@@ -83,6 +83,7 @@ class WorkloadRoutingTest(unittest.TestCase):
       ("GET", "/api/workspaces/ws-1/files/preview"): ("file", "workspace.file_preview"),
       ("GET", "/api/workspaces/ws-1/files/rendered"): ("file", "workspace.file_rendered"),
       ("GET", "/api/workspaces/ws-1/download"): ("file", "workspace.download"),
+      ("POST", "/api/workspaces"): ("file", "workspace.create"),
       ("POST", "/api/workspaces/ws-1/refresh-artifacts"): ("file", "workspace.refresh-artifacts"),
       ("POST", "/api/workspaces/ws-1/fork"): ("file", "workspace.fork"),
       ("DELETE", "/api/workspaces/ws-1"): ("file", "workspace.delete"),

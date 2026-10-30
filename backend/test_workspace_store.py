@@ -85,6 +85,17 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertIn("workpapers/income.txt", snapshot["files"])
     self.assertTrue(self.store.blob_path(snapshot["files"]["workpapers/income.txt"]["blob"]).exists())
 
+  def test_workspace_creation_allows_an_empty_initial_snapshot(self) -> None:
+    workspace = self.store.create_workspace(OWNER, "Empty workspace", True, [])
+    metadata = self.store.load_metadata()
+    snapshot = metadata["snapshots"][workspace["latestSnapshotId"]]
+
+    self.assertEqual(workspace["fileCount"], 0)
+    self.assertEqual(workspace["sizeBytes"], 0)
+    self.assertEqual(snapshot["reason"], "create")
+    self.assertEqual(snapshot["files"], {})
+    self.assertTrue(self.store.workspace_path(workspace["id"]).is_dir())
+
   def test_workspace_owner_controls_exclusive_run_lock_only_while_idle(self) -> None:
     workspace = self.create_workspace()
     updated = self.store.update_workspace(workspace["id"], OWNER, {"runLockEnabled": True})
@@ -101,7 +112,7 @@ class WorkspaceStoreTest(unittest.TestCase):
       self.store.update_workspace(workspace["id"], OWNER, {"runLockEnabled": False})
     self.assertEqual(context.exception.code, "workspace_locked")
 
-  def test_version_one_database_migrates_run_lock_disabled(self) -> None:
+  def test_version_one_database_migrates_run_lock_and_visibility(self) -> None:
     root = Path(self.tempdir.name) / "version_one"
     root.mkdir()
     path = root / "workspace.sqlite3"
@@ -131,7 +142,9 @@ class WorkspaceStoreTest(unittest.TestCase):
     finally:
       connection.close()
     self.assertIn("run_lock_enabled", columns)
-    self.assertEqual(version, 3)
+    self.assertIn("group_id", columns)
+    self.assertIn("visibility", columns)
+    self.assertEqual(version, 4)
 
   def test_each_file_retains_only_its_immediately_previous_content(self) -> None:
     workspace = self.create_workspace()
@@ -433,10 +446,12 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.store.delete_owned_workspaces({second["username"]})
     self.assertFalse(self.store.blob_path(digest).exists())
 
-  def test_add_files_to_workspace_requires_owner_or_admin(self) -> None:
+  def test_group_collaborator_can_add_files_to_workspace(self) -> None:
     workspace = self.create_workspace(shared=True)
-    with self.assertRaises(StorageError):
-      self.store.add_files_to_workspace(workspace["id"], SAME_GROUP, [UploadedFile("uploads/new.txt", b"new")])
+    updated = self.store.add_files_to_workspace(
+      workspace["id"], SAME_GROUP, [UploadedFile("uploads/new.txt", b"new")]
+    )
+    self.assertIn("uploads/new.txt", {item["path"] for item in updated["files"]})
 
   def test_delete_workspace_path_removes_file_or_folder_and_records_diff(self) -> None:
     workspace = self.create_workspace(shared=True)

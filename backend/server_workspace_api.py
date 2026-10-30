@@ -33,6 +33,28 @@ class WorkspaceHandlerMixin:
       workspace["activeUpload"] = {"id": upload_id, "status": statuses[upload_id]} if statuses.get(upload_id) in {"uploading", "processing", "committing"} else None
     self.write_json({"workspaces": workspaces, "resources": CHAT_RUNTIME.resource_status()})
 
+  def create_empty_workspace(self) -> None:
+    user = self.require_user()
+    payload = self.read_json()
+    workspace = WORKSPACE_STORE.create_workspace(
+      user,
+      str(payload.get("name") or ""),
+      bool(payload.get("shared", False)),
+      [],
+      str(payload["visibility"]) if "visibility" in payload else None,
+      payload.get("userIds"),
+    )
+    add_audit(user["username"], "workspace created", workspace["id"])
+    self.write_json({"workspace": workspace}, HTTPStatus.CREATED)
+
+  def workspace_access_candidates(self) -> None:
+    user = self.require_user()
+    group_id = str(user.get("groupId") or "")
+    self.write_json({
+      "group": {"id": group_id, "name": str(user.get("group") or "")},
+      "members": WORKSPACE_STORE.active_group_members(group_id, exclude_username=user["username"]),
+    })
+
   def upload_api(self, method: str, path: str, query: str) -> None:
     user = self.require_user()
     parts = [unquote(part) for part in path.split("/") if part]
@@ -83,6 +105,14 @@ class WorkspaceHandlerMixin:
       payload = WORKSPACE_STORE.public_workspace(workspace)
       payload["activeUpload"] = self.public_active_upload(workspace.get("activeUploadId")) if WORKSPACE_STORE.user_can_mutate_workspace(user, workspace) else None
       self.write_json({"workspace": payload, "resources": CHAT_RUNTIME.resource_status()})
+    elif action == "access" and method == "GET":
+      workspace = WORKSPACE_STORE.get_workspace(workspace_id, user)
+      self.write_json({"access": WORKSPACE_STORE.workspace_access_config(workspace, user)})
+    elif action == "access" and method == "PUT":
+      workspace, access, added, removed = WORKSPACE_STORE.update_workspace_access(workspace_id, user, self.read_json())
+      detail = f"{workspace_id} visibility={access['visibility']} added={','.join(sorted(added)) or '-'} removed={','.join(sorted(removed)) or '-'}"
+      add_audit(user["username"], "workspace access updated", detail)
+      self.write_json({"workspace": workspace, "access": access})
     elif method == "PATCH" and not action:
       workspace = WORKSPACE_STORE.update_workspace(workspace_id, user, self.read_json())
       add_audit(user["username"], "workspace updated", workspace_id)

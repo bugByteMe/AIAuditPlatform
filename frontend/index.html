@@ -135,6 +135,9 @@
               <input id="workspace-search" type="search" data-i18n-placeholder="workspace.search" placeholder="搜索工作区或所有者" autocomplete="off" />
             </label>
             <span class="workspace-result-count" id="workspace-results-count" aria-live="polite"></span>
+            <button type="button" class="btn icon-btn ghost workspace-refresh-button" id="refresh-workspaces" data-i18n-title="workspace.refresh" data-i18n-aria-label="workspace.refresh" title="刷新工作区状态" aria-label="刷新工作区状态">
+              <span aria-hidden="true">↻</span>
+            </button>
           </div>
 
           <div class="dashboard-grid workspace-overview-grid">
@@ -369,6 +372,12 @@
                   <input type="file" id="recharge-import-input" class="hidden" accept=".xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" />
                 </div>
               </div>
+              <div class="admin-search-toolbar">
+                <label class="search" for="admin-search">
+                  <span aria-hidden="true">⌕</span>
+                  <input id="admin-search" type="search" data-i18n-placeholder="admin.search" placeholder="搜索小组或用户名" autocomplete="off" />
+                </label>
+              </div>
               <div class="admin-grid" id="admin-grid"></div>
             </section>
             <section class="panel wide" data-system-admin-only>
@@ -407,7 +416,7 @@
         <div class="panel-head">
           <div>
             <h2 id="workspace-modal-title" data-i18n="workspace.createTitle">新建工作区</h2>
-            <p data-i18n="workspace.createHelp">命名工作区并添加一个或多个待上传文件夹。</p>
+            <p data-i18n="workspace.createHelp">命名工作区；文件夹可稍后添加。</p>
           </div>
           <button type="button" class="rail-toggle" data-close-workspace-modal aria-label="Close">×</button>
         </div>
@@ -415,19 +424,53 @@
           <span data-i18n="workspace.name">工作区名称</span>
           <input name="workspaceName" id="workspace-name-input" data-i18n-placeholder="workspace.namePlaceholder" placeholder="例如：2026-Q3 收入测试" required />
         </label>
-        <label class="checkbox-row">
-          <input type="checkbox" id="workspace-shared-input" checked />
-          <span data-i18n="workspace.shareWithGroup">创建后与小组共享</span>
-        </label>
+        <fieldset class="visibility-fieldset">
+          <legend data-i18n="workspace.visibility">可见范围</legend>
+          <label class="radio-row"><input type="radio" name="visibility" value="private" checked /><span data-i18n="workspace.visibilityPrivate">仅自己</span></label>
+          <label class="radio-row"><input type="radio" name="visibility" value="restricted" /><span data-i18n="workspace.visibilityRestricted">指定小组成员</span></label>
+          <label class="radio-row"><input type="radio" name="visibility" value="group" /><span data-i18n="workspace.visibilityGroup">小组所有成员</span></label>
+        </fieldset>
+        <div class="workspace-member-picker hidden" id="workspace-create-member-picker">
+          <input type="search" id="workspace-create-member-search" data-i18n-placeholder="workspace.searchMembers" placeholder="搜索小组成员" autocomplete="off" />
+          <div class="workspace-member-list" id="workspace-create-member-list"></div>
+          <p class="field-help" id="workspace-create-member-status"></p>
+        </div>
         <div class="folder-picker-row">
           <button type="button" class="btn" id="add-folder-button" data-i18n="workspace.addFolder">添加文件夹</button>
-          <span id="workspace-upload-summary" data-i18n="workspace.noFolders">尚未选择文件夹</span>
+          <span id="workspace-upload-summary" data-i18n="workspace.noFolders">未选择文件夹（可选）</span>
           <input type="file" id="workspace-upload-input" class="hidden" multiple webkitdirectory />
         </div>
         <div class="selected-folder-list" id="selected-folder-list"></div>
         <div class="modal-actions">
           <button type="button" class="btn" data-close-workspace-modal data-i18n="actions.cancel">取消</button>
           <button type="submit" class="btn primary" id="workspace-create-submit" data-i18n="workspace.create">创建</button>
+        </div>
+      </form>
+    </div>
+    <div class="modal-backdrop hidden" id="workspace-access-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-access-title">
+      <form class="modal-panel" id="workspace-access-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="workspace-access-title" data-i18n="workspace.manageAccess">管理访问权限</h2>
+            <p id="workspace-access-workspace-name"></p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-workspace-access aria-label="Close">×</button>
+        </div>
+        <input type="hidden" name="workspaceId" />
+        <fieldset class="visibility-fieldset">
+          <legend data-i18n="workspace.visibility">可见范围</legend>
+          <label class="radio-row"><input type="radio" name="visibility" value="private" /><span data-i18n="workspace.visibilityPrivate">仅自己</span></label>
+          <label class="radio-row"><input type="radio" name="visibility" value="restricted" /><span data-i18n="workspace.visibilityRestricted">指定小组成员</span></label>
+          <label class="radio-row"><input type="radio" name="visibility" value="group" /><span data-i18n="workspace.visibilityGroup">小组所有成员</span></label>
+        </fieldset>
+        <div class="workspace-member-picker hidden" id="workspace-access-member-picker">
+          <input type="search" id="workspace-access-member-search" data-i18n-placeholder="workspace.searchMembers" placeholder="搜索小组成员" autocomplete="off" />
+          <div class="workspace-member-list" id="workspace-access-member-list"></div>
+        </div>
+        <p class="field-help" id="workspace-access-status" data-i18n="workspace.accessRunWarning">权限变更立即生效；已经启动的任务会继续运行。</p>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-workspace-access data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" id="workspace-access-submit" data-i18n="actions.save">保存</button>
         </div>
       </form>
     </div>

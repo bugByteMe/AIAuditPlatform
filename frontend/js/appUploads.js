@@ -8,19 +8,20 @@ export function createUploadActions(context) {
 
   const PENDING_UPLOAD_KEY = "aiAuditPendingUpload";
 
-  function uploadFingerprint(items, mode, workspaceId = "", name = "", shared = false, destinationPath = "") {
+  function uploadFingerprint(items, mode, workspaceId = "", name = "", visibility = "private", userIds = [], destinationPath = "") {
     return JSON.stringify({
       mode,
       workspaceId,
       name,
-      shared,
+      visibility,
+      userIds: [...userIds].sort(),
       destinationPath,
       files: items.map((item) => [item.path, item.file.size, item.file.lastModified]),
     });
   }
 
-  async function runResumableUpload({ items, mode, workspaceId = "", name = "", shared = false, destinationPath = "", signal, uploadLabel }) {
-    const fingerprint = uploadFingerprint(items, mode, workspaceId, name, shared, destinationPath);
+  async function runResumableUpload({ items, mode, workspaceId = "", name = "", visibility = "private", userIds = [], destinationPath = "", signal, uploadLabel }) {
+    const fingerprint = uploadFingerprint(items, mode, workspaceId, name, visibility, userIds, destinationPath);
     let saved = null;
     try {
       saved = JSON.parse(window.localStorage.getItem(PENDING_UPLOAD_KEY) || "null");
@@ -42,7 +43,8 @@ export function createUploadActions(context) {
           mode,
           workspaceId: workspaceId || undefined,
           name,
-          shared,
+          visibility,
+          userIds,
           destinationPath,
           files: items.map((item) => ({ path: item.path, size: item.file.size, lastModified: item.file.lastModified })),
         }),

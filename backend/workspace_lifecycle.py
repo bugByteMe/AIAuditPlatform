@@ -25,15 +25,18 @@ from workspace_common import (
 )
 
 class WorkspaceLifecycleMixin:
-  def create_workspace(self, user: dict, name: str, shared: bool, files: list[UploadedFile]) -> dict:
+  def create_workspace(
+    self, user: dict, name: str, shared: bool, files: list[UploadedFile],
+    visibility: str | None = None, user_ids: list | None = None,
+  ) -> dict:
     with self.coordination_locks.hold(f"group:{user.get('groupId') or user.get('group') or user['username']}"):
       upload_sizes = {normalize_upload_relative_path(item.path): len(item.content) for item in files}
       self.assert_group_quota(user, sum(upload_sizes.values()))
-      return self._create_workspace(user, name, shared, files)
+      resolved_visibility = visibility or ("group" if shared else "private")
+      grants = self.validate_workspace_access(user, resolved_visibility, user_ids)
+      return self._create_workspace(user, name, resolved_visibility, grants, files)
 
-  def _create_workspace(self, user: dict, name: str, shared: bool, files: list[UploadedFile]) -> dict:
-    if not files:
-      raise StorageError("empty_upload", "at least one uploaded file is required")
+  def _create_workspace(self, user: dict, name: str, visibility: str, grants: set[str], files: list[UploadedFile]) -> dict:
     workspace_id = generated_id("ws")
     workspace_path = self.workspace_path(workspace_id)
     workspace_path.mkdir(parents=True, exist_ok=False)
@@ -65,7 +68,9 @@ class WorkspaceLifecycleMixin:
       "name": name.strip() or "Untitled workspace",
       "owner": user["username"],
       "group": user.get("group", ""),
-      "shared": shared,
+      "groupId": user.get("groupId", ""),
+      "visibility": visibility,
+      "shared": visibility == "group",
       "locked": False,
       "runLockEnabled": False,
       "created": timestamp,
@@ -79,13 +84,14 @@ class WorkspaceLifecycleMixin:
       "sessions": [],
     }
     metadata["workspaces"][workspace_id] = workspace
-    snapshot = self.create_snapshot(metadata, workspace_id, "upload", user["username"], None)
+    snapshot = self.create_snapshot(metadata, workspace_id, "upload" if files else "create", user["username"], None)
     workspace["initialSnapshotId"] = snapshot["id"]
     workspace["latestSnapshotId"] = snapshot["id"]
     workspace["fileCount"] = len(snapshot["files"])
     workspace["sizeBytes"] = sum(entry["size"] for entry in snapshot["files"].values())
     workspace["sessions"] = []
     self.save_workspace_metadata(workspace_id, metadata)
+    self.database.replace_access_grants(workspace_id, grants)
     return self.public_workspace(workspace, metadata)
 
   def update_workspace(self, workspace_id: str, user: dict, payload: dict) -> dict:
@@ -99,13 +105,16 @@ class WorkspaceLifecycleMixin:
         raise StorageError("forbidden", "only the owner or an administrator can update workspace settings")
       if is_platform_admin and not is_owner and (not payload or payload.keys() - {"shared", "name"}):
         raise StorageError("forbidden", "platform administrators may only rename or change sharing on workspaces they do not own")
+      access_visibility = None
       if "name" in payload:
         name = str(payload["name"]).strip()
         if not name:
           raise StorageError("bad_request", "workspace name cannot be empty")
         workspace["name"] = name
       if "shared" in payload:
+        workspace["visibility"] = "group" if bool(payload["shared"]) else "private"
         workspace["shared"] = bool(payload["shared"])
+        access_visibility = workspace["visibility"]
       if "runLockEnabled" in payload:
         if workspace["owner"] != user["username"]:
           raise StorageError("forbidden", "only the workspace owner can change the exclusive run lock")
@@ -116,11 +125,32 @@ class WorkspaceLifecycleMixin:
           workspace["runLockEnabled"] = requested
       workspace["updated"] = now_string()
       self.save_workspace_metadata(workspace_id, metadata)
+      if access_visibility is not None:
+        self.database.replace_workspace_access(workspace_id, access_visibility, set())
       return self.public_workspace(workspace, metadata)
 
   def user_can_mutate_workspace(self, user: dict, workspace: dict) -> bool:
-    return self.user_can_access(user, workspace) and (
-      user["role"] in {"system_admin", "platform_admin"} or workspace["owner"] == user["username"])
+    return self.user_can_access(user, workspace)
+
+  def update_workspace_access(self, workspace_id: str, user: dict, payload: dict) -> tuple[dict, dict, set[str], set[str]]:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
+      metadata = self.load_workspace_metadata(workspace_id)
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      if not self.can_manage_workspace_access(user, workspace):
+        raise StorageError("forbidden", "only the owner or an administrator can manage workspace access")
+      visibility = str(payload.get("visibility") or "")
+      user_ids = payload.get("userIds")
+      if not isinstance(user_ids, list):
+        raise StorageError("bad_request", "userIds must be a list")
+      owner = self.workspace_quota_owner(workspace, user)
+      grants = self.validate_workspace_access(owner, visibility, user_ids)
+      previous = self.database.access_grant_ids(workspace_id)
+      workspace["visibility"] = visibility
+      workspace["shared"] = visibility == "group"
+      workspace["updated"] = now_string()
+      self.save_workspace_metadata(workspace_id, metadata)
+      self.database.replace_workspace_access(workspace_id, visibility, grants)
+      return self.public_workspace(workspace, metadata), self.workspace_access_config(workspace, user), grants - previous, previous - grants
 
   def add_files_to_workspace(self, workspace_id: str, user: dict, files: list[UploadedFile]) -> dict:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
@@ -145,7 +175,7 @@ class WorkspaceLifecycleMixin:
     metadata = self.load_workspace_metadata(workspace_id)
     workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
     if not self.user_can_mutate_workspace(user, workspace):
-      raise StorageError("forbidden", "only the owner or an administrator can add files")
+      raise StorageError("forbidden", "workspace file access denied")
     if workspace.get("locked"):
       raise StorageError("workspace_locked", "workspace has an active write lock")
 
@@ -183,7 +213,7 @@ class WorkspaceLifecycleMixin:
       metadata = self.load_workspace_metadata(workspace_id)
       workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
       if not self.user_can_mutate_workspace(user, workspace):
-        raise StorageError("forbidden", "only the owner or an administrator can delete files")
+        raise StorageError("forbidden", "workspace file access denied")
       if workspace.get("locked"):
         raise StorageError("workspace_locked", "workspace has an active write lock")
 
@@ -304,7 +334,9 @@ class WorkspaceLifecycleMixin:
           "name": str(session.get("name") or "Untitled workspace"),
           "owner": session["owner"],
           "group": session.get("group", ""),
-          "shared": bool(session.get("shared")),
+          "groupId": session.get("groupId", ""),
+          "visibility": str(session.get("visibility") or ("group" if session.get("shared") else "private")),
+          "shared": str(session.get("visibility") or ("group" if session.get("shared") else "private")) == "group",
           "locked": False,
           "runLockEnabled": False,
           "created": timestamp,
@@ -352,6 +384,8 @@ class WorkspaceLifecycleMixin:
       else:
         metadata["artifacts"][workspace_id] = self.diff_snapshots(parent, snapshot)
       self.save_workspace_metadata(workspace_id, metadata)
+      if session["mode"] == "create":
+        self.database.replace_access_grants(workspace_id, set(session.get("userIds") or []))
       return self.public_workspace(workspace, metadata)
 
   def fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
@@ -381,6 +415,8 @@ class WorkspaceLifecycleMixin:
       "name": name or f"{source['name']} Copy",
       "owner": user["username"],
       "group": user.get("group", ""),
+      "groupId": user.get("groupId", ""),
+      "visibility": "private",
       "shared": False,
       "locked": False,
       "runLockEnabled": False,

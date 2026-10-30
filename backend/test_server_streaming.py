@@ -106,7 +106,29 @@ class RoutedPools:
     return self.file_pool
 
 
+class EmptyWorkspaceStore:
+  def __init__(self):
+    self.calls = []
+
+  def create_workspace(self, user, name, shared, files, visibility=None, user_ids=None):
+    self.calls.append((user, name, shared, files, visibility, user_ids))
+    return {"id": "ws-empty", "name": name, "shared": shared, "fileCount": 0}
+
+
 class ServerStreamingTest(unittest.TestCase):
+  def test_empty_workspace_creation_does_not_require_an_upload_session(self) -> None:
+    user = {"username": "example", "role": "user", "group": "Audit"}
+    store = EmptyWorkspaceStore()
+    with TestClient(app) as client, patch.object(Handler, "require_user", return_value=user), patch(
+      "server_workspace_api.WORKSPACE_STORE", store
+    ), patch("server_workspace_api.add_audit") as add_audit:
+      response = client.post("/api/workspaces", json={"name": "Empty review", "shared": False})
+
+    self.assertEqual(response.status_code, 201)
+    self.assertEqual(response.json()["workspace"]["id"], "ws-empty")
+    self.assertEqual(store.calls, [(user, "Empty review", False, [], None, None)])
+    add_audit.assert_called_once_with("example", "workspace created", "ws-empty")
+
   def test_session_is_fast_and_balance_refresh_is_explicit(self) -> None:
     user = {"id": "example", "username": "example", "providerMode": "custom"}
     with TestClient(app) as client, patch.object(Handler, "current_user", return_value=user), patch("server_transport.refresh_micu_balance") as refresh:

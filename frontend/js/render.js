@@ -1,9 +1,11 @@
 import { t } from "./i18n.js";
 import { markdownToHtml } from "./chatMarkdown.js";
 import { applyChatModelSettings } from "./chatModelSettings.js";
+import { adminGroupMatches } from "./adminSearch.js";
 import { dataPanelMarkup } from "./startupUi.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { isEventStreamNearBottom } from "./scrollPosition.js";
+import { defaultExpandedWorkspaceGroups, groupWorkspaces, resolveWorkspaceGroup } from "./workspaceGroups.js";
 import { state } from "./state.js";
 import { renderWorkspaceTitle } from "./workspaceTitle.js";
 
@@ -90,7 +92,7 @@ function canAdministerWorkspace(workspace) {
 
 function canCollaborateInWorkspace(workspace) {
   return !workspace || Boolean(state.user && (["system_admin", "platform_admin"].includes(state.user.role) ||
-    workspace.owner === state.user.username || (workspace.shared && workspace.group && workspace.group === state.user.group)));
+    workspace.owner === state.user.username || ["group", "restricted"].includes(workspace.visibility || (workspace.shared ? "group" : "private"))));
 }
 
 function editableName(kind, id, value, location, editable = true) {
@@ -201,6 +203,51 @@ export function renderCurrentUser() {
   meter.parentElement.classList.toggle("hidden", !hasPercentage);
 }
 
+function workspaceCardMarkup(workspace, index) {
+  const safeWorkspaceId = escapeHtml(workspace.id || "");
+  const safeOwner = escapeHtml(workspace.owner);
+  const safeSize = escapeHtml(workspace.size);
+  const safeUpdated = escapeHtml(workspace.updated);
+  const visibilityMode = workspace.visibility || (workspace.shared ? "group" : "private");
+  const visibility = visibilityMode === "restricted"
+    ? t("workspace.selectedCount").replace("{count}", Number(workspace.accessCount || 0).toLocaleString())
+    : t(`workspace.visibility.${visibilityMode}`);
+  const lock = workspace.locked
+    ? `<span class="pill warning">${t("workspace.locked")}</span>`
+    : `<span class="pill success">${t("workspace.lockFree")}</span>`;
+  return `
+    <article class="workspace-item ${index === state.selectedWorkspace ? "active" : ""}" data-workspace-card="${index}" data-workspace-id="${safeWorkspaceId}" tabindex="0">
+      <div>
+        <h3>${editableName("workspace", workspace.id, workspace.name, `workspace-list:${workspace.id}`, canRenameWorkspace(workspace))}</h3>
+        <div class="meta-line">
+          <span>${safeOwner}</span>
+          <span>${workspace.fileCount.toLocaleString()} files</span>
+          <span>${safeSize}</span>
+          <span>${safeUpdated}</span>
+          <span>${Number(workspace.sessionCount ?? workspace.sessions.length).toLocaleString()} ${state.lang === "zh" ? "个会话" : "sessions"}</span>
+          <span class="pill blue">${visibility}</span>
+          ${lock}
+        </div>
+      </div>
+      <div class="toolbar-actions workspace-card-actions">
+        ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<details class="action-menu workspace-more">
+          <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}</summary>
+          <div class="action-menu-items">
+            ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="manage-access" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.manageAccess")}</button>` : ""}
+            ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
+            ${canCollaborateInWorkspace(workspace) && workspace.activeUpload?.status === "uploading" ? `<button type="button" class="btn danger" data-action="cancel-upload" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.cancelUpload")}</button>` : ""}
+            ${canCollaborateInWorkspace(workspace) && ["processing", "committing"].includes(workspace.activeUpload?.status) ? `<span class="action-menu-status">${t("workspace.uploadProcessing")}</span>` : ""}
+            ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.delete")}</button>` : ""}
+          </div>
+        </details>` : ""}
+        <button type="button" class="btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}">
+          ${t("workspace.open")} <span aria-hidden="true">→</span>
+        </button>
+      </div>
+    </article>
+  `;
+}
+
 export function renderWorkspaces() {
   renderWorkspaceTitle(document, state.user, state.groups);
   if (pendingPanel("#workspace-list", state.workspacesLoading, state.workspaceLoadError)) {
@@ -209,59 +256,38 @@ export function renderWorkspaces() {
   }
   const items = workspaceList();
   const query = state.workspaceQuery.trim().toLocaleLowerCase();
-  const visible = items.map((workspace, index) => ({ workspace, index }))
-    .filter(({ workspace }) => !query || [workspace.name, workspace.owner].some((value) => String(value || "").toLocaleLowerCase().includes(query)));
+  const indexed = items.map((workspace, index) => ({ workspace, index }));
+  const visible = indexed.filter(({ workspace }) => {
+    const group = resolveWorkspaceGroup(workspace, state.user, state.groups, state.accounts);
+    return !query || [workspace.name, workspace.owner, group.name]
+      .some((value) => String(value || "").toLocaleLowerCase().includes(query));
+  });
   document.querySelector("#workspace-results-count").textContent = t("workspace.resultsCount")
     .replace("{shown}", visible.length.toLocaleString()).replace("{total}", items.length.toLocaleString());
   if (!visible.length) {
-    document.querySelector("#workspace-list").innerHTML = `<div class="empty-state">${items.length ? t("workspace.noSearchResults") : (state.lang === "zh" ? "还没有工作区，请上传文件夹创建。" : "No workspaces yet. Upload files to create one.")}</div>`;
+    document.querySelector("#workspace-list").innerHTML = `<div class="empty-state">${items.length ? t("workspace.noSearchResults") : (state.lang === "zh" ? "还没有工作区，请创建一个。" : "No workspaces yet. Create one to get started.")}</div>`;
     return;
   }
-  document.querySelector("#workspace-list").innerHTML = visible
-    .map(({ workspace, index }) => {
-      const safeWorkspaceId = escapeHtml(workspace.id || "");
-      const safeOwner = escapeHtml(workspace.owner);
-      const safeSize = escapeHtml(workspace.size);
-      const safeUpdated = escapeHtml(workspace.updated);
-      const visibility = workspace.shared ? t("workspace.group") : t("workspace.private");
-      const lock = workspace.locked
-        ? `<span class="pill warning">${t("workspace.locked")}</span>`
-        : `<span class="pill success">${t("workspace.lockFree")}</span>`;
-      const shareTitle = workspace.shared ? t("workspace.unshare") : t("workspace.share");
-      const shareIcon = workspace.shared ? "↙" : "↗";
-      return `
-        <article class="workspace-item ${index === state.selectedWorkspace ? "active" : ""}" data-workspace-card="${index}" data-workspace-id="${safeWorkspaceId}" tabindex="0">
-          <div>
-            <h3>${editableName("workspace", workspace.id, workspace.name, `workspace-list:${workspace.id}`, canRenameWorkspace(workspace))}</h3>
-            <div class="meta-line">
-              <span>${safeOwner}</span>
-              <span>${workspace.fileCount.toLocaleString()} files</span>
-              <span>${safeSize}</span>
-              <span>${safeUpdated}</span>
-              <span>${Number(workspace.sessionCount ?? workspace.sessions.length).toLocaleString()} ${state.lang === "zh" ? "个会话" : "sessions"}</span>
-              <span class="pill blue">${visibility}</span>
-              ${lock}
-            </div>
-          </div>
-          <div class="toolbar-actions workspace-card-actions">
-            ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<details class="action-menu workspace-more">
-              <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}</summary>
-              <div class="action-menu-items">
-                ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="share" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${shareTitle} <span aria-hidden="true">${shareIcon}</span></button>` : ""}
-                ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
-                ${canAdministerWorkspace(workspace) && workspace.activeUpload?.status === "uploading" ? `<button type="button" class="btn danger" data-action="cancel-upload" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.cancelUpload")}</button>` : ""}
-                ${canAdministerWorkspace(workspace) && ["processing", "committing"].includes(workspace.activeUpload?.status) ? `<span class="action-menu-status">${t("workspace.uploadProcessing")}</span>` : ""}
-                ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn danger" data-action="delete" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.delete")}</button>` : ""}
-              </div>
-            </details>` : ""}
-            <button type="button" class="btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}">
-              ${t("workspace.open")} <span aria-hidden="true">→</span>
-            </button>
-          </div>
-        </article>
-      `;
-    })
-    .join("");
+  const isAdmin = ["system_admin", "platform_admin"].includes(state.user?.role);
+  if (!isAdmin) {
+    document.querySelector("#workspace-list").innerHTML = visible.map(({ workspace, index }) => workspaceCardMarkup(workspace, index)).join("");
+    return;
+  }
+  const sections = groupWorkspaces(visible, state.user, state.groups, state.accounts);
+  const ownSection = sections.find((section) => section.own);
+  const contextKey = `${state.user?.id || state.user?.username || "admin"}:${ownSection?.key || "none"}`;
+  if (state.workspaceGroupContextKey !== contextKey) {
+    state.workspaceGroupContextKey = contextKey;
+    state.expandedWorkspaceGroups = defaultExpandedWorkspaceGroups(sections);
+  }
+  document.querySelector("#workspace-list").innerHTML = sections.map((section) => {
+    const open = Boolean(query) || state.expandedWorkspaceGroups.has(section.key);
+    const label = section.name || t("workspace.ungrouped");
+    return `<details class="workspace-group" data-workspace-group="${escapeHtml(section.key)}"${open ? " open" : ""}>
+      <summary><span>${escapeHtml(label)}</span><span class="workspace-group-count">${t("workspace.groupCount").replace("{count}", section.workspaces.length.toLocaleString())}</span></summary>
+      <div class="workspace-group-items">${section.workspaces.map(({ workspace, index }) => workspaceCardMarkup(workspace, index)).join("")}</div>
+    </details>`;
+  }).join("");
 }
 
 export function renderWorkspaceManagement() {
@@ -618,14 +644,16 @@ export function renderAdmin() {
         </div>
       </article>`;
   };
-  const groups = state.groups.map((group) => {
+  const query = state.adminQuery.trim();
+  const groups = state.groups.flatMap((group) => {
     const accounts = state.accounts.filter((account) => account.groupId === group.id);
+    if (!adminGroupMatches(group, accounts, query)) return [];
     const used = Number(group.diskUsageBytes || 0);
     const limit = group.diskLimitBytes === null || group.diskLimitBytes === undefined ? null : Number(group.diskLimitBytes);
     const percent = limit === null ? 0 : limit === 0 ? (used > 0 ? 100 : 0) : Math.min(100, Math.round((used / limit) * 100));
     const usage = limit === null ? `${formatBytes(used)} / ${t("admin.unlimited")}` : `${formatBytes(used)} / ${formatBytes(limit)}`;
     const liveRunLimit = Math.max(0, Number(group.liveRunLimit ?? 1));
-    return `
+    return [`
       <details class="admin-group" open>
         <summary>
           <div>
@@ -638,13 +666,14 @@ export function renderAdmin() {
         </summary>
         <div class="meter ${limit !== null && used > limit ? "danger" : ""}"><span style="width: ${percent}%"></span></div>
         <div class="admin-group-users">${accounts.length ? accounts.map(accountRow).join("") : `<p class="admin-empty">${t("admin.emptyGroup")}</p>`}</div>
-      </details>`;
+      </details>`];
   });
   const ungrouped = state.accounts.filter((account) => !state.groups.some((group) => group.id === account.groupId));
-  if (ungrouped.length) {
+  if (ungrouped.length && adminGroupMatches({ name: "" }, ungrouped, query)) {
     groups.push(`<section class="admin-group"><h3>${t("admin.ungrouped")}</h3>${ungrouped.map(accountRow).join("")}</section>`);
   }
-  document.querySelector("#admin-grid").innerHTML = groups.length ? groups.join("") : `<p class="admin-empty">${t("admin.noGroups")}</p>`;
+  const emptyKey = query ? "admin.noSearchResults" : "admin.noGroups";
+  document.querySelector("#admin-grid").innerHTML = groups.length ? groups.join("") : `<p class="admin-empty">${t(emptyKey)}</p>`;
 
   const logs = state.auditLogs.length
     ? state.auditLogs.map((log) => `${log.actor} ${log.event}${log.detail ? ` - ${log.detail}` : ""}`)
