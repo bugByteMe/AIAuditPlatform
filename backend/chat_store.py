@@ -514,6 +514,7 @@ class ChatStore:
       "id": session["id"], "title": session["title"], "status": session["status"], "updated": session["updated"],
       "tokens": session.get("tokens", "0"), "latestRunId": session.get("latestRunId"),
       "createdBy": session.get("createdBy") or "",
+      "collaboratingWorkspaceIds": list(session.get("collaboratingWorkspaceIds") or []),
       "codexNativeResumable": bool(session.get("codexNativeResumable")), "forkedFromSessionId": session.get("forkedFromSessionId"),
       "events": [self.public_event_tuple(event) for event in (events or [])],
     }

@@ -215,7 +215,7 @@ The control plane requires the same bearer token through `AI_AUDIT_WORKER_AUTH_T
 - `worker_request_timeout_seconds` bounds individual HTTPS calls.
 - `worker_run_lease_seconds` fences orphaned work. A worker stops an active container if the control plane no longer renews its lease.
 
-The agent API is intentionally narrow: health; run start, status/events, terminal checkpoint result, stop, lease renewal, and terminal acknowledgement; plus upload initialization, bounded chunks, status, finalization, and cleanup. Health advertises checkpoint protocol version `2`. It requires HTTPS and constant-time bearer authentication. Codex API keys are written by the control plane into the session-scoped shared `CODEX_HOME`; they are not included in scheduler requests or worker run records.
+The agent API is intentionally narrow: health; run start, status/events, terminal checkpoint result, stop, lease renewal, and terminal acknowledgement; plus upload initialization, bounded chunks, status, finalization, and cleanup. Health advertises checkpoint protocol version `2` and collaborating-workspace mount protocol version `1`. It requires HTTPS and constant-time bearer authentication. Codex API keys are written by the control plane into the session-scoped shared `CODEX_HOME`; they are not included in scheduler requests or worker run records. All workers should be upgraded before users select collaborating workspaces; ordinary runs remain compatible with older workers during a rolling upgrade.
 
 ## Account Policy
 

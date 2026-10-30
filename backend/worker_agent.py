@@ -102,6 +102,20 @@ class WorkerState:
     codex_home = self.root / "codex" / "homes" / username / session_id
     if not workspace_path.is_dir() or not codex_home.is_dir():
       raise ValueError("shared workspace or Codex home is unavailable")
+    collaborators = []
+    seen_collaborators = set()
+    for item in payload.get("collaboratingWorkspaces") or []:
+      if not isinstance(item, dict):
+        raise ValueError("invalid collaborating workspace descriptor")
+      collaborator_id = self.validate_id(str(item.get("id") or ""), "collaborating workspace id")
+      if collaborator_id == workspace_id or collaborator_id in seen_collaborators:
+        raise ValueError("invalid collaborating workspace descriptor")
+      collaborator_path = self.root / "active" / collaborator_id
+      if not collaborator_path.is_dir():
+        raise ValueError("collaborating workspace is unavailable")
+      seen_collaborators.add(collaborator_id)
+      collaborators.append({"id": collaborator_id, "name": str(item.get("name") or collaborator_id)})
+    payload = {**payload, "collaboratingWorkspaces": collaborators}
     with self.lock:
       existing = self.runs.get(run_id)
       if existing:
@@ -276,6 +290,7 @@ class WorkerState:
       "memoryTotalBytes": self.node["memoryBytes"],
       "activeRuns": sorted(active),
       "checkpointProtocol": CHECKPOINT_PROTOCOL_VERSION,
+      "collaborationMountProtocol": 1,
       "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 

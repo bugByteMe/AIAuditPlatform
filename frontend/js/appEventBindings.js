@@ -12,6 +12,7 @@ export function createEventBindings(context) {
   const renderCurrentUser = (...args) => context.renderCurrentUser(...args);
   const renderFileExplorer = (...args) => context.renderFileExplorer(...args);
   const renderPanelState = (...args) => context.renderPanelState(...args);
+  const renderCollaboratingWorkspacePicker = (...args) => context.renderCollaboratingWorkspacePicker(...args);
   const renderWorkspaces = (...args) => context.renderWorkspaces(...args);
   const isEventStreamNearTop = (...args) => context.isEventStreamNearTop(...args);
   const canManageAccounts = (...args) => context.canManageAccounts(...args);
@@ -689,7 +690,13 @@ export function createEventBindings(context) {
       const prompt = textarea.value.trim();
       textarea.value = "";
       try {
-        const request = { prompt, sessionId: session?.id, model, reasoning };
+        const request = {
+          prompt,
+          sessionId: session?.id,
+          model,
+          reasoning,
+          collaboratingWorkspaceIds: [...state.composerCollaboratingWorkspaceIds],
+        };
         let result;
         while (!result) {
           try {
@@ -784,6 +791,20 @@ export function createEventBindings(context) {
 
   function bindInputs() {
     manageModalFocus();
+    document.querySelector("#collaborating-workspace-search").addEventListener("input", (event) => {
+      state.collaboratingWorkspaceQuery = event.target.value;
+      renderCollaboratingWorkspacePicker();
+      document.querySelector("#collaborating-workspace-search")?.focus();
+    });
+    document.querySelector("#collaborating-workspace-options").addEventListener("change", (event) => {
+      const checkbox = event.target.closest("[data-collaborating-workspace-id]");
+      if (!checkbox) return;
+      const next = new Set(state.composerCollaboratingWorkspaceIds);
+      if (checkbox.checked) next.add(checkbox.dataset.collaboratingWorkspaceId);
+      else next.delete(checkbox.dataset.collaboratingWorkspaceId);
+      state.composerCollaboratingWorkspaceIds = next;
+      renderCollaboratingWorkspacePicker();
+    });
     const composerHandle = document.querySelector("#composer-resize-handle");
     const composerInput = document.querySelector("#composer textarea");
     const resizeComposer = (height) => {

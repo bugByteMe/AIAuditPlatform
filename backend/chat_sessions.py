@@ -69,6 +69,7 @@ class ChatSessionMixin:
         "tokens": "0",
         "totalTokens": 0,
         "latestRunId": None,
+        "collaboratingWorkspaceIds": [],
         "createdBy": user["username"],
         "created": timestamp,
       }
@@ -120,6 +121,9 @@ class ChatSessionMixin:
         "tokens": "0",
         "totalTokens": 0,
         "latestRunId": None,
+        "collaboratingWorkspaceIds": self.store.filter_collaborating_workspace_ids(
+          workspace_id, user, source.get("collaboratingWorkspaceIds") or [],
+        ),
         "createdBy": user["username"],
         "created": timestamp,
         "forkedFromSessionId": session_id,
@@ -265,6 +269,21 @@ class ChatSessionMixin:
         if session["workspaceId"] != workspace_id:
           raise StorageError("bad_request", "chat session belongs to another workspace")
       previous_run = self.chat_store.get_run(str(session.get("latestRunId") or ""))
+      requested_collaborators = (
+        payload.get("collaboratingWorkspaceIds")
+        if "collaboratingWorkspaceIds" in payload
+        else session.get("collaboratingWorkspaceIds") or []
+      )
+      collaborating_workspaces = self.store.resolve_collaborating_workspaces(
+        workspace_id, user, requested_collaborators,
+      )
+      if collaborating_workspaces and self.worker_registry and not self.worker_registry.compatible(
+        self.requested_cpu, self.requested_memory_bytes, collaboration_mount_protocol=1,
+      ):
+        raise StorageError(
+          "no_collaboration_capable_worker",
+          "no configured compute node supports collaborating workspace mounts for this run",
+        )
       inherited_model = str((previous_run or {}).get("model") or "gpt-5.6-sol")
       inherited_reasoning = str((previous_run or {}).get("reasoning") or "high")
       timestamp = now_string()
@@ -287,6 +306,7 @@ class ChatSessionMixin:
         "created": timestamp,
         "updated": timestamp,
         "baseSnapshotId": workspace.get("latestSnapshotId"),
+        "collaboratingWorkspaces": collaborating_workspaces,
         "resultSnapshotId": None,
         "tokens": 0,
         "inputTokens": 0,
@@ -306,6 +326,7 @@ class ChatSessionMixin:
       workspace["activeRunId"] = workspace.get("activeRunId") or run["id"]
       session["status"] = "queued"
       session["latestRunId"] = run["id"]
+      session["collaboratingWorkspaceIds"] = [item["id"] for item in collaborating_workspaces]
       session["updated"] = timestamp
       session["codexHomeUser"] = user["username"]
       self.chat_store.save_session(session)
@@ -336,6 +357,7 @@ class ChatSessionMixin:
       "tokens": "0",
       "totalTokens": 0,
       "latestRunId": None,
+      "collaboratingWorkspaceIds": [],
       "createdBy": user["username"],
       "created": timestamp,
     }

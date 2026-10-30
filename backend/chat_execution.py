@@ -65,7 +65,12 @@ class ChatExecutionMixin:
       if not run or run.get("status") != "queued":
         continue
       if self.worker_registry:
-        node_id = self.worker_registry.claim(run_id, float(run["requestedCpu"]), int(run["requestedMemoryBytes"]))
+        node_id = self.worker_registry.claim(
+          run_id,
+          float(run["requestedCpu"]),
+          int(run["requestedMemoryBytes"]),
+          collaboration_mount_protocol=1 if run.get("collaboratingWorkspaces") else 0,
+        )
         if not node_id:
           self.queue.put(run_id)
           time.sleep(max(self.scheduler_poll_seconds, 0.1))

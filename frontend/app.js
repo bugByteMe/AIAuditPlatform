@@ -21,6 +21,7 @@ import {
   renderAdmin,
   renderArtifacts,
   renderChatSessions,
+  renderCollaboratingWorkspacePicker,
   renderCurrentUser,
   renderEvents,
   renderFileExplorer,
@@ -37,6 +38,7 @@ import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSetting
 import { renderPaymentNotice } from "./js/paymentNotice.js";
 import { resolveStartup, setStartupScreen } from "./js/startupUi.js";
 import { startMonitoredDownload } from "./js/nativeDownload.js";
+import { reconcileCollaboratingWorkspaceIds } from "./js/collaboratingWorkspaces.js";
 import {
   buildWorkspaceHierarchy, flattenWorkspaceHierarchy, workspaceDescendantIds, workspaceGroupsMatch,
 } from "./js/workspaceGroups.js";
@@ -57,6 +59,42 @@ export function renderDynamic() {
   renderPanelState();
   renderAdmin();
   renderWorkers();
+}
+
+async function loadCollaboratingWorkspaceCandidates(workspaceId = safeCurrentWorkspace()?.id) {
+  if (!workspaceId) {
+    state.collaboratingWorkspaceCandidates = [];
+    state.collaboratingWorkspaceCandidatesWorkspaceId = "";
+    state.collaboratingWorkspaceCandidatesLoading = false;
+    state.collaboratingWorkspaceCandidatesError = false;
+    renderCollaboratingWorkspacePicker();
+    return;
+  }
+  if (state.collaboratingWorkspaceCandidatesWorkspaceId !== workspaceId) {
+    state.collaboratingWorkspaceCandidates = [];
+  }
+  state.collaboratingWorkspaceCandidatesLoading = true;
+  state.collaboratingWorkspaceCandidatesError = false;
+  renderCollaboratingWorkspacePicker();
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/collaborating-workspaces`);
+    if (safeCurrentWorkspace()?.id !== workspaceId) return;
+    state.collaboratingWorkspaceCandidates = result.workspaces || [];
+    state.collaboratingWorkspaceCandidatesWorkspaceId = workspaceId;
+    state.composerCollaboratingWorkspaceIds = new Set(
+      reconcileCollaboratingWorkspaceIds(
+        state.composerCollaboratingWorkspaceIds, state.collaboratingWorkspaceCandidates,
+      ),
+    );
+  } catch (error) {
+    if (safeCurrentWorkspace()?.id !== workspaceId) return;
+    state.collaboratingWorkspaceCandidatesError = true;
+  } finally {
+    if (safeCurrentWorkspace()?.id === workspaceId) {
+      state.collaboratingWorkspaceCandidatesLoading = false;
+      renderCollaboratingWorkspacePicker();
+    }
+  }
 }
 
 function showToast(message) {
@@ -312,6 +350,7 @@ async function loadWorkspaces() {
     renderDynamic();
     maybeStartChatStream();
     if (workspaceId) {
+      void loadCollaboratingWorkspaceCandidates(workspaceId);
       void refreshWorkspaceById(workspaceId).then((workspace) => {
         if (!workspace || safeCurrentWorkspace()?.id !== workspaceId) return;
         resetFileTreeState(workspace);
@@ -940,6 +979,7 @@ const appContext = {
   renderAdmin,
   renderArtifacts,
   renderChatSessions,
+  renderCollaboratingWorkspacePicker,
   renderCurrentUser,
   renderEvents,
   renderFileExplorer,
@@ -959,6 +999,7 @@ const appContext = {
   renderPaymentNotice,
   VALID_VIEWS,
   renderDynamic,
+  loadCollaboratingWorkspaceCandidates,
   showToast,
   safeCurrentWorkspace,
   clamp,

@@ -116,6 +116,14 @@
 - Hierarchy rendering promotes children of invisible parents, preserves sibling
   update order, defaults to showing levels one and two, and expands visible
   ancestor paths during search without counting those ancestors as matches.
+- Collaborating-workspace candidates include visible direct and deep descendants,
+  including descendants reached through hidden ancestors, and exclude self,
+  ancestors, siblings, inaccessible workspaces, and cross-group nodes.
+- Run admission revalidates every collaborating workspace without leaking which
+  submitted ID failed. Repeated IDs are deduplicated in request order.
+- Collaborating mounts are live and read-only, do not lock the selected
+  workspaces, and are excluded from current-workspace snapshots, artifacts,
+  diffs, and quota accounting.
 
 ## Chat Lifecycle
 
@@ -130,6 +138,11 @@
 - Healthy SSE uses named heartbeats plus one connection-time cursor reconciliation without a parallel polling loop.
 - A stalled or failed SSE connection activates cursor polling while reconnecting, then disables polling after SSE becomes healthy.
 - Container failure records an error and preserves recoverable state when possible.
+- Chat runs remember collaborating-workspace selections, explicit empty
+  selections clear them, and chat forks retain only selections still eligible
+  for the new chat user.
+- Remote runs with collaborating mounts use only workers advertising mount
+  protocol version 1; ordinary runs remain schedulable on older workers.
 
 ## Real-Time Streaming
 

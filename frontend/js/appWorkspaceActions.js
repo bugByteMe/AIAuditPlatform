@@ -14,6 +14,7 @@ export function createWorkspaceActions(context) {
   const maybeStartChatStream = (...args) => context.maybeStartChatStream(...args);
   const routeToView = (...args) => context.routeToView(...args);
   const workspaceAt = (...args) => context.workspaceAt(...args);
+  const loadCollaboratingWorkspaceCandidates = (...args) => context.loadCollaboratingWorkspaceCandidates(...args);
 
   async function selectWorkspace(index) {
     state.selectedWorkspace = Number(index);
@@ -21,6 +22,7 @@ export function createWorkspaceActions(context) {
     stopChatStream();
     const workspaceId = safeCurrentWorkspace()?.id;
     renderDynamic();
+    void loadCollaboratingWorkspaceCandidates(workspaceId);
     if (workspaceId && !safeCurrentWorkspace()?.detailLoaded) await refreshWorkspaceById(workspaceId);
     if (safeCurrentWorkspace()?.id !== workspaceId) return;
     resetFileTreeState(safeCurrentWorkspace());

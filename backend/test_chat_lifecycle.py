@@ -4,6 +4,54 @@ from chat_runtime_test_support import *
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def test_run_mounts_visible_descendants_and_remembers_then_clears_selection(self) -> None:
+    root = self.create_workspace()
+    child = self.store.create_workspace(
+      self.users["li.review"], "Child", True,
+      [UploadedFile("child.txt", b"child")], parent_workspace_id=root["id"],
+    )
+    grandchild = self.store.create_workspace(
+      self.users["li.review"], "Grandchild", True,
+      [UploadedFile("grandchild.txt", b"grandchild")], parent_workspace_id=child["id"],
+    )
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+
+    first = runtime.start_run(root["id"], self.users["li.review"], {
+      "prompt": "Compare descendants",
+      "collaboratingWorkspaceIds": [child["id"], grandchild["id"], child["id"]],
+    })
+    self.assertEqual(
+      [item["id"] for item in first["run"]["collaboratingWorkspaces"]],
+      [child["id"], grandchild["id"]],
+    )
+    self.wait_for_status(runtime, root["id"], first["session"]["id"], "completed")
+
+    inherited = runtime.start_run(root["id"], self.users["li.review"], {
+      "prompt": "Compare again", "sessionId": first["session"]["id"],
+    })
+    self.assertEqual(
+      [item["id"] for item in inherited["run"]["collaboratingWorkspaces"]],
+      [child["id"], grandchild["id"]],
+    )
+    self.wait_for_status(runtime, root["id"], first["session"]["id"], "completed")
+
+    cleared = runtime.start_run(root["id"], self.users["li.review"], {
+      "prompt": "Current only", "sessionId": first["session"]["id"],
+      "collaboratingWorkspaceIds": [],
+    })
+    self.assertEqual(cleared["run"]["collaboratingWorkspaces"], [])
+    self.assertEqual(cleared["session"]["collaboratingWorkspaceIds"], [])
+
+  def test_run_rejects_non_descendant_collaborating_workspace_without_leaking_detail(self) -> None:
+    root = self.create_workspace()
+    sibling = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(root["id"], self.users["li.review"], {
+        "prompt": "Invalid reference", "collaboratingWorkspaceIds": [sibling["id"]],
+      })
+    self.assertEqual(context.exception.code, "invalid_collaborating_workspace")
+
   def test_chat_creator_display_name_is_presentation_only(self) -> None:
     self.users["li.review"]["displayName"] = "李复核"
     workspace = self.create_workspace()

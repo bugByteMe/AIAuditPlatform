@@ -184,7 +184,11 @@ class WorkspaceHandlerMixin:
 
   def chat_api(self, method: str, workspace_id: str, action: str, tail: str, query: str, subtail: str = "") -> None:
     user = self.require_user()
-    if method == "GET" and action == "sessions" and not tail:
+    if method == "GET" and action == "collaborating-workspaces" and not tail:
+      self.write_json({
+        "workspaces": WORKSPACE_STORE.collaborating_workspace_candidates(workspace_id, user),
+      })
+    elif method == "GET" and action == "sessions" and not tail:
       self.write_json({"sessions": CHAT_RUNTIME.list_sessions(workspace_id, user)})
     elif method == "POST" and action == "sessions" and not tail:
       payload = self.read_json()
@@ -207,7 +211,13 @@ class WorkspaceHandlerMixin:
       self.write_json({"session": session}, HTTPStatus.CREATED)
     elif method == "POST" and action == "runs" and not tail:
       result = CHAT_RUNTIME.start_run(workspace_id, user, self.read_json())
-      add_audit(user["username"], "chat run queued", f"{workspace_id} {result['run']['id']}")
+      collaborator_ids = ",".join(
+        item["id"] for item in result["run"].get("collaboratingWorkspaces") or []
+      ) or "-"
+      add_audit(
+        user["username"], "chat run queued",
+        f"{workspace_id} {result['run']['id']} collaboratingWorkspaceIds={collaborator_ids}",
+      )
       self.write_json(result, HTTPStatus.CREATED)
     elif method == "POST" and action == "runs" and tail:
       parts = [unquote(part) for part in urlparse(self.path).path.split("/") if part]

@@ -56,6 +56,8 @@ permissions or content.
 Workspace owners can enable an exclusive run lock or allow confirmed runs from different chat sessions to share the live workspace concurrently. Uploads and manual file mutations remain blocked while any run is active.
 
 Generated and modified files are exposed as downloadable artifacts.
+Chat runs may also attach visible descendant workspaces as live read-only
+references while keeping the current workspace as the sole writable output.
 
 See [workspace-and-artifacts.md](workspace-and-artifacts.md).
 

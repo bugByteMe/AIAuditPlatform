@@ -4,6 +4,26 @@ from unittest.mock import Mock
 
 
 class CodexRunnerTest(ChatRuntimeTestBase):
+  def test_collaborating_workspace_mounts_are_read_only_and_prompted(self) -> None:
+    runner = DockerCodexRunner()
+    active_root = Path(self.tempdir.name) / "active"
+    current = active_root / "ws_current"
+    collaborator = active_root / "ws_child"
+    current.mkdir(parents=True)
+    collaborator.mkdir()
+    run = {
+      "prompt": "Compare the files",
+      "collaboratingWorkspaces": [{"id": "ws_child", "name": "Prior year"}],
+    }
+    mounts = runner.collaboration_mounts(run, current)
+    self.assertEqual(mounts[0]["source"], collaborator.resolve())
+    self.assertEqual(mounts[0]["mountPath"], "/collaborating-workspaces/ws_child")
+    prompt = runner.codex_prompt(run)
+    self.assertIn("/workspace", prompt)
+    self.assertIn("/collaborating-workspaces/ws_child", prompt)
+    self.assertIn("live read-only", prompt)
+    self.assertTrue(prompt.endswith("Compare the files"))
+
   def test_docker_runner_writes_session_scoped_codex_home(self) -> None:
     runner = DockerCodexRunner()
     runner.codex_home_root = Path(self.tempdir.name) / "codex_homes"

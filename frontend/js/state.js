@@ -57,6 +57,13 @@ export const state = {
   focusPanelState: null,
   operationProgress: null,
   composerSettingsSessionId: "",
+  composerCollaborationSessionKey: "",
+  composerCollaboratingWorkspaceIds: new Set(),
+  collaboratingWorkspaceCandidates: [],
+  collaboratingWorkspaceCandidatesWorkspaceId: "",
+  collaboratingWorkspaceCandidatesLoading: false,
+  collaboratingWorkspaceCandidatesError: false,
+  collaboratingWorkspaceQuery: "",
   workspaceCreateUploadController: null,
   nameEditor: null,
 };

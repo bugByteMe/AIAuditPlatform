@@ -34,6 +34,14 @@ When a user starts a chat:
 3. Scheduler reserves CPU and memory on the least-utilized compatible healthy worker (stable configuration order breaks ties).
 4. Worker launches a Docker container with the workspace mounted.
 5. Worker streams events back to the backend.
+
+Run requests may include `collaboratingWorkspaceIds`. The backend resolves these
+to visible descendants, stores the effective descriptors on the run, and stores
+their IDs as the chat's default for later turns. The runner adds a generated
+workspace-layout preamble to the Codex prompt while the persisted user event
+retains the original prompt. Codex starts in writable `/workspace`; selected
+references are available live and read-only under
+`/collaborating-workspaces/<workspace-id>`.
 6. Backend persists events and fans them out to the frontend.
 
 Users can select model and reasoning effort before starting a run. These settings are stored on the run record.
@@ -135,6 +143,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 - `POST /api/workspaces/{workspace_id}/chat/sessions/{session_id}/fork`
 - `DELETE /api/workspaces/{workspace_id}/chat/sessions/{session_id}`
 - `POST /api/workspaces/{workspace_id}/chat/runs`
+- `GET /api/workspaces/{workspace_id}/chat/collaborating-workspaces`
 - `POST /api/workspaces/{workspace_id}/chat/runs/{run_id}/stop`
 - `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`
 - `GET /api/workspaces/{workspace_id}/chat/stream?sessionId={session_id}&after={event_id}`

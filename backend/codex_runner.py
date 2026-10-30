@@ -66,9 +66,10 @@ class DockerCodexRunner(CodexRunner):
       f"{workspace_path.resolve()}:/workspace",
       "-v",
       f"{codex_home.resolve()}:/home/codex/.codex",
-      "-w",
-      "/workspace",
     ]
+    for collaborator in self.collaboration_mounts(run, workspace_path):
+      command.extend(["-v", f"{collaborator['source']}:{collaborator['mountPath']}:ro"])
+    command.extend(["-w", "/workspace"])
     command.extend([self.image, *self.codex_command_args(run)])
     started = time.monotonic()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
@@ -295,6 +296,47 @@ class DockerCodexRunner(CodexRunner):
     self.make_tree_writable_for_container(codex_home)
     return codex_home
 
+  def collaboration_mounts(self, run: dict, workspace_path: Path) -> list[dict]:
+    active_root = workspace_path.parent.resolve()
+    mounts = []
+    seen = set()
+    for item in run.get("collaboratingWorkspaces") or []:
+      workspace_id = str(item.get("id") or "") if isinstance(item, dict) else ""
+      if not workspace_id or safe_segment(workspace_id) != workspace_id or workspace_id in seen:
+        raise RunnerError("invalid collaborating workspace descriptor")
+      source = (active_root / workspace_id).resolve()
+      if source.parent != active_root or not source.is_dir():
+        raise RunnerError(f"collaborating workspace {workspace_id} is unavailable")
+      seen.add(workspace_id)
+      mounts.append({
+        "id": workspace_id,
+        "name": str(item.get("name") or workspace_id),
+        "source": source,
+        "mountPath": f"/collaborating-workspaces/{workspace_id}",
+      })
+    return mounts
+
+  def codex_prompt(self, run: dict) -> str:
+    collaborators = run.get("collaboratingWorkspaces") or []
+    if not collaborators:
+      return str(run["prompt"])
+    lines = [
+      "Runtime workspace layout:",
+      "- The current workspace is writable at /workspace.",
+      "- The following collaborating workspaces are live read-only references:",
+    ]
+    for item in collaborators:
+      workspace_id = str(item.get("id") or "")
+      name = json.dumps(str(item.get("name") or workspace_id), ensure_ascii=False)
+      lines.append(f"  - {name}: /collaborating-workspaces/{workspace_id}")
+    lines.extend([
+      "Use collaborating workspaces for reading, searching, comparison, and copying into /workspace; do not attempt to modify them.",
+      "",
+      "User request:",
+      str(run["prompt"]),
+    ])
+    return "\n".join(lines)
+
   def session_home(self, username: str, session_id: str) -> Path:
     return self.codex_home_root / safe_segment(username) / safe_segment(session_id)
 
@@ -356,6 +398,7 @@ class DockerCodexRunner(CodexRunner):
 
   def codex_command_args(self, run: dict) -> list[str]:
     base = ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "exec"]
+    prompt = self.codex_prompt(run)
     if run.get("codexFork"):
       return [
         *base,
@@ -365,7 +408,7 @@ class DockerCodexRunner(CodexRunner):
         "-m",
         run["model"],
         run["codexSessionId"],
-        run["prompt"],
+        prompt,
       ]
     if run.get("codexResume"):
       base.extend(["resume", "--json", "--skip-git-repo-check", "-m", run["model"]])
@@ -373,7 +416,7 @@ class DockerCodexRunner(CodexRunner):
         base.append(run["codexSessionId"])
       else:
         base.append("--last")
-      base.append(run["prompt"])
+      base.append(prompt)
       return base
     return [
       *base,
@@ -383,7 +426,7 @@ class DockerCodexRunner(CodexRunner):
       "/workspace",
       "-m",
       run["model"],
-      run["prompt"],
+      prompt,
     ]
 
   def extract_codex_session_id(self, payload: dict) -> str | None:

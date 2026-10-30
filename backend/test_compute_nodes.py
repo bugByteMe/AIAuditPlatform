@@ -83,6 +83,16 @@ class WorkerRegistryTest(unittest.TestCase):
     self.assertFalse(self.registry.compatible(9, 2_000))
     self.assertIsNone(self.registry.select(9, 2_000))
 
+  def test_collaborating_mount_runs_require_advertised_worker_capability(self):
+    self.assertFalse(self.registry.compatible(2, 2_000, collaboration_mount_protocol=1))
+    FakeWorkerClient.health_by_id["large"]["collaborationMountProtocol"] = 1
+    self.registry.refresh("large")
+    self.assertTrue(self.registry.compatible(2, 2_000, collaboration_mount_protocol=1))
+    worker_id = self.registry.claim(
+      "collaboration-run", 2, 2_000, collaboration_mount_protocol=1,
+    )
+    self.assertEqual(worker_id, "large")
+
   def test_upload_claim_honors_slots_and_is_reported_separately(self):
     worker_id = self.registry.claim_upload("upload-1", 1, 1_000)
     second_worker = self.registry.claim_upload("upload-2", 1, 1_000)

@@ -121,6 +121,8 @@ Each compute worker runs a lightweight worker agent. The worker agent:
 - Receives authenticated resumable upload chunks and finalizes workspace files on shared storage.
 - Launches one Docker container per active Codex run.
 - Mounts the assigned workspace path into the container.
+- Mounts each admitted collaborating descendant workspace individually as a
+  live read-only reference; it never exposes the shared workspace root.
 - Applies CPU, memory, timeout, and network policies.
 - Streams run events back to the backend.
 
@@ -134,6 +136,11 @@ The scheduler runs on the main node. It assigns queued runs to healthy workers b
 - Worker heartbeat freshness.
 
 Among compatible nodes, the scheduler chooses the assignment with the lowest maximum projected CPU/memory utilization and uses configuration order as the deterministic tie-breaker. If no worker has capacity, the run remains queued. If a worker becomes unhealthy, it stops receiving new runs. Active work is protected by a renewable lease: on control-plane loss the worker stops the container, and on worker loss the control plane waits out that lease before recording the run as failed/resumable. Runs are not automatically retried because workspace mutations may already have occurred.
+
+Workers advertise `collaborationMountProtocol: 1` when they can validate and
+mount collaborating workspaces. Runs without collaborating mounts remain
+compatible with older workers. A run that requests them is admitted and
+scheduled only when a resource-compatible worker advertises this capability.
 
 Control-plane/worker traffic uses HTTPS with CA verification and a shared bearer secret supplied only through the environment. The worker protocol is limited to health, run start, status/event polling, stop, lease renewal, and terminal acknowledgement/cleanup. Worker identities and capacities are static configuration, not self-registration.
 

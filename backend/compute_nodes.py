@@ -69,6 +69,7 @@ class WorkerClient:
         "requestedMemoryBytes",
         "baseSnapshotId",
         "checkpointBaseRef",
+        "collaboratingWorkspaces",
       ]
     }
     started = self.request("POST", "/v1/runs", payload)
@@ -226,6 +227,7 @@ class WorkerRegistry:
             "error": "",
             "activeRuns": list(health.get("activeRuns") or []),
             "checkpointProtocol": int(health.get("checkpointProtocol") or 1),
+            "collaborationMountProtocol": int(health.get("collaborationMountProtocol") or 0),
           }
         )
     except Exception as exc:
@@ -236,16 +238,26 @@ class WorkerRegistry:
           state["healthy"] = False
         state["error"] = str(exc)
 
-  def compatible(self, cpu: float, memory_bytes: int) -> bool:
-    return any(float(node["cpu"]) >= cpu and int(node["memoryBytes"]) >= memory_bytes for node in self.nodes.values())
+  def compatible(self, cpu: float, memory_bytes: int, *, collaboration_mount_protocol: int = 0) -> bool:
+    return any(
+      float(node["cpu"]) >= cpu
+      and int(node["memoryBytes"]) >= memory_bytes
+      and (
+        not collaboration_mount_protocol
+        or int(self.states.get(node_id, {}).get("collaborationMountProtocol") or 0) >= collaboration_mount_protocol
+      )
+      for node_id, node in self.nodes.items()
+    )
 
   def select(self, cpu: float, memory_bytes: int) -> str | None:
     with self.lock:
       return self._select_locked(cpu, memory_bytes)
 
-  def claim(self, run_id: str, cpu: float, memory_bytes: int, kind: str = "run") -> str | None:
+  def claim(
+    self, run_id: str, cpu: float, memory_bytes: int, kind: str = "run", *, collaboration_mount_protocol: int = 0,
+  ) -> str | None:
     with self.lock:
-      node_id = self._select_locked(cpu, memory_bytes, kind)
+      node_id = self._select_locked(cpu, memory_bytes, kind, collaboration_mount_protocol)
       if node_id:
         self.states[node_id]["reservations"][run_id] = {"cpu": cpu, "memoryBytes": memory_bytes, "kind": kind}
       return node_id
@@ -253,11 +265,15 @@ class WorkerRegistry:
   def claim_upload(self, upload_id: str, cpu: float, memory_bytes: int) -> str | None:
     return self.claim(upload_id, cpu, memory_bytes, "upload")
 
-  def _select_locked(self, cpu: float, memory_bytes: int, kind: str = "run") -> str | None:
+  def _select_locked(
+    self, cpu: float, memory_bytes: int, kind: str = "run", collaboration_mount_protocol: int = 0,
+  ) -> str | None:
     candidates = []
     now = time.monotonic()
     for order, (node_id, node) in enumerate(self.nodes.items()):
       state = self.states[node_id]
+      if collaboration_mount_protocol and int(state.get("collaborationMountProtocol") or 0) < collaboration_mount_protocol:
+        continue
       if not state.get("healthy") or now - float(state.get("lastContactMonotonic") or 0) >= self.settings.worker_unhealthy_after_seconds:
         continue
       used_cpu = sum(float(item["cpu"]) for item in state["reservations"].values())
@@ -306,6 +322,7 @@ class WorkerRegistry:
               "activeRunIds": [],
               "activeUploadCount": 0,
               "checkpointProtocol": 0,
+              "collaborationMountProtocol": 0,
               "lastContact": None,
               "error": "disabled by configuration",
             }
@@ -335,6 +352,7 @@ class WorkerRegistry:
             "activeRunIds": sorted(run_reservations),
             "activeUploadCount": len(upload_reservations),
             "checkpointProtocol": int(state.get("checkpointProtocol") or 1),
+            "collaborationMountProtocol": int(state.get("collaborationMountProtocol") or 0),
             "lastContact": state.get("lastContact"),
             "error": state.get("error") or "",
           }

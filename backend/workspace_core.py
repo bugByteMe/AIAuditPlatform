@@ -358,6 +358,72 @@ class WorkspaceCoreMixin:
       raise StorageError("forbidden", "workspace access denied")
     return workspace
 
+  def workspace_is_descendant(self, workspace: dict, ancestor_id: str) -> bool:
+    """Return whether workspace is below ancestor_id without granting access through the hierarchy."""
+    visited = set()
+    parent_id = str(workspace.get("parentWorkspaceId") or "")
+    while parent_id:
+      if parent_id == ancestor_id:
+        return True
+      if parent_id in visited:
+        return False
+      visited.add(parent_id)
+      parent = self.database.get_workspace_header(parent_id)
+      if not parent:
+        return False
+      parent_id = str(parent.get("parentWorkspaceId") or "")
+    return False
+
+  def collaborating_workspace_candidates(self, workspace_id: str, user: dict) -> list[dict]:
+    self.get_workspace(workspace_id, user)
+    return [
+      {
+        "id": workspace["id"],
+        "name": workspace["name"],
+      }
+      for workspace in self.list_workspaces(user)
+      if workspace["id"] != workspace_id and self.workspace_is_descendant(workspace, workspace_id)
+    ]
+
+  def resolve_collaborating_workspaces(self, workspace_id: str, user: dict, raw_ids) -> list[dict]:
+    if raw_ids is None:
+      raw_ids = []
+    if not isinstance(raw_ids, list) or any(not isinstance(item, str) for item in raw_ids):
+      raise StorageError("bad_request", "collaboratingWorkspaceIds must be an array of workspace IDs")
+    identifiers = list(dict.fromkeys(item.strip() for item in raw_ids if item.strip()))
+    resolved = []
+    for candidate_id in identifiers:
+      candidate = self.database.get_workspace_header(candidate_id)
+      if (
+        not candidate
+        or candidate_id == workspace_id
+        or not self.user_can_access(user, candidate)
+        or not self.workspace_is_descendant(candidate, workspace_id)
+      ):
+        raise StorageError(
+          "invalid_collaborating_workspace",
+          "one or more collaborating workspaces are unavailable or ineligible",
+        )
+      resolved.append({
+        "id": candidate_id,
+        "name": str(candidate.get("name") or candidate_id),
+        "mountPath": f"/collaborating-workspaces/{candidate_id}",
+      })
+    return resolved
+
+  def filter_collaborating_workspace_ids(self, workspace_id: str, user: dict, raw_ids) -> list[str]:
+    eligible = []
+    for candidate_id in raw_ids if isinstance(raw_ids, list) else []:
+      try:
+        eligible.extend(
+          item["id"]
+          for item in self.resolve_collaborating_workspaces(workspace_id, user, [candidate_id])
+          if item["id"] not in eligible
+        )
+      except StorageError:
+        continue
+    return eligible
+
   def public_workspace_summary(self, workspace: dict) -> dict:
     return {
       "id": workspace["id"], "name": workspace["name"], "owner": workspace["owner"],

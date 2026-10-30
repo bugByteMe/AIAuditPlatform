@@ -110,6 +110,29 @@ isolated development tests and legacy migration:
 
 This model gives content deduplication without unbounded binary history or dependence on Git semantics for user-uploaded folders. Retention is bounded per normalized path; a workspace that continually creates and deletes new path names can still accumulate one retained version for every deleted path.
 
+## Collaborating Workspace Mounts
+
+A chat run may select multiple collaborating workspaces. An eligible workspace
+must be a descendant of the current workspace through `parentWorkspaceId` and
+must independently be visible to the user starting the run. Hierarchy remains
+display metadata: it does not grant access, and hidden intermediate ancestors do
+not prevent an otherwise visible deeper descendant from being selected.
+
+The backend returns eligible summaries through the current workspace's chat API
+and revalidates every submitted ID when admitting the run. Invalid, inaccessible,
+non-descendant, and missing IDs share one non-leaking validation error. The
+effective selection is stored on the run and remembered on the chat session;
+omitting the field reuses that session default, while an explicit empty array
+clears it. A chat fork retains only selections still eligible for the forking
+user.
+
+Selected descendants are mounted individually inside the Codex container at
+`/collaborating-workspaces/<workspace-id>` with a read-only bind mount. The
+current workspace remains writable at `/workspace`. Collaborating mounts are
+live views rather than snapshots: Codex may observe concurrent changes, but the
+mount creates no workspace lock and does not affect quota, checkpoint, artifact,
+or diff accounting. Only the current workspace is scanned when the run ends.
+
 ## Permissions
 
 For ordinary users, the workspace overview title uses the current user's actual group name:

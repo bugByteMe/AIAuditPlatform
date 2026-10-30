@@ -186,6 +186,10 @@
     width: 100%;
   }
 
+  .collaborating-workspace-panel {
+    width: 100%;
+  }
+
   .credential-row,
   .recharge-products {
     display: grid;

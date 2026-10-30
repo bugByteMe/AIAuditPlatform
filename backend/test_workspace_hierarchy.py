@@ -89,6 +89,16 @@ class WorkspaceHierarchyTest(unittest.TestCase):
     self.assertEqual(self.store.database.get_workspace_header(owned_child["id"])["parentWorkspaceId"], root["id"])
     self.assertIsNone(self.store.database.get_workspace_header(other_child["id"])["parentWorkspaceId"])
 
+  def test_collaborating_candidates_include_visible_descendant_through_hidden_parent(self) -> None:
+    root = self.create(OWNER, "Root", shared=True)
+    hidden_parent = self.create(OWNER, "Hidden parent", root["id"], shared=False)
+    visible_leaf = self.create(OWNER, "Visible leaf", hidden_parent["id"], shared=True)
+
+    candidates = self.store.collaborating_workspace_candidates(root["id"], OTHER)
+    self.assertEqual(candidates, [{"id": visible_leaf["id"], "name": "Visible leaf"}])
+    resolved = self.store.resolve_collaborating_workspaces(root["id"], OTHER, [visible_leaf["id"]])
+    self.assertEqual(resolved[0]["mountPath"], f"/collaborating-workspaces/{visible_leaf['id']}")
+
 
 if __name__ == "__main__":
   unittest.main()
