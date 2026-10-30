@@ -379,6 +379,18 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertEqual(summary["sessionCount"], 2)
     self.assertEqual(summary["sessions"], [])
 
+  def test_workspace_owner_display_name_is_presentation_only(self) -> None:
+    owner = {**OWNER, "id": "usr_owner", "displayName": "李复核"}
+    self.store.set_account_provider(lambda: ({owner["username"]: owner}, {}))
+    created = self.store.create_workspace(owner, "Named owner", False, [UploadedFile("a.txt", b"a")])
+    summary = next(item for item in self.store.list_workspaces(owner) if item["id"] == created["id"])
+    detail = self.store.public_workspace(self.store.get_workspace(created["id"], owner))
+    stored = self.store.database.get_workspace_header(created["id"])
+    self.assertEqual(summary["owner"], owner["username"])
+    self.assertEqual(summary["ownerDisplayName"], "李复核")
+    self.assertEqual(detail["ownerDisplayName"], "李复核")
+    self.assertNotIn("ownerDisplayName", stored)
+
   def test_workspace_mutation_does_not_load_or_rewrite_unrelated_catalog(self) -> None:
     changed = self.create_workspace(shared=True)
     untouched = self.create_workspace(shared=True)

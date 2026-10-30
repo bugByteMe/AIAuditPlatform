@@ -16,8 +16,11 @@ A workspace is a managed directory on the shared filesystem. It contains the fil
 
 The workspace list response contains summary rows only: identity, ownership,
 sharing/lock state, current file/session counts, update time, and latest snapshot ID. It
-does not include session references, artifacts, or file-tree nodes. After a
-workspace is selected, the browser requests that workspace's detail by ID; the
+does not include session references, artifacts, or file-tree nodes. If a
+workspace owner has a display name, summaries and details also expose it as
+`ownerDisplayName` for presentation. The persisted `owner` username remains the
+sole ownership and authorization key. After a workspace is selected, the
+browser requests that workspace's detail by ID; the
 backend loads only its current metadata and returns the first three levels of
 the file tree. Switching to another summary lazily loads that workspace's
 detail. Folders on the third level report whether they contain children but do

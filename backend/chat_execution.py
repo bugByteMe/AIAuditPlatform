@@ -371,6 +371,9 @@ class ChatExecutionMixin:
     default_resources: dict | None = None,
     worker_resources: dict[str, dict | None] | None = None,
   ) -> dict:
+    creator = str(session.get("createdBy") or "")
+    account = self.users.get(creator) or {}
+    session["createdByDisplayName"] = str(account.get("displayName") or "").strip()
     if not run:
       session["resources"] = default_resources or self.resource_status()
       return session

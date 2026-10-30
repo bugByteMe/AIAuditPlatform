@@ -4,6 +4,16 @@ from chat_runtime_test_support import *
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def test_chat_creator_display_name_is_presentation_only(self) -> None:
+    self.users["li.review"]["displayName"] = "李复核"
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(self.store, self.users, FakeRunner())
+    session = runtime.create_session(workspace["id"], self.users["li.review"], "Named creator")
+    stored = runtime.chat_store.get_session(session["id"])
+    self.assertEqual(session["createdBy"], "li.review")
+    self.assertEqual(session["createdByDisplayName"], "李复核")
+    self.assertNotIn("createdByDisplayName", stored)
+
   def test_session_exposes_and_inherits_latest_model_settings(self) -> None:
     workspace = self.create_workspace()
     runtime = ChatRuntime(self.store, self.users, FakeRunner())

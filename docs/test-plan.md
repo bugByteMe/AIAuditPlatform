@@ -167,6 +167,9 @@
   login and session revalidation without changing the immutable username,
   subject link, permissions, or workspace ownership. A missing claim preserves
   the existing local display name, while an empty claim falls back to username.
+- Workspace and chat APIs expose owner/creator display names as presentation-only
+  fields while retaining stored usernames for authorization, ownership, and
+  legacy fallback rendering.
 - Explicitly test `system_admin`, `platform_admin`, `group_admin`, ordinary users, and unknown roles. Only the first two may access account/group management.
 - Platform admins may list accounts/groups, change only account `groupId`, create/delete groups, and update only group `name`/`liveRunLimit`. Mixed payloads containing restricted or unknown fields return 403 before mutation.
 - System admins may create and persist platform admins and change roles; invalid roles and demotion of the last system admin are rejected. Existing cascading group deletion and protected-admin checks remain enforced.

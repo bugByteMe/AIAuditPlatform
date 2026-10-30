@@ -212,7 +212,9 @@ export function renderCurrentUser() {
 
 function workspaceCardMarkup(workspace, index) {
   const safeWorkspaceId = escapeHtml(workspace.id || "");
-  const safeOwner = escapeHtml(workspace.owner);
+  const ownerName = workspace.ownerDisplayName || workspace.owner;
+  const safeOwner = escapeHtml(ownerName);
+  const ownerTitle = ownerName !== workspace.owner ? ` title="${escapeHtml(workspace.owner)}"` : "";
   const safeSize = escapeHtml(workspace.size);
   const safeUpdated = escapeHtml(workspace.updated);
   const visibilityMode = workspace.visibility || (workspace.shared ? "group" : "private");
@@ -227,7 +229,7 @@ function workspaceCardMarkup(workspace, index) {
       <div>
         <h3>${editableName("workspace", workspace.id, workspace.name, `workspace-list:${workspace.id}`, canRenameWorkspace(workspace))}</h3>
         <div class="meta-line">
-          <span>${safeOwner}</span>
+          <span${ownerTitle}>${safeOwner}</span>
           <span>${workspace.fileCount.toLocaleString()} files</span>
           <span>${safeSize}</span>
           <span>${safeUpdated}</span>
@@ -285,7 +287,7 @@ export function renderWorkspaces() {
   const indexed = items.map((workspace, index) => ({ workspace, index }));
   const matches = indexed.filter(({ workspace }) => {
     const group = resolveWorkspaceGroup(workspace, state.user, state.groups, state.accounts);
-    return !query || [workspace.name, workspace.owner, group.name]
+    return !query || [workspace.name, workspace.ownerDisplayName, workspace.owner, group.name]
       .some((value) => String(value || "").toLocaleLowerCase().includes(query));
   });
   document.querySelector("#workspace-results-count").textContent = t("workspace.resultsCount")
@@ -416,7 +418,7 @@ export function renderChatSessions() {
           <div class="session-main" data-session="${index}">
             <strong>${editableName("session", item.id, item.title, `chat-session-list:${item.id}`, canCollaborate)}</strong>
             <span>${runStatusLabel(item)} · ${item.updated}</span>
-            <span>${t("chat.createdBy")}: ${escapeHtml(item.createdBy || t("chat.creatorUnknown"))}</span>
+            <span${item.createdByDisplayName && item.createdByDisplayName !== item.createdBy ? ` title="${escapeHtml(item.createdBy)}"` : ""}>${t("chat.createdBy")}: ${escapeHtml(item.createdByDisplayName || item.createdBy || t("chat.creatorUnknown"))}</span>
           </div>
           <div class="session-actions">
             ${canCollaborate ? `<button class="session-action-btn" data-session-action="copy" data-session-index="${index}">${t("chat.copy")}</button>` : ""}

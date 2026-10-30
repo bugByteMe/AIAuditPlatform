@@ -99,6 +99,10 @@ Codex-state copies include only the selected native conversation rollout rather 
 
 Persisted application events are copied in one atomic linear pass. Appending a new live event reads only the last event record to allocate its ID, so large histories do not make each subsequent user, queue, or runner event rescan the full transcript. The fork response is lightweight: the browser hydrates the branch from the already loaded stable source events, while later workspace loads read the independently persisted fork history.
 
+Public chat-session responses enrich the persisted `createdBy` username with an
+optional `createdByDisplayName` presentation field. Permission checks, Codex-home
+paths, deletion cleanup, and stored session identity continue to use `createdBy`.
+
 ## Deleting a Chat
 
 Workspace owners, system administrators, and platform administrators may permanently delete a chat whose runs are all terminal. Deletion removes the workspace session reference, persisted transcript, run records, session-scoped Codex homes, and stale fork checkpoints. Active or queued runs must be stopped first. Deleting the last chat leaves a valid empty workspace, and independently persisted forks remain available.

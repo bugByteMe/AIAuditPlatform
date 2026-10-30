@@ -86,6 +86,13 @@ class WorkspaceCoreMixin:
       })
     return sorted(members, key=lambda item: (item["displayName"].casefold(), item["username"].casefold()))
 
+  def account_display_name(self, username: str) -> str:
+    if not username or not self.account_provider:
+      return ""
+    users, _ = self.account_provider()
+    account = users.get(username)
+    return str((account or {}).get("displayName") or "").strip()
+
   def validate_workspace_access(self, owner: dict, visibility: str, user_ids: list | set | tuple | None) -> set[str]:
     if visibility not in {"private", "restricted", "group"}:
       raise StorageError("bad_request", "workspace visibility is invalid")
@@ -354,6 +361,7 @@ class WorkspaceCoreMixin:
   def public_workspace_summary(self, workspace: dict) -> dict:
     return {
       "id": workspace["id"], "name": workspace["name"], "owner": workspace["owner"],
+      "ownerDisplayName": self.account_display_name(str(workspace.get("owner") or "")),
       "group": workspace.get("group", ""), "groupId": workspace.get("groupId", ""), "fileCount": workspace.get("fileCount", 0),
       "sizeBytes": workspace.get("sizeBytes", 0), "size": human_size(workspace.get("sizeBytes", 0)),
       "updated": workspace["updated"], "shared": self.workspace_visibility(workspace) == "group",
@@ -377,6 +385,7 @@ class WorkspaceCoreMixin:
       "id": workspace_id,
       "name": workspace["name"],
       "owner": workspace["owner"],
+      "ownerDisplayName": self.account_display_name(str(workspace.get("owner") or "")),
       "group": workspace.get("group", ""),
       "groupId": workspace.get("groupId", ""),
       "fileCount": workspace.get("fileCount", 0),
