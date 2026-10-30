@@ -6,7 +6,7 @@ from contextlib import closing
 from pathlib import Path
 
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 
 class WorkspaceDatabase:
@@ -69,6 +69,7 @@ class WorkspaceDatabase:
           initial_snapshot_id TEXT,
           source_workspace_id TEXT,
           source_snapshot_id TEXT,
+          parent_workspace_id TEXT,
           active_run_id TEXT,
           active_upload_id TEXT
         );
@@ -140,7 +141,7 @@ class WorkspaceDatabase:
       row = connection.execute("SELECT version FROM schema_info LIMIT 1").fetchone()
       if row is None:
         connection.execute("INSERT INTO schema_info(version) VALUES (?)", (SCHEMA_VERSION,))
-      elif int(row["version"]) in {1, 2, 3}:
+      elif int(row["version"]) in {1, 2, 3, 4}:
         columns = {column[1] for column in connection.execute("PRAGMA table_info(workspaces)")}
         if "run_lock_enabled" not in columns:
           connection.execute("ALTER TABLE workspaces ADD COLUMN run_lock_enabled INTEGER NOT NULL DEFAULT 0")
@@ -153,10 +154,13 @@ class WorkspaceDatabase:
         if "visibility" not in columns:
           connection.execute("ALTER TABLE workspaces ADD COLUMN visibility TEXT NOT NULL DEFAULT 'private'")
           connection.execute("UPDATE workspaces SET visibility = CASE WHEN shared = 1 THEN 'group' ELSE 'private' END")
+        if "parent_workspace_id" not in columns:
+          connection.execute("ALTER TABLE workspaces ADD COLUMN parent_workspace_id TEXT")
         connection.execute("UPDATE schema_info SET version = ?", (SCHEMA_VERSION,))
       elif int(row["version"]) != SCHEMA_VERSION:
         raise RuntimeError(f"unsupported workspace database schema version: {row['version']}")
       connection.execute("CREATE INDEX IF NOT EXISTS workspaces_visibility_group ON workspaces(visibility, group_id)")
+      connection.execute("CREATE INDEX IF NOT EXISTS workspaces_parent ON workspaces(parent_workspace_id)")
 
   @staticmethod
   def _file_entry(row: sqlite3.Row) -> dict:
@@ -181,6 +185,7 @@ class WorkspaceDatabase:
       "fileCount": int(row["file_count"]), "sizeBytes": int(row["size_bytes"]),
       "latestSnapshotId": row["latest_snapshot_id"], "initialSnapshotId": row["initial_snapshot_id"],
       "sourceWorkspaceId": row["source_workspace_id"], "sourceSnapshotId": row["source_snapshot_id"],
+      "parentWorkspaceId": row["parent_workspace_id"],
       "sessions": [],
     }
     if "session_count" in row.keys():
@@ -272,6 +277,7 @@ class WorkspaceDatabase:
           "initialSnapshotId": row["initial_snapshot_id"],
           "sourceWorkspaceId": row["source_workspace_id"],
           "sourceSnapshotId": row["source_snapshot_id"],
+          "parentWorkspaceId": row["parent_workspace_id"],
           "sessions": [],
         }
         if row["active_run_id"]:
@@ -358,8 +364,8 @@ class WorkspaceDatabase:
         INSERT INTO workspaces(
           id, name, owner, group_name, group_id, visibility, shared, locked, run_lock_enabled, created, updated, file_count, size_bytes,
           latest_snapshot_id, initial_snapshot_id, source_workspace_id, source_snapshot_id,
-          active_run_id, active_upload_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          parent_workspace_id, active_run_id, active_upload_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(id) DO UPDATE SET
           name=excluded.name, owner=excluded.owner,
           locked=excluded.locked, run_lock_enabled=excluded.run_lock_enabled, created=excluded.created,
@@ -376,7 +382,7 @@ class WorkspaceDatabase:
           int(bool(workspace.get("runLockEnabled"))), str(workspace.get("created") or workspace.get("updated") or ""),
           str(workspace.get("updated") or workspace.get("created") or ""), int(workspace.get("fileCount") or 0),
           int(workspace.get("sizeBytes") or 0), workspace.get("latestSnapshotId"), workspace.get("initialSnapshotId"),
-          workspace.get("sourceWorkspaceId"), workspace.get("sourceSnapshotId"), workspace.get("activeRunId"),
+          workspace.get("sourceWorkspaceId"), workspace.get("sourceSnapshotId"), workspace.get("parentWorkspaceId"), workspace.get("activeRunId"),
           workspace.get("activeUploadId"),
         ),
       )
@@ -493,6 +499,13 @@ class WorkspaceDatabase:
     with closing(self.connect()) as connection, connection:
       connection.execute("DELETE FROM workspace_access_grants WHERE account_id = ?", (account_id,))
 
+  def replace_workspace_parent(self, workspace_id: str, parent_workspace_id: str | None) -> None:
+    with closing(self.connect()) as connection, connection:
+      connection.execute(
+        "UPDATE workspaces SET parent_workspace_id = ? WHERE id = ?",
+        (parent_workspace_id, workspace_id),
+      )
+
   def transfer_owner_workspaces(self, username: str, group_id: str, group_name: str) -> None:
     with closing(self.connect()) as connection, connection:
       connection.execute("BEGIN IMMEDIATE")
@@ -504,6 +517,22 @@ class WorkspaceDatabase:
       if workspace_ids:
         placeholders = ",".join("?" for _ in workspace_ids)
         connection.execute(f"DELETE FROM workspace_access_grants WHERE workspace_id IN ({placeholders})", workspace_ids)
+      self._clear_cross_group_parents(connection)
+
+  @staticmethod
+  def _clear_cross_group_parents(connection: sqlite3.Connection) -> None:
+    connection.execute(
+      """
+      UPDATE workspaces AS child SET parent_workspace_id = NULL
+      WHERE child.parent_workspace_id IS NOT NULL AND NOT EXISTS (
+        SELECT 1 FROM workspaces AS parent
+        WHERE parent.id = child.parent_workspace_id AND (
+          (child.group_id <> '' AND parent.group_id = child.group_id) OR
+          (child.group_id = '' AND parent.group_id = '' AND child.group_name <> '' AND parent.group_name = child.group_name)
+        )
+      )
+      """
+    )
 
   def rename_workspace_group(self, group_id: str, group_name: str) -> None:
     with closing(self.connect()) as connection, connection:
@@ -529,6 +558,7 @@ class WorkspaceDatabase:
       candidates = {item[0] for item in connection.execute(
         "SELECT DISTINCT blob FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)
       )}
+      connection.execute("UPDATE workspaces SET parent_workspace_id = NULL WHERE parent_workspace_id = ?", (workspace_id,))
       connection.execute("DELETE FROM workspaces WHERE id = ?", (workspace_id,))
       return self._workspace_entry(row), candidates
 

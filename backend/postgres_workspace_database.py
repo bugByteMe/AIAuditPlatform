@@ -21,7 +21,8 @@ class PostgresWorkspaceDatabase:
       Column("updated", String(32), nullable=False, index=True), Column("file_count", Integer, nullable=False, default=0),
       Column("size_bytes", BigInteger, nullable=False, default=0), Column("latest_snapshot_id", String(160)),
       Column("initial_snapshot_id", String(160)), Column("source_workspace_id", String(160)),
-      Column("source_snapshot_id", String(160)), Column("active_run_id", String(160)), Column("active_upload_id", String(160)),
+      Column("source_snapshot_id", String(160)), Column("parent_workspace_id", String(160)),
+      Column("active_run_id", String(160)), Column("active_upload_id", String(160)),
     )
     self.workspace_sessions = Table(
       "workspace_sessions", self.metadata,
@@ -68,8 +69,10 @@ class PostgresWorkspaceDatabase:
         connection.execute(text(f"ALTER TABLE workspace_file_versions ADD COLUMN IF NOT EXISTS {name} BIGINT NOT NULL DEFAULT 0"))
       connection.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS group_id VARCHAR(160) NOT NULL DEFAULT ''"))
       connection.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS visibility VARCHAR(32) NOT NULL DEFAULT 'private'"))
+      connection.execute(text("ALTER TABLE workspaces ADD COLUMN IF NOT EXISTS parent_workspace_id VARCHAR(160)"))
       connection.execute(text("UPDATE workspaces SET visibility = CASE WHEN shared THEN 'group' ELSE 'private' END WHERE visibility = 'private' AND shared"))
       connection.execute(text("CREATE INDEX IF NOT EXISTS workspaces_visibility_group ON workspaces(visibility, group_id)"))
+      connection.execute(text("CREATE INDEX IF NOT EXISTS workspaces_parent ON workspaces(parent_workspace_id)"))
 
   @staticmethod
   def _entry(row) -> dict:
@@ -95,6 +98,7 @@ class PostgresWorkspaceDatabase:
       "file_count": int(workspace.get("fileCount") or 0), "size_bytes": int(workspace.get("sizeBytes") or 0),
       "latest_snapshot_id": workspace.get("latestSnapshotId"), "initial_snapshot_id": workspace.get("initialSnapshotId"),
       "source_workspace_id": workspace.get("sourceWorkspaceId"), "source_snapshot_id": workspace.get("sourceSnapshotId"),
+      "parent_workspace_id": workspace.get("parentWorkspaceId"),
       "active_run_id": workspace.get("activeRunId"), "active_upload_id": workspace.get("activeUploadId"),
     }
 
@@ -107,7 +111,7 @@ class PostgresWorkspaceDatabase:
       "created": row["created"], "updated": row["updated"], "fileCount": int(row["file_count"]),
       "sizeBytes": int(row["size_bytes"]), "latestSnapshotId": row["latest_snapshot_id"],
       "initialSnapshotId": row["initial_snapshot_id"], "sourceWorkspaceId": row["source_workspace_id"],
-      "sourceSnapshotId": row["source_snapshot_id"], "sessions": [],
+      "sourceSnapshotId": row["source_snapshot_id"], "parentWorkspaceId": row["parent_workspace_id"], "sessions": [],
     }
     if "session_count" in row:
       item["sessionCount"] = int(row["session_count"] or 0)
@@ -197,7 +201,7 @@ class PostgresWorkspaceDatabase:
           "created": row["created"], "updated": row["updated"], "fileCount": int(row["file_count"]),
           "sizeBytes": int(row["size_bytes"]), "latestSnapshotId": row["latest_snapshot_id"],
           "initialSnapshotId": row["initial_snapshot_id"], "sourceWorkspaceId": row["source_workspace_id"],
-          "sourceSnapshotId": row["source_snapshot_id"], "sessions": [],
+          "sourceSnapshotId": row["source_snapshot_id"], "parentWorkspaceId": row["parent_workspace_id"], "sessions": [],
         }
         if row["active_run_id"]:
           item["activeRunId"] = row["active_run_id"]
@@ -269,7 +273,7 @@ class PostgresWorkspaceDatabase:
       connection.execute(statement.on_conflict_do_update(
         index_elements=[self.workspaces.c.id], set_={
           key: value for key, value in values.items()
-          if key not in {"id", "group_id", "group_name", "visibility", "shared"}
+          if key not in {"id", "group_id", "group_name", "visibility", "shared", "parent_workspace_id"}
         },
       ))
       self._replace_sessions(connection, workspace)
@@ -335,6 +339,9 @@ class PostgresWorkspaceDatabase:
       candidates = set(connection.execute(
         select(self.file_version_rows.c.blob).where(self.file_version_rows.c.workspace_id == workspace_id).distinct()
       ).scalars())
+      connection.execute(update(self.workspaces).where(
+        self.workspaces.c.parent_workspace_id == workspace_id,
+      ).values(parent_workspace_id=None))
       connection.execute(delete(self.workspaces).where(self.workspaces.c.id == workspace_id))
       return self._workspace_entry(row), candidates
 
@@ -367,6 +374,12 @@ class PostgresWorkspaceDatabase:
     with self.engine.begin() as connection:
       connection.execute(delete(self.workspace_access_grants).where(self.workspace_access_grants.c.account_id == account_id))
 
+  def replace_workspace_parent(self, workspace_id: str, parent_workspace_id: str | None) -> None:
+    with self.engine.begin() as connection:
+      connection.execute(update(self.workspaces).where(
+        self.workspaces.c.id == workspace_id,
+      ).values(parent_workspace_id=parent_workspace_id))
+
   def transfer_owner_workspaces(self, username: str, group_id: str, group_name: str) -> None:
     with self.engine.begin() as connection:
       workspace_ids = list(connection.execute(select(self.workspaces.c.id).where(
@@ -379,6 +392,23 @@ class PostgresWorkspaceDatabase:
         connection.execute(delete(self.workspace_access_grants).where(
           self.workspace_access_grants.c.workspace_id.in_(workspace_ids)
         ))
+      self._clear_cross_group_parents(connection)
+
+  def _clear_cross_group_parents(self, connection) -> None:
+    parent = self.workspaces.alias("parent")
+    same_group_parent = select(1).where(
+      parent.c.id == self.workspaces.c.parent_workspace_id,
+      or_(
+        and_(self.workspaces.c.group_id != "", parent.c.group_id == self.workspaces.c.group_id),
+        and_(
+          self.workspaces.c.group_id == "", parent.c.group_id == "",
+          self.workspaces.c.group_name != "", parent.c.group_name == self.workspaces.c.group_name,
+        ),
+      ),
+    ).correlate(self.workspaces).exists()
+    connection.execute(update(self.workspaces).where(
+      self.workspaces.c.parent_workspace_id.is_not(None), ~same_group_parent,
+    ).values(parent_workspace_id=None))
 
   def rename_workspace_group(self, group_id: str, group_name: str) -> None:
     with self.engine.begin() as connection:

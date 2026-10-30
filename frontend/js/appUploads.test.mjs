@@ -10,4 +10,8 @@ test("resumable fingerprints distinguish existing workspace destinations", () =>
     uploadFingerprint(files, "append", "ws_1", "", "private", [], "Other"),
   );
   assert.equal(JSON.parse(uploadFingerprint(files, "append", "ws_1")).destinationPath, "");
+  assert.notEqual(
+    uploadFingerprint(files, "create", "", "Audit", "private", [], "", "parent-a"),
+    uploadFingerprint(files, "create", "", "Audit", "private", [], "", "parent-b"),
+  );
 });

@@ -144,7 +144,8 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertIn("run_lock_enabled", columns)
     self.assertIn("group_id", columns)
     self.assertIn("visibility", columns)
-    self.assertEqual(version, 4)
+    self.assertIn("parent_workspace_id", columns)
+    self.assertEqual(version, 5)
 
   def test_each_file_retains_only_its_immediately_previous_content(self) -> None:
     workspace = self.create_workspace()

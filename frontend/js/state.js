@@ -24,6 +24,7 @@ export const state = {
   workspaceQuery: "",
   adminQuery: "",
   expandedWorkspaceGroups: new Set(),
+  workspaceNodeFoldOverrides: new Map(),
   workspaceGroupContextKey: "",
   selectedSession: 0,
   selectedArtifacts: new Set(),

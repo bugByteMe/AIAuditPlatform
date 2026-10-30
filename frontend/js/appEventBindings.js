@@ -78,6 +78,9 @@ export function createEventBindings(context) {
   const openWorkspaceAccessModal = (...args) => context.openWorkspaceAccessModal(...args);
   const closeWorkspaceAccessModal = (...args) => context.closeWorkspaceAccessModal(...args);
   const saveWorkspaceAccess = (...args) => context.saveWorkspaceAccess(...args);
+  const openWorkspaceParentModal = (...args) => context.openWorkspaceParentModal(...args);
+  const closeWorkspaceParentModal = (...args) => context.closeWorkspaceParentModal(...args);
+  const saveWorkspaceParent = (...args) => context.saveWorkspaceParent(...args);
   const renderWorkspaceMemberPicker = (...args) => context.renderWorkspaceMemberPicker(...args);
   const updateWorkspaceVisibilityControls = (...args) => context.updateWorkspaceVisibilityControls(...args);
   const createWorkspaceFromModal = (...args) => context.createWorkspaceFromModal(...args);
@@ -138,6 +141,10 @@ export function createEventBindings(context) {
       }
       if (event.target.closest("[data-close-workspace-access]")) {
         closeWorkspaceAccessModal();
+        return;
+      }
+      if (event.target.closest("[data-close-workspace-parent]")) {
+        closeWorkspaceParentModal();
         return;
       }
       const turnToggle = event.target.closest("[data-chat-turn-toggle]");
@@ -429,6 +436,14 @@ export function createEventBindings(context) {
         return;
       }
 
+      const workspaceFold = event.target.closest("[data-workspace-fold]");
+      if (workspaceFold) {
+        const workspaceId = workspaceFold.dataset.workspaceFold;
+        state.workspaceNodeFoldOverrides.set(workspaceId, workspaceFold.getAttribute("aria-expanded") !== "true");
+        renderWorkspaces();
+        return;
+      }
+
       const actionButton = event.target.closest("button[data-action]");
       if (actionButton) {
         event.preventDefault();
@@ -440,6 +455,10 @@ export function createEventBindings(context) {
         }
         if (actionButton.dataset.action === "manage-access") {
           openWorkspaceAccessModal(index);
+          return;
+        }
+        if (actionButton.dataset.action === "move-workspace") {
+          openWorkspaceParentModal(index);
           return;
         }
         if (actionButton.dataset.action === "fork") {
@@ -716,6 +735,11 @@ export function createEventBindings(context) {
       saveWorkspaceAccess(event.currentTarget);
     });
 
+    document.querySelector("#workspace-parent-form").addEventListener("submit", (event) => {
+      event.preventDefault();
+      saveWorkspaceParent(event.currentTarget);
+    });
+
     document.querySelector("#codex-settings-form").addEventListener("submit", async (event) => {
       event.preventDefault();
       const form = new FormData(event.currentTarget);
@@ -865,6 +889,7 @@ export function createEventBindings(context) {
         closePreviewModal();
         closeWorkspaceModal();
         closeWorkspaceAccessModal();
+        closeWorkspaceParentModal();
         closeCodexSettingsModal();
         closeBatchAccountModal();
         closeRechargeImport();

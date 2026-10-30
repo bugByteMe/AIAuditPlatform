@@ -28,15 +28,56 @@ class WorkspaceLifecycleMixin:
   def create_workspace(
     self, user: dict, name: str, shared: bool, files: list[UploadedFile],
     visibility: str | None = None, user_ids: list | None = None,
+    parent_workspace_id: str | None = None,
   ) -> dict:
     with self.coordination_locks.hold(f"group:{user.get('groupId') or user.get('group') or user['username']}"):
       upload_sizes = {normalize_upload_relative_path(item.path): len(item.content) for item in files}
       self.assert_group_quota(user, sum(upload_sizes.values()))
       resolved_visibility = visibility or ("group" if shared else "private")
       grants = self.validate_workspace_access(user, resolved_visibility, user_ids)
-      return self._create_workspace(user, name, resolved_visibility, grants, files)
+      parent_id = self.validate_workspace_parent(user, parent_workspace_id, user)
+      return self._create_workspace(user, name, resolved_visibility, grants, files, parent_id)
 
-  def _create_workspace(self, user: dict, name: str, visibility: str, grants: set[str], files: list[UploadedFile]) -> dict:
+  @staticmethod
+  def workspaces_share_group(left: dict, right: dict) -> bool:
+    left_id, right_id = str(left.get("groupId") or ""), str(right.get("groupId") or "")
+    if left_id or right_id:
+      return bool(left_id and right_id and left_id == right_id)
+    left_name, right_name = str(left.get("group") or "").strip(), str(right.get("group") or "").strip()
+    return bool(left_name and right_name and left_name.casefold() == right_name.casefold())
+
+  def validate_workspace_parent(
+    self, user: dict, raw_parent_id, child: dict, *, child_workspace_id: str | None = None,
+  ) -> str | None:
+    if raw_parent_id is None or raw_parent_id == "":
+      return None
+    if not isinstance(raw_parent_id, str):
+      raise StorageError("bad_request", "parentWorkspaceId must be a workspace ID or null")
+    parent_id = raw_parent_id.strip()
+    if not parent_id:
+      return None
+    if child_workspace_id and parent_id == child_workspace_id:
+      raise StorageError("bad_request", "a workspace cannot be its own parent")
+    parent = self.get_workspace(parent_id, user)
+    if not self.workspaces_share_group(child, parent):
+      raise StorageError("bad_request", "parent workspace must belong to the same group")
+    visited = set()
+    cursor = parent
+    while cursor:
+      cursor_id = str(cursor.get("id") or "")
+      if child_workspace_id and cursor_id == child_workspace_id:
+        raise StorageError("bad_request", "workspace hierarchy cannot contain a cycle")
+      if not cursor_id or cursor_id in visited:
+        raise StorageError("bad_request", "workspace hierarchy contains a cycle")
+      visited.add(cursor_id)
+      ancestor_id = str(cursor.get("parentWorkspaceId") or "")
+      cursor = self.database.get_workspace_header(ancestor_id) if ancestor_id else None
+    return parent_id
+
+  def _create_workspace(
+    self, user: dict, name: str, visibility: str, grants: set[str], files: list[UploadedFile],
+    parent_workspace_id: str | None,
+  ) -> dict:
     workspace_id = generated_id("ws")
     workspace_path = self.workspace_path(workspace_id)
     workspace_path.mkdir(parents=True, exist_ok=False)
@@ -81,6 +122,7 @@ class WorkspaceLifecycleMixin:
       "initialSnapshotId": None,
       "sourceWorkspaceId": None,
       "sourceSnapshotId": None,
+      "parentWorkspaceId": parent_workspace_id,
       "sessions": [],
     }
     metadata["workspaces"][workspace_id] = workspace
@@ -103,9 +145,11 @@ class WorkspaceLifecycleMixin:
       is_platform_admin = user["role"] == "platform_admin"
       if not (is_owner or is_system_admin or is_platform_admin):
         raise StorageError("forbidden", "only the owner or an administrator can update workspace settings")
-      if is_platform_admin and not is_owner and (not payload or payload.keys() - {"shared", "name"}):
-        raise StorageError("forbidden", "platform administrators may only rename or change sharing on workspaces they do not own")
+      if is_platform_admin and not is_owner and (not payload or payload.keys() - {"shared", "name", "parentWorkspaceId"}):
+        raise StorageError("forbidden", "platform administrators may only rename, change sharing, or organize workspaces they do not own")
       access_visibility = None
+      parent_workspace_id = None
+      parent_changed = "parentWorkspaceId" in payload
       if "name" in payload:
         name = str(payload["name"]).strip()
         if not name:
@@ -123,8 +167,15 @@ class WorkspaceLifecycleMixin:
           if workspace.get("locked"):
             raise StorageError("workspace_locked", "exclusive run lock cannot change while workspace jobs are active")
           workspace["runLockEnabled"] = requested
+      if parent_changed:
+        parent_workspace_id = self.validate_workspace_parent(
+          user, payload.get("parentWorkspaceId"), workspace, child_workspace_id=workspace_id,
+        )
+        workspace["parentWorkspaceId"] = parent_workspace_id
       workspace["updated"] = now_string()
       self.save_workspace_metadata(workspace_id, metadata)
+      if parent_changed:
+        self.database.replace_workspace_parent(workspace_id, parent_workspace_id)
       if access_visibility is not None:
         self.database.replace_workspace_access(workspace_id, access_visibility, set())
       return self.public_workspace(workspace, metadata)
@@ -347,6 +398,7 @@ class WorkspaceLifecycleMixin:
           "initialSnapshotId": snapshot_id,
           "sourceWorkspaceId": None,
           "sourceSnapshotId": None,
+          "parentWorkspaceId": session.get("parentWorkspaceId"),
           "sessions": [],
         }
         metadata["workspaces"][workspace_id] = workspace
@@ -428,6 +480,7 @@ class WorkspaceLifecycleMixin:
       "initialSnapshotId": None,
       "sourceWorkspaceId": source["id"],
       "sourceSnapshotId": source_snapshot_id,
+      "parentWorkspaceId": source.get("parentWorkspaceId") if self.workspaces_share_group(source, user) else None,
       "sessions": [],
     }
     metadata = self.empty_metadata()

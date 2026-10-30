@@ -50,6 +50,8 @@ A workspace is a managed directory on the shared filesystem. Users can create
 empty workspaces or upload files and folders. Visibility can be private,
 restricted to selected group members, or open to the whole group; authorized
 collaborators can work with workspace files, chats, downloads, and forks.
+Workspaces may also be arranged in a display-only hierarchy that does not alter
+permissions or content.
 
 Workspace owners can enable an exclusive run lock or allow confirmed runs from different chat sessions to share the live workspace concurrently. Uploads and manual file mutations remain blocked while any run is active.
 

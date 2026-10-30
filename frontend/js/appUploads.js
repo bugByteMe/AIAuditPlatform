@@ -8,7 +8,7 @@ export function createUploadActions(context) {
 
   const PENDING_UPLOAD_KEY = "aiAuditPendingUpload";
 
-  function uploadFingerprint(items, mode, workspaceId = "", name = "", visibility = "private", userIds = [], destinationPath = "") {
+  function uploadFingerprint(items, mode, workspaceId = "", name = "", visibility = "private", userIds = [], destinationPath = "", parentWorkspaceId = "") {
     return JSON.stringify({
       mode,
       workspaceId,
@@ -16,12 +16,13 @@ export function createUploadActions(context) {
       visibility,
       userIds: [...userIds].sort(),
       destinationPath,
+      parentWorkspaceId,
       files: items.map((item) => [item.path, item.file.size, item.file.lastModified]),
     });
   }
 
-  async function runResumableUpload({ items, mode, workspaceId = "", name = "", visibility = "private", userIds = [], destinationPath = "", signal, uploadLabel }) {
-    const fingerprint = uploadFingerprint(items, mode, workspaceId, name, visibility, userIds, destinationPath);
+  async function runResumableUpload({ items, mode, workspaceId = "", name = "", visibility = "private", userIds = [], destinationPath = "", parentWorkspaceId = "", signal, uploadLabel }) {
+    const fingerprint = uploadFingerprint(items, mode, workspaceId, name, visibility, userIds, destinationPath, parentWorkspaceId);
     let saved = null;
     try {
       saved = JSON.parse(window.localStorage.getItem(PENDING_UPLOAD_KEY) || "null");
@@ -46,6 +47,7 @@ export function createUploadActions(context) {
           visibility,
           userIds,
           destinationPath,
+          parentWorkspaceId: parentWorkspaceId || null,
           files: items.map((item) => ({ path: item.path, size: item.file.size, lastModified: item.file.lastModified })),
         }),
       })).upload;

@@ -160,8 +160,51 @@
   padding: 0 8px;
 }
 
-.workspace-group-items .workspace-item:last-child {
+.workspace-group-items > .workspace-tree-node:last-child > .workspace-tree-row .workspace-item {
   border-bottom: 0;
+}
+
+.workspace-tree-node {
+  min-width: 0;
+}
+
+.workspace-tree-row {
+  display: flex;
+  align-items: stretch;
+  min-width: 0;
+  padding-left: min(calc(var(--workspace-depth, 0) * 22px), 30vw);
+}
+
+.workspace-tree-row .workspace-item {
+  flex: 1;
+  min-width: 0;
+}
+
+.workspace-tree-toggle,
+.workspace-tree-spacer {
+  width: 24px;
+  flex: 0 0 24px;
+  align-self: center;
+}
+
+.workspace-tree-toggle {
+  height: 28px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 20px;
+  line-height: 1;
+}
+
+.workspace-tree-toggle:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+.workspace-tree-children {
+  min-width: 0;
 }
 
 .workspace-item,

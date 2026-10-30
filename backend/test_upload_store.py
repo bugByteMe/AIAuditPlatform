@@ -164,6 +164,17 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual((self.store.workspace_path(result["workspaceId"]) / "folder" / "data.bin").read_bytes(), content)
     self.assertEqual(result["workspace"]["fileCount"], 1)
 
+  def test_new_workspace_upload_keeps_display_parent(self):
+    parent = self.store.create_workspace(USER, "Parent", False, [])
+    upload = self.manager.create(USER, {
+      "mode": "create", "name": "Child", "parentWorkspaceId": parent["id"],
+      "files": [{"path": "a.txt", "size": 1}],
+    })
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"a"), 1)
+    self.manager.complete(upload["id"], USER)
+    result = self.wait_for_commit(upload["id"])
+    self.assertEqual(result["workspace"]["parentWorkspaceId"], parent["id"])
+
   def test_blocked_suffix_is_rejected_at_upload_admission(self):
     with self.assertRaises(StorageError) as context:
       self.manager.create(USER, {"mode": "create", "files": [{"path": "scripts/reconcile.sh", "size": 10}]})

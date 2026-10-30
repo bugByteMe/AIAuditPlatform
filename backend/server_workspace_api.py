@@ -43,6 +43,7 @@ class WorkspaceHandlerMixin:
       [],
       str(payload["visibility"]) if "visibility" in payload else None,
       payload.get("userIds"),
+      payload.get("parentWorkspaceId"),
     )
     add_audit(user["username"], "workspace created", workspace["id"])
     self.write_json({"workspace": workspace}, HTTPStatus.CREATED)

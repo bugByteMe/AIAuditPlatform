@@ -105,6 +105,17 @@
 - Third-level folders identify unloaded children, and expanding a folder returns only its direct children after permission and path-containment checks.
 - Chat and workspace-management trees reuse loaded descendants, preserve independent collapse state, and invalidate deeper nodes after a snapshot change.
 - Folder selections download or delete the complete server-resolved subtree without transferring the subtree listing first.
+- Workspace display parents persist independently from fork provenance and do
+  not affect access, files, ownership, quotas, chats, or runs.
+- Parent assignment accepts visible same-group workspaces and rejects self,
+  descendant, inaccessible, cross-group, and collaborator-managed moves.
+- Deleting a parent promotes direct children; owner group moves preserve
+  same-group internal links and clear newly cross-group links.
+- Same-group forks become siblings of their source, while cross-group
+  administrator forks start at top level.
+- Hierarchy rendering promotes children of invisible parents, preserves sibling
+  update order, defaults to showing levels one and two, and expands visible
+  ancestor paths during search without counting those ancestors as matches.
 
 ## Chat Lifecycle
 

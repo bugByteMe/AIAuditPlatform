@@ -155,6 +155,31 @@ administrator and uses their own group quota; edits to an existing workspace use
 its owner's group quota. Active-run locks and the owner-only exclusive run-lock
 setting still apply.
 
+## Display Hierarchy
+
+Each workspace may reference an optional `parentWorkspaceId`. This relationship
+is presentation metadata only: it does not grant or inherit access, share files,
+combine quotas, change ownership, or affect chats and runs. Fork provenance
+continues to use `sourceWorkspaceId` independently.
+
+The workspace page renders visible workspaces as a tree inside the existing
+administrator group sections. A parent must be visible to the actor assigning
+it and belong to the same group as the child. Owners and system/platform
+administrators may create or move hierarchy nodes; collaborators may only fold
+and view them. Self-parenting and descendant-parenting are rejected.
+
+Top-level nodes start expanded so levels one and two are visible. Second-level
+nodes start collapsed, hiding deeper descendants. Manual folding lasts for the
+current page session. Search returns matching workspaces with their visible
+ancestor chain expanded. If a parent is not visible, its visible child is shown
+as a temporary root without changing stored metadata.
+
+Deleting a parent promotes its direct children to top level. Moving owners
+between groups preserves links among workspaces moved together and clears links
+that would cross group boundaries. Forks inherit the source workspace's parent
+when the fork remains in that group; cross-group administrator forks start at
+top level.
+
 The owner controls an exclusive run lock while the workspace is idle. It is disabled by default. When enabled, only one mutating Codex run may be active. When disabled, runs from different chat sessions may share the live workspace after the initiating user confirms an overwrite and artifact-attribution warning. A chat session still permits only one active run.
 
 The operational workspace write lock remains held from the first active run until the last active run reaches a terminal state. Uploads, file replacement, deletion, workspace deletion, and forking remain blocked throughout. In-process mutation coordination is keyed by workspace, so unrelated workspaces do not queue behind one global lock. Changes made by overlapping shared-directory runs cannot be attributed exclusively; artifact results are therefore best-effort for overlapping runs.

@@ -37,6 +37,9 @@ import { canManageAccounts, isSystemAdmin, applyAdminPermissions, accountSetting
 import { renderPaymentNotice } from "./js/paymentNotice.js";
 import { resolveStartup, setStartupScreen } from "./js/startupUi.js";
 import { startMonitoredDownload } from "./js/nativeDownload.js";
+import {
+  buildWorkspaceHierarchy, flattenWorkspaceHierarchy, workspaceDescendantIds, workspaceGroupsMatch,
+} from "./js/workspaceGroups.js";
 
 const VALID_VIEWS = new Set(["workspace", "chat", "recharge", "admin"]);
 
@@ -414,6 +417,7 @@ function showLogin() {
   state.workspaceQuery = "";
   document.querySelector("#workspace-search").value = "";
   state.adminQuery = "";
+  state.workspaceNodeFoldOverrides = new Map();
   document.querySelector("#admin-search").value = "";
   state.recharge = null;
   state.rechargeImport = null;
@@ -424,6 +428,7 @@ function showLogin() {
   document.querySelector("#recharge-key-visibility").textContent = t("recharge.show");
   document.querySelector("#recharge-import-modal").classList.add("hidden");
   document.querySelector("#workspace-access-modal").classList.add("hidden");
+  document.querySelector("#workspace-parent-modal").classList.add("hidden");
   document.querySelector("#auth-screen").classList.remove("hidden");
   document.querySelector("#app-shell").classList.add("hidden");
   setAuthMode("login");
@@ -484,6 +489,65 @@ function updateWorkspaceVisibilityControls(form, kind) {
     input.disabled = !state.workspaceAccessGroupId;
   });
   document.querySelector(`#workspace-${kind}-member-picker`).classList.toggle("hidden", visibility !== "restricted");
+}
+
+function renderWorkspaceParentOptions(select, childWorkspace = null, selectedParentId = "") {
+  if (!select) return;
+  const reference = childWorkspace || state.user;
+  const indexed = state.workspaces.map((workspace, index) => ({ workspace, index }));
+  const excluded = childWorkspace ? workspaceDescendantIds(indexed, childWorkspace.id) : new Set();
+  if (childWorkspace) excluded.add(childWorkspace.id);
+  const candidates = indexed.filter(({ workspace }) => !excluded.has(workspace.id) && workspaceGroupsMatch(reference, workspace));
+  const nodes = flattenWorkspaceHierarchy(buildWorkspaceHierarchy(candidates));
+  select.replaceChildren();
+  const top = document.createElement("option");
+  top.value = "";
+  top.textContent = t("workspace.topLevel");
+  select.append(top);
+  nodes.forEach((node) => {
+    const option = document.createElement("option");
+    option.value = node.workspace.id;
+    option.textContent = `${"— ".repeat(node.depth)}${node.workspace.name}`;
+    option.selected = node.workspace.id === selectedParentId;
+    select.append(option);
+  });
+  if (!nodes.some((node) => node.workspace.id === selectedParentId)) select.value = "";
+}
+
+function openWorkspaceParentModal(index = state.selectedWorkspace) {
+  const workspace = workspaceAt(index);
+  if (!workspace) return;
+  const form = document.querySelector("#workspace-parent-form");
+  form.elements.workspaceId.value = workspace.id;
+  document.querySelector("#workspace-parent-workspace-name").textContent = workspace.name;
+  renderWorkspaceParentOptions(form.elements.parentWorkspaceId, workspace, workspace.parentWorkspaceId || "");
+  document.querySelector("#workspace-parent-status").textContent = "";
+  document.querySelector("#workspace-parent-modal").classList.remove("hidden");
+}
+
+function closeWorkspaceParentModal() {
+  document.querySelector("#workspace-parent-modal").classList.add("hidden");
+}
+
+async function saveWorkspaceParent(form) {
+  const workspaceId = String(form.elements.workspaceId.value || "");
+  const parentWorkspaceId = String(form.elements.parentWorkspaceId.value || "") || null;
+  const submit = document.querySelector("#workspace-parent-submit");
+  submit.disabled = true;
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}`, {
+      method: "PATCH",
+      body: JSON.stringify({ parentWorkspaceId }),
+    });
+    replaceWorkspace(result.workspace);
+    closeWorkspaceParentModal();
+    renderDynamic();
+    showToast(t("toast.workspaceParentSaved"));
+  } catch (error) {
+    document.querySelector("#workspace-parent-status").textContent = error.message;
+  } finally {
+    submit.disabled = false;
+  }
 }
 
 async function loadWorkspaceAccessCandidates() {
@@ -586,6 +650,7 @@ async function createWorkspaceFromModal(form) {
   try {
     const visibility = String(form.elements.visibility.value || "private");
     const userIds = visibility === "restricted" ? [...state.workspaceAccessSelectedIds] : [];
+    const parentWorkspaceId = String(form.elements.parentWorkspaceId.value || "") || null;
     if (visibility === "restricted" && !userIds.length) {
       showToast(t("workspace.selectMemberRequired"));
       return;
@@ -597,12 +662,13 @@ async function createWorkspaceFromModal(form) {
           name: workspaceName,
           visibility,
           userIds,
+          parentWorkspaceId: parentWorkspaceId || "",
           signal: controller.signal,
           uploadLabel: t("progress.uploadWorkspace"),
         })
       : (await api("/api/workspaces", {
           method: "POST",
-          body: JSON.stringify({ name: workspaceName, visibility, userIds }),
+          body: JSON.stringify({ name: workspaceName, visibility, userIds, parentWorkspaceId }),
           signal: controller.signal,
         })).workspace;
     state.workspaceCreateUploadController = null;
@@ -926,6 +992,10 @@ const appContext = {
   openWorkspaceAccessModal,
   closeWorkspaceAccessModal,
   saveWorkspaceAccess,
+  renderWorkspaceParentOptions,
+  openWorkspaceParentModal,
+  closeWorkspaceParentModal,
+  saveWorkspaceParent,
   createWorkspaceFromModal,
   downloadCurrentWorkspace,
   fileUrl,

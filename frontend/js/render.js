@@ -5,7 +5,10 @@ import { adminGroupMatches } from "./adminSearch.js";
 import { dataPanelMarkup } from "./startupUi.js";
 import { currentSession, currentWorkspace, workspaceList } from "./selectors.js";
 import { isEventStreamNearBottom } from "./scrollPosition.js";
-import { defaultExpandedWorkspaceGroups, groupWorkspaces, resolveWorkspaceGroup } from "./workspaceGroups.js";
+import {
+  buildWorkspaceHierarchy, defaultExpandedWorkspaceGroups, groupWorkspaces, resolveWorkspaceGroup, workspaceAncestorIds,
+  workspaceNodeInitiallyExpanded,
+} from "./workspaceGroups.js";
 import { state } from "./state.js";
 import { renderWorkspaceTitle } from "./workspaceTitle.js";
 
@@ -234,6 +237,7 @@ function workspaceCardMarkup(workspace, index) {
           <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}</summary>
           <div class="action-menu-items">
             ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="manage-access" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.manageAccess")}</button>` : ""}
+            ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="move-workspace" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.moveInHierarchy")}</button>` : ""}
             ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<button type="button" class="btn" data-action="fork" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.fork")}</button>` : ""}
             ${canCollaborateInWorkspace(workspace) && workspace.activeUpload?.status === "uploading" ? `<button type="button" class="btn danger" data-action="cancel-upload" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.cancelUpload")}</button>` : ""}
             ${canCollaborateInWorkspace(workspace) && ["processing", "committing"].includes(workspace.activeUpload?.status) ? `<span class="action-menu-status">${t("workspace.uploadProcessing")}</span>` : ""}
@@ -248,6 +252,24 @@ function workspaceCardMarkup(workspace, index) {
   `;
 }
 
+function workspaceHierarchyMarkup(items, includedIds = null, searching = false) {
+  const nodes = buildWorkspaceHierarchy(items, includedIds);
+  const renderNode = (node) => {
+    const workspaceId = node.workspace.id;
+    const hasChildren = node.children.length > 0;
+    const override = state.workspaceNodeFoldOverrides.get(workspaceId);
+    const expanded = hasChildren && (searching || (override === undefined ? workspaceNodeInitiallyExpanded(node.depth) : override));
+    return `<div class="workspace-tree-node" data-workspace-node="${escapeHtml(workspaceId)}" style="--workspace-depth:${node.depth}">
+      <div class="workspace-tree-row">
+        ${hasChildren ? `<button type="button" class="workspace-tree-toggle" data-workspace-fold="${escapeHtml(workspaceId)}" aria-expanded="${expanded}" aria-label="${t(expanded ? "workspace.collapseChildren" : "workspace.expandChildren")}">${expanded ? "⌄" : "›"}</button>` : `<span class="workspace-tree-spacer" aria-hidden="true"></span>`}
+        ${workspaceCardMarkup(node.workspace, node.index)}
+      </div>
+      ${hasChildren ? `<div class="workspace-tree-children${expanded ? "" : " hidden"}">${node.children.map(renderNode).join("")}</div>` : ""}
+    </div>`;
+  };
+  return nodes.map(renderNode).join("");
+}
+
 export function renderWorkspaces() {
   renderWorkspaceTitle(document, state.user, state.groups);
   if (pendingPanel("#workspace-list", state.workspacesLoading, state.workspaceLoadError)) {
@@ -257,23 +279,26 @@ export function renderWorkspaces() {
   const items = workspaceList();
   const query = state.workspaceQuery.trim().toLocaleLowerCase();
   const indexed = items.map((workspace, index) => ({ workspace, index }));
-  const visible = indexed.filter(({ workspace }) => {
+  const matches = indexed.filter(({ workspace }) => {
     const group = resolveWorkspaceGroup(workspace, state.user, state.groups, state.accounts);
     return !query || [workspace.name, workspace.owner, group.name]
       .some((value) => String(value || "").toLocaleLowerCase().includes(query));
   });
   document.querySelector("#workspace-results-count").textContent = t("workspace.resultsCount")
-    .replace("{shown}", visible.length.toLocaleString()).replace("{total}", items.length.toLocaleString());
-  if (!visible.length) {
+    .replace("{shown}", matches.length.toLocaleString()).replace("{total}", items.length.toLocaleString());
+  if (!matches.length) {
     document.querySelector("#workspace-list").innerHTML = `<div class="empty-state">${items.length ? t("workspace.noSearchResults") : (state.lang === "zh" ? "还没有工作区，请创建一个。" : "No workspaces yet. Create one to get started.")}</div>`;
     return;
   }
+  const matchIds = new Set(matches.map(({ workspace }) => workspace.id));
+  const includedIds = query ? new Set([...matchIds, ...workspaceAncestorIds(indexed, matchIds)]) : null;
   const isAdmin = ["system_admin", "platform_admin"].includes(state.user?.role);
   if (!isAdmin) {
-    document.querySelector("#workspace-list").innerHTML = visible.map(({ workspace, index }) => workspaceCardMarkup(workspace, index)).join("");
+    document.querySelector("#workspace-list").innerHTML = workspaceHierarchyMarkup(indexed, includedIds, Boolean(query));
     return;
   }
-  const sections = groupWorkspaces(visible, state.user, state.groups, state.accounts);
+  const sections = groupWorkspaces(indexed, state.user, state.groups, state.accounts)
+    .filter((section) => !query || section.workspaces.some(({ workspace }) => matchIds.has(workspace.id)));
   const ownSection = sections.find((section) => section.own);
   const contextKey = `${state.user?.id || state.user?.username || "admin"}:${ownSection?.key || "none"}`;
   if (state.workspaceGroupContextKey !== contextKey) {
@@ -285,7 +310,7 @@ export function renderWorkspaces() {
     const label = section.name || t("workspace.ungrouped");
     return `<details class="workspace-group" data-workspace-group="${escapeHtml(section.key)}"${open ? " open" : ""}>
       <summary><span>${escapeHtml(label)}</span><span class="workspace-group-count">${t("workspace.groupCount").replace("{count}", section.workspaces.length.toLocaleString())}</span></summary>
-      <div class="workspace-group-items">${section.workspaces.map(({ workspace, index }) => workspaceCardMarkup(workspace, index)).join("")}</div>
+      <div class="workspace-group-items">${workspaceHierarchyMarkup(section.workspaces, includedIds, Boolean(query))}</div>
     </details>`;
   }).join("");
 }

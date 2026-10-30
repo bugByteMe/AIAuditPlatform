@@ -110,8 +110,8 @@ class EmptyWorkspaceStore:
   def __init__(self):
     self.calls = []
 
-  def create_workspace(self, user, name, shared, files, visibility=None, user_ids=None):
-    self.calls.append((user, name, shared, files, visibility, user_ids))
+  def create_workspace(self, user, name, shared, files, visibility=None, user_ids=None, parent_workspace_id=None):
+    self.calls.append((user, name, shared, files, visibility, user_ids, parent_workspace_id))
     return {"id": "ws-empty", "name": name, "shared": shared, "fileCount": 0}
 
 
@@ -126,7 +126,7 @@ class ServerStreamingTest(unittest.TestCase):
 
     self.assertEqual(response.status_code, 201)
     self.assertEqual(response.json()["workspace"]["id"], "ws-empty")
-    self.assertEqual(store.calls, [(user, "Empty review", False, [], None, None)])
+    self.assertEqual(store.calls, [(user, "Empty review", False, [], None, None, None)])
     add_audit.assert_called_once_with("example", "workspace created", "ws-empty")
 
   def test_session_is_fast_and_balance_refresh_is_explicit(self) -> None:

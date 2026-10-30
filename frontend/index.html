@@ -424,6 +424,11 @@
           <span data-i18n="workspace.name">工作区名称</span>
           <input name="workspaceName" id="workspace-name-input" data-i18n-placeholder="workspace.namePlaceholder" placeholder="例如：2026-Q3 收入测试" required />
         </label>
+        <label class="field">
+          <span data-i18n="workspace.parent">上级工作区</span>
+          <select name="parentWorkspaceId" id="workspace-parent-select"></select>
+          <small data-i18n="workspace.parentHelp">仅用于工作区列表分组，不影响权限或文件。</small>
+        </label>
         <fieldset class="visibility-fieldset">
           <legend data-i18n="workspace.visibility">可见范围</legend>
           <label class="radio-row"><input type="radio" name="visibility" value="private" checked /><span data-i18n="workspace.visibilityPrivate">仅自己</span></label>
@@ -444,6 +449,28 @@
         <div class="modal-actions">
           <button type="button" class="btn" data-close-workspace-modal data-i18n="actions.cancel">取消</button>
           <button type="submit" class="btn primary" id="workspace-create-submit" data-i18n="workspace.create">创建</button>
+        </div>
+      </form>
+    </div>
+    <div class="modal-backdrop hidden" id="workspace-parent-modal" role="dialog" aria-modal="true" aria-labelledby="workspace-parent-title">
+      <form class="modal-panel" id="workspace-parent-form">
+        <div class="panel-head">
+          <div>
+            <h2 id="workspace-parent-title" data-i18n="workspace.moveInHierarchy">调整工作区层级</h2>
+            <p id="workspace-parent-workspace-name"></p>
+          </div>
+          <button type="button" class="rail-toggle" data-close-workspace-parent aria-label="Close">×</button>
+        </div>
+        <input type="hidden" name="workspaceId" />
+        <label class="field">
+          <span data-i18n="workspace.parent">上级工作区</span>
+          <select name="parentWorkspaceId"></select>
+          <small data-i18n="workspace.parentHelp">仅用于工作区列表分组，不影响权限或文件。</small>
+        </label>
+        <p class="field-help" id="workspace-parent-status"></p>
+        <div class="modal-actions">
+          <button type="button" class="btn" data-close-workspace-parent data-i18n="actions.cancel">取消</button>
+          <button type="submit" class="btn primary" id="workspace-parent-submit" data-i18n="actions.save">保存</button>
         </div>
       </form>
     </div>

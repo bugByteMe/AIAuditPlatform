@@ -243,7 +243,7 @@ test("platform administrators can manage workspaces and chats outside their grou
     assert.equal(await page.locator(".workspace-group").evaluate((element) => element.open), false);
     await page.locator(".workspace-group > summary").click();
     await page.locator(".workspace-more > summary").click();
-    for (const action of ["share", "fork", "delete"]) {
+    for (const action of ["manage-access", "move-workspace", "fork", "delete"]) {
       assert.equal(await page.locator(`.workspace-more [data-action="${action}"]`).isVisible(), true);
     }
     assert.ok(await page.locator('[data-edit-name][data-name-kind="workspace"]').count() > 0);
