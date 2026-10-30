@@ -46,6 +46,20 @@ class SharedIdentityTest(unittest.TestCase):
     self.assertEqual(user["micu"], self.identity["micu"])
     self.assertNotIn("passwordHash", user)
 
+  def test_display_name_is_optional_and_updates_without_changing_identity(self):
+    user = self.admit({**self.identity, "displayName": "Alice Reviewer"})
+    self.assertEqual(user["displayName"], "Alice Reviewer")
+    self.assertEqual(user["username"], "alice")
+    self.assertIs(self.admit({**self.identity, "displayName": "Alice Chen"}), user)
+    self.assertEqual(user["displayName"], "Alice Chen")
+    reopened = AccountStore(self.store.path, {})
+    self.assertEqual(reopened.users["alice"]["displayName"], "Alice Chen")
+
+  def test_missing_display_name_preserves_existing_local_value(self):
+    user = self.admit({**self.identity, "displayName": "Alice Reviewer"})
+    self.admit(self.identity)
+    self.assertEqual(user["displayName"], "Alice Reviewer")
+
   def test_existing_profile_preserves_group_permissions_and_usage(self):
     user = self.admit()
     user.update(role="system_admin", groupId=self.other["id"], usedTokens=123)

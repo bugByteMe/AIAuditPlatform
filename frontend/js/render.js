@@ -180,7 +180,11 @@ export function renderCurrentUser() {
   if (!state.user) return;
   const used = Math.max(0, Number(state.user.usedTokens || 0));
   const budget = state.user.budget || {};
-  document.querySelector("#current-username").textContent = state.user.username;
+  const currentName = document.querySelector("#current-username");
+  currentName.textContent = state.user.displayName || state.user.username;
+  currentName.title = state.user.displayName && state.user.displayName !== state.user.username
+    ? state.user.username
+    : "";
   const percentage = budget.source === "custom"
     ? t("session.customProvider")
     : state.userBalanceLoading
@@ -640,7 +644,8 @@ export function renderAdmin() {
   };
   const accountRow = (account) => {
     const status = account.status === "active" && !account.enabled ? "disabled" : account.status || "active";
-    const name = account.username || account.id;
+    const username = account.username || account.id;
+    const name = account.displayName || username;
     const token = account.inviteToken || "";
     const budget = account.budget || {};
     const balance = budget.source === "custom"
@@ -655,6 +660,7 @@ export function renderAdmin() {
         <div>
           <h3>${escapeHtml(name)}</h3>
           <div class="meta-line">
+            ${name !== username ? `<span>${escapeHtml(username)}</span>` : ""}
             <span>${escapeHtml(t(`roles.${account.role || "user"}`))}</span>
             <span class="pill">${escapeHtml(t(`admin.${status}`) || status)}</span>
             <span>${balance} ${t("admin.balance")}</span>

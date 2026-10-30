@@ -105,6 +105,26 @@ class OidcFlowTest(unittest.TestCase):
     self.oidc.userinfo.return_value = {"sub": "subject-1", "customerId": "another"}
     self.assertFalse(server_oidc._revalidate_session({"oidcTokens": {"refresh_token": "synthetic-refresh"}}, user))
 
+  def test_session_revalidation_synchronizes_display_name_claim(self):
+    user = self.store.admit_identity(self.settings.issuer, self.identity, self.group["id"])
+    self.oidc.tokens.return_value = {"access_token": "synthetic-access", "refresh_token": "synthetic-refresh"}
+    self.oidc.userinfo.return_value = {
+      "sub": "subject-1", "customerId": "business", "display_name": "Alice Reviewer",
+    }
+    session = {"oidcTokens": {"refresh_token": "synthetic-refresh"}}
+    self.assertTrue(server_oidc._revalidate_session(session, user))
+    self.assertEqual(user["displayName"], "Alice Reviewer")
+    reopened = AccountStore(self.store.path, {})
+    self.assertEqual(reopened.users["alice"]["displayName"], "Alice Reviewer")
+
+  def test_display_name_claim_validation(self):
+    self.assertIsNone(server_oidc.display_name_from_userinfo({}))
+    self.assertEqual(server_oidc.display_name_from_userinfo({"display_name": "  Alice  "}), "Alice")
+    with self.assertRaisesRegex(IdentityError, "display name"):
+      server_oidc.display_name_from_userinfo({"display_name": "x" * 81})
+    with self.assertRaisesRegex(IdentityError, "display name"):
+      server_oidc.display_name_from_userinfo({"display_name": ["Alice"]})
+
   def test_session_revalidation_fails_closed_when_provider_unavailable(self):
     user = self.store.admit_identity(self.settings.issuer, self.identity, self.group["id"])
     self.oidc.tokens.side_effect = IdentityError("Unavailable")

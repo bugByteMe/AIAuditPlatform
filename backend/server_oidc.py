@@ -18,6 +18,21 @@ _flows = {}
 _rates = {}
 _services = None
 
+MAX_DISPLAY_NAME_LENGTH = 80
+
+
+def display_name_from_userinfo(info):
+  """Return a normalized optional display_name claim without treating it as identity."""
+  if "display_name" not in info:
+    return None
+  value = info.get("display_name")
+  if not isinstance(value, str):
+    raise IdentityError("Identity display name claim is invalid")
+  value = value.strip()
+  if len(value) > MAX_DISPLAY_NAME_LENGTH or any(ord(character) < 32 or ord(character) == 127 for character in value):
+    raise IdentityError("Identity display name claim is invalid")
+  return value
+
 
 def services():
   global _services
@@ -98,7 +113,7 @@ def _revalidate_session(session, user):
     check_admission(user)
     if session.get("identityCheckedAt", 0) + IDENTITY.revalidate_seconds > time.time():
       return True
-    _, _, _, gateway, oidc = services()
+    store, _, _, gateway, oidc = services()
     tokens = session.get("oidcTokens")
     if not tokens:
       return False
@@ -112,6 +127,12 @@ def _revalidate_session(session, user):
       return False
     if binding["customerId"] != user["customerId"]:
       return False
+    display_name = display_name_from_userinfo(info)
+    if display_name is not None:
+      display_name = display_name or user["username"]
+      if user.get("displayName") != display_name:
+        user["displayName"] = display_name
+        store.save_user(user)
     user["micu"] = binding["micu"]
     session.update(oidcTokens=refreshed, identityCheckedAt=time.time())
     return True
@@ -158,6 +179,9 @@ class OidcHandlerMixin:
     check_admission(binding)
     if binding["customerId"] != info["customerId"]:
       raise IdentityError("Customer claim mismatch")
+    display_name = display_name_from_userinfo(info)
+    if display_name is not None:
+      binding = {**binding, "displayName": display_name}
     user = store.admit_identity(IDENTITY.issuer, binding, IDENTITY.default_group, flow["invite"])
     token, error = create_user_session(user, "OIDC login success")
     if not token:

@@ -60,6 +60,9 @@ Configure Keycloak following [deployment](keycloak-deployment.md):
    user-profile attributes. Do not let ordinary account-console users write them.
 2. Map `customerId` to a single string in ID tokens **and UserInfo**, in default
    client scopes. The other two attributes are internal, not user claims.
+   Optionally expose an editable `displayName` user-profile attribute as the
+   `display_name` string claim in ID tokens and UserInfo. It is presentation-only
+   and never replaces the immutable username or subject for authorization.
 3. Use authorization code, mandatory PKCE S256, asymmetric signing (RS256 by
    default), and disable implicit/password grants. Register the exact callback
    `https://<platform-host>/api/oidc/callback` and exact HTTPS web origin.

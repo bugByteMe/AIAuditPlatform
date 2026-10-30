@@ -4,7 +4,10 @@ import test from "node:test";
 import { adminGroupMatches } from "./adminSearch.js";
 
 const group = { id: "audit-east", name: "East Audit" };
-const accounts = [{ id: "one", username: "Alice.Reviewer" }, { id: "two", username: "bob.audit" }];
+const accounts = [
+  { id: "one", username: "Alice.Reviewer", displayName: "陈审计" },
+  { id: "two", username: "bob.audit" },
+];
 
 test("admin groups match partial group names case-insensitively", () => {
   assert.equal(adminGroupMatches(group, accounts, "AUD"), true);
@@ -14,6 +17,10 @@ test("admin groups match partial group names case-insensitively", () => {
 test("admin groups match a partial username within the group", () => {
   assert.equal(adminGroupMatches(group, accounts, "review"), true);
   assert.equal(adminGroupMatches(group, accounts, "charlie"), false);
+});
+
+test("admin groups match a user's display name", () => {
+  assert.equal(adminGroupMatches(group, accounts, "陈审"), true);
 });
 
 test("an empty admin search includes every group", () => {

@@ -83,6 +83,12 @@ Before adding production users:
 2. In the realm's user-profile configuration, define a single-valued `customerId`
    attribute with administrator-only edit permission. Use stable customer IDs,
    not editable group names. Populate it before allowing application access.
+   Define a separate optional `displayName` string attribute with user and
+   administrator view/edit permission and a maximum length of 80 characters.
+   Add a User Attribute protocol mapper to the shared `profile` client scope
+   that maps `displayName` to the `display_name` claim in ID tokens and UserInfo.
+   The application synchronizes this presentation-only value during login and
+   session revalidation; usernames remain immutable identity keys.
 3. Create a separate confidential
    OIDC client for the main platform and each dedicated instance. Use Standard
    Flow (authorization code), require PKCE S256, disable Implicit Flow and Direct

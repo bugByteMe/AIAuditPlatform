@@ -87,8 +87,16 @@ class AccountIdentityMixin:
           raise IdentityError("Local account is disabled or removed")
         if user.get("customerId") != customer or user["username"] != username:
           raise IdentityError("Identity changed; administrator action required")
+        changed = False
+        if "displayName" in identity:
+          display_name = str(identity.get("displayName") or "").strip() or username
+          if user.get("displayName") != display_name:
+            user["displayName"] = display_name
+            changed = True
         if user.get("micu") != identity["micu"]:
           user["micu"] = deepcopy(identity["micu"])
+          changed = True
+        if changed:
           self.save_user(user)
         # A profile already admitted here never consumes another invitation.
         return user
@@ -113,7 +121,8 @@ class AccountIdentityMixin:
       if not group:
         raise IdentityError("Local admission group is not configured")
       profile = {"id": pending["id"] if pending else new_id("usr"), "username": username,
-        "displayName": username, "role": "user", "groupId": group_id, "group": group["name"],
+        "displayName": str(identity.get("displayName") or "").strip() or username,
+        "role": "user", "groupId": group_id, "group": group["name"],
         "enabled": bool(pending.get("enabled", True)) if pending else True,
         "status": "active", "maxSessions": pending.get("maxSessions", 1) if pending else 1,
         "usedTokens": 0, "createdAt": timestamp(), "authSource": "oidc", "oidcIssuer": issuer,
