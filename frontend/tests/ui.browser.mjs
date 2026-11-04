@@ -75,6 +75,15 @@ test("shared radii and SVG controls follow the frontend design system", async ()
     assert.equal(await page.locator("#workspace-modal .modal-panel").evaluate((node) => getComputedStyle(node).borderRadius), "12px");
     assert.equal(await page.locator("#workspace-modal [data-close-workspace-modal] use").getAttribute("href"), "#icon-x");
     assert.equal((await page.locator("#workspace-modal [data-close-workspace-modal]").innerText()).trim(), "");
+    await page.locator("#workspace-modal [data-close-workspace-modal]").click();
+
+    await page.locator('[data-view="chat"]').click();
+    const newChat = await page.locator("#new-chat-button").boundingBox();
+    const collapse = await page.locator(".sessions-panel .session-collapse-button").boundingBox();
+    assert.deepEqual(
+      { width: newChat.width, height: newChat.height, y: newChat.y },
+      { width: collapse.width, height: collapse.height, y: collapse.y },
+    );
   } finally { await page.close(); }
 });
 

@@ -114,6 +114,13 @@ body { line-height: 1.55; }
 .chat-layout { border: 1px solid var(--line); border-radius: var(--radius-container) var(--radius-container) 0 0; }
 .sessions-panel, .file-panel { background: #f9fbfb; }
 .compact-head, .chat-head { padding: 16px 18px; }
+.sessions-panel .compact-head { align-items: flex-start; gap: 10px; }
+.sessions-panel .compact-head > div:first-child { min-width: 0; flex: 1; }
+#chat-workspace-name { margin-bottom: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.session-header-actions { flex: none; flex-wrap: nowrap; gap: 6px; }
+.session-header-actions #new-chat-button,
+.session-header-actions .session-collapse-button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+.session-header-actions .ui-icon { width: 17px; height: 17px; }
 .session-item { padding: 14px 12px; }
 .session-item.active { box-shadow: inset 3px 0 var(--primary); }
 .session-main strong { font-size: 14px; }

@@ -355,11 +355,15 @@ export function renderPanelState() {
   layout.classList.toggle("files-collapsed", state.isFileExplorerCollapsed);
   document.querySelectorAll('[data-toggle-panel="sessions"]').forEach((button) => {
     button.dataset.i18nTitle = state.isSessionPanelCollapsed ? "chat.expandSessions" : "chat.collapseSessions";
+    button.dataset.i18nAriaLabel = button.dataset.i18nTitle;
     button.title = t(button.dataset.i18nTitle);
+    button.setAttribute("aria-label", button.title);
   });
   document.querySelectorAll('[data-toggle-panel="files"]').forEach((button) => {
     button.dataset.i18nTitle = state.isFileExplorerCollapsed ? "files.expand" : "files.collapse";
+    button.dataset.i18nAriaLabel = button.dataset.i18nTitle;
     button.title = t(button.dataset.i18nTitle);
+    button.setAttribute("aria-label", button.title);
   });
   const focusButton = document.querySelector("#chat-focus-mode");
   if (focusButton) {
