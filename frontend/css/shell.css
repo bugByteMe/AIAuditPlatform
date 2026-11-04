@@ -45,7 +45,7 @@
   place-items: center;
   width: 40px;
   height: 40px;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: #e6fbff;
   color: var(--primary-dark);
   font-weight: 800;
@@ -58,7 +58,7 @@
   width: 30px;
   height: 30px;
   border: 1px solid #365062;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: #243542;
   color: #ffffff;
   font-size: 20px;
@@ -76,7 +76,7 @@
   min-height: 40px;
   padding: 0 12px;
   border: 1px solid transparent;
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: #dce6ee;
   text-align: left;
@@ -198,7 +198,7 @@ body.chat-focus-mode .chat-layout {
   display: inline-flex;
   padding: 3px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: var(--surface);
 }
 
@@ -206,7 +206,7 @@ body.chat-focus-mode .chat-layout {
   min-width: 52px;
   height: 30px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
 }

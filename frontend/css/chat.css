@@ -146,13 +146,13 @@
 .session-rail {
   left: 0;
   border-left: 0;
-  border-radius: 0 8px 8px 0;
+  border-radius: 0 var(--radius-control) var(--radius-control) 0;
 }
 
 .file-rail {
   right: 0;
   border-right: 0;
-  border-radius: 8px 0 0 8px;
+  border-radius: var(--radius-control) 0 0 var(--radius-control);
 }
 
 .panel-rail:hover {
@@ -164,7 +164,7 @@
   width: 28px;
   height: 28px;
   border: 1px solid var(--line);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: #ffffff;
   color: var(--muted);
 }
@@ -285,7 +285,7 @@
   height: 28px;
   padding: 2px 7px;
   border: 1px solid var(--primary);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   outline: 2px solid rgba(18, 108, 120, 0.12);
   background: #ffffff;
   color: var(--text);
@@ -312,7 +312,7 @@
   min-height: 28px;
   padding: 0 8px;
   border: 1px solid var(--line-strong);
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: #ffffff;
   color: #566371;
 }
@@ -332,7 +332,7 @@
   font-size: 12px;
   width: min(680px, calc(100vw - 48px));
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-container);
   box-shadow: 0 14px 34px rgb(23 42 51 / 16%);
 }
 
@@ -350,14 +350,8 @@
   display: none;
 }
 
-.runtime-details > summary::after {
-  margin-left: 5px;
-  content: "⌄";
-}
-
-.runtime-details[open] > summary::after {
-  content: "⌃";
-}
+.runtime-details > summary .disclosure-icon { width: 15px; height: 15px; margin-left: 5px; transition: transform 150ms ease; }
+.runtime-details[open] > summary .disclosure-icon { transform: rotate(180deg); }
 
 .runtime-strip strong {
   margin-right: 4px;
@@ -427,7 +421,7 @@
   margin: 3px 12px 3px 118px;
   padding: 4px 8px;
   border: 0;
-  border-radius: 6px;
+  border-radius: var(--radius-control);
   background: transparent;
   color: var(--muted);
   cursor: pointer;
@@ -547,7 +541,7 @@
 
 .event-markdown code {
   padding: 1px 4px;
-  border-radius: 4px;
+  border-radius: var(--radius-control);
   background: #eef1f4;
   font-family: "SFMono-Regular", Consolas, monospace;
   font-size: 0.95em;
@@ -556,7 +550,7 @@
 .event-markdown pre {
   overflow: auto;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-container);
   background: #17232d;
   color: #ffffff;
 }
@@ -572,7 +566,7 @@
   margin: 0 0 8px;
   overflow-x: auto;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-container);
 }
 
 .event-markdown table {
@@ -633,7 +627,7 @@
 .event-user p {
   max-width: min(680px, 82%);
   padding: 9px 12px;
-  border-radius: 8px;
+  border-radius: var(--radius-container);
   background: #eef1f4;
 }
 
@@ -699,7 +693,7 @@
   margin: 8px 0 0;
   overflow: auto;
   padding: 10px;
-  border-radius: 8px;
+  border-radius: var(--radius-container);
   background: #17232d;
   color: #ffffff;
   white-space: pre-wrap;
@@ -711,7 +705,7 @@
   width: fit-content;
   margin-left: 5px;
   padding: 2px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: #e7ecf0;
   color: #566371;
   font-size: 11px;
@@ -797,7 +791,7 @@
   left: calc(50% - 24px);
   width: 48px;
   height: 3px;
-  border-radius: 3px;
+  border-radius: var(--radius-pill);
   background: var(--line-strong);
 }
 
@@ -819,7 +813,7 @@
   resize: vertical;
   padding: 12px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   outline: 0;
 }
 
@@ -893,7 +887,7 @@ label:not(.field) {
 select {
   height: 34px;
   border: 1px solid var(--line);
-  border-radius: 8px;
+  border-radius: var(--radius-control);
   background: #ffffff;
   color: var(--text);
 }
@@ -947,6 +941,16 @@ select {
   font-size: 12px;
 }
 
+.file-icon {
+  display: grid;
+  place-items: center;
+}
+
+.file-icon .ui-icon {
+  width: 14px;
+  height: 14px;
+}
+
 .file-name {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -960,7 +964,7 @@ select {
 
 .file-status {
   padding: 1px 6px;
-  border-radius: 999px;
+  border-radius: var(--radius-pill);
   background: var(--surface-2);
 }
 

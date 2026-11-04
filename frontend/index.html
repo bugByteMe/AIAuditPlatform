@@ -13,6 +13,27 @@
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
+    <svg class="icon-sprite" aria-hidden="true">
+      <symbol id="icon-chevron-left" viewBox="0 0 24 24"><path d="m15 18-6-6 6-6" /></symbol>
+      <symbol id="icon-chevron-right" viewBox="0 0 24 24"><path d="m9 18 6-6-6-6" /></symbol>
+      <symbol id="icon-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6" /></symbol>
+      <symbol id="icon-chevron-up" viewBox="0 0 24 24"><path d="m18 15-6-6-6 6" /></symbol>
+      <symbol id="icon-folder" viewBox="0 0 24 24"><path d="M3 6h6l2 2h10v10a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2Z" /></symbol>
+      <symbol id="icon-file" viewBox="0 0 24 24"><path d="M6 2h9l5 5v15H6Z" /><path d="M14 2v6h6" /></symbol>
+      <symbol id="icon-message" viewBox="0 0 24 24"><path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4Z" /></symbol>
+      <symbol id="icon-wallet" viewBox="0 0 24 24"><path d="M3 6a3 3 0 0 1 3-3h13v18H6a3 3 0 0 1-3-3Z" /><path d="M3 8h16" /><path d="M15 13h6v4h-6a2 2 0 0 1 0-4Z" /></symbol>
+      <symbol id="icon-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3" /><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.8 2.8-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.6v.2h-4V21a1.7 1.7 0 0 0-1-1.6 1.7 1.7 0 0 0-1.9.3l-.1.1L4.2 17l.1-.1a1.7 1.7 0 0 0 .3-1.9A1.7 1.7 0 0 0 3 14H2.8v-4H3a1.7 1.7 0 0 0 1.6-1 1.7 1.7 0 0 0-.3-1.9L4.2 7 7 4.2l.1.1a1.7 1.7 0 0 0 1.9.3A1.7 1.7 0 0 0 10 3V2.8h4V3a1.7 1.7 0 0 0 1 1.6 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 7l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.6 1h.2v4H21a1.7 1.7 0 0 0-1.6 1Z" /></symbol>
+      <symbol id="icon-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7" /><path d="m20 20-4-4" /></symbol>
+      <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15" /></symbol>
+      <symbol id="icon-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6" /></symbol>
+      <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="icon-maximize" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></symbol>
+      <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></symbol>
+      <symbol id="icon-external-link" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-9 9" /><path d="M19 13v6H5V5h6" /></symbol>
+      <symbol id="icon-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14M13 6l6 6-6 6" /></symbol>
+      <symbol id="icon-check" viewBox="0 0 24 24"><path d="m5 12 4 4L19 6" /></symbol>
+      <symbol id="icon-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6 6 18" /></symbol>
+    </svg>
     <section id="startup-screen" aria-busy="true" aria-label="Loading">
       <p id="startup-message" role="status">正在加载…</p>
       <button type="button" class="btn" id="startup-retry" hidden>重试</button>
@@ -77,24 +98,24 @@
             <strong>AI Audit</strong>
             <span data-i18n="brand.subtitle">审计智能体平台</span>
           </div>
-          <button class="collapse-btn" id="collapse-sidebar" aria-label="Collapse sidebar" title="Collapse sidebar">&lsaquo;</button>
+          <button class="collapse-btn" id="collapse-sidebar" aria-label="Collapse sidebar" title="Collapse sidebar"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg></button>
         </div>
 
         <nav class="nav-list" aria-label="Sections">
           <button class="nav-item active" data-view="workspace">
-            <span class="icon" aria-hidden="true">□</span>
+            <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-folder"></use></svg>
             <span data-i18n="nav.workspace">工作区</span>
           </button>
           <button class="nav-item" data-view="chat">
-            <span class="icon" aria-hidden="true">▣</span>
+            <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-message"></use></svg>
             <span data-i18n="nav.chat">实时会话</span>
           </button>
           <button class="nav-item" data-view="recharge">
-            <span class="icon" aria-hidden="true">¥</span>
+            <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>
             <span data-i18n="nav.recharge">充值</span>
           </button>
           <button class="nav-item" data-view="admin" id="admin-nav-button">
-            <span class="icon" aria-hidden="true">⚙</span>
+            <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg>
             <span data-i18n="nav.admin">管理</span>
           </button>
         </nav>
@@ -131,12 +152,12 @@
         <section class="view active" id="workspace-view">
           <div class="toolbar">
             <label class="search" for="workspace-search">
-              <span aria-hidden="true">⌕</span>
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
               <input id="workspace-search" type="search" data-i18n-placeholder="workspace.search" placeholder="搜索工作区或所有者" autocomplete="off" />
             </label>
             <span class="workspace-result-count" id="workspace-results-count" aria-live="polite"></span>
             <button type="button" class="btn icon-btn ghost workspace-refresh-button" id="refresh-workspaces" data-i18n-title="workspace.refresh" data-i18n-aria-label="workspace.refresh" title="刷新工作区状态" aria-label="刷新工作区状态">
-              <span aria-hidden="true">↻</span>
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-refresh"></use></svg>
             </button>
           </div>
 
@@ -163,10 +184,10 @@
               <div class="toolbar-actions workspace-file-actions">
                 <button class="btn primary" id="download-selected" data-i18n="artifacts.downloadSelected">下载所选</button>
                 <button type="button" class="btn icon-btn primary" id="workspace-add-menu-button" data-i18n-title="files.add" title="添加文件">
-                  <span aria-hidden="true">+</span>
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg>
                 </button>
                 <details class="action-menu workspace-file-more">
-                  <summary class="btn" data-i18n="actions.more">更多操作</summary>
+                  <summary class="btn"><span data-i18n="actions.more">更多操作</span><svg class="ui-icon disclosure-icon" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
                   <div class="action-menu-items">
                     <button class="btn ghost" id="sync-folder" data-i18n="artifacts.sync">同步到本地</button>
                     <button class="btn danger" id="delete-selected-files" data-i18n="artifacts.deleteSelected">删除所选</button>
@@ -206,16 +227,16 @@
                 </div>
                 <div class="toolbar-actions">
                   <button type="button" class="btn icon-btn primary" id="new-chat-button" data-i18n-title="chat.new" title="新建会话">
-                    <span aria-hidden="true">+</span>
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-plus"></use></svg>
                   </button>
-                  <button class="rail-toggle" data-toggle-panel="sessions" data-i18n-title="chat.collapseSessions" title="收起会话列表">‹</button>
+                  <button class="rail-toggle" data-toggle-panel="sessions" data-i18n-title="chat.collapseSessions" title="收起会话列表"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg></button>
                 </div>
               </div>
               <div class="session-list" id="chat-session-list"></div>
             </aside>
 
             <button class="panel-rail session-rail" data-toggle-panel="sessions">
-              <span aria-hidden="true">▣</span>
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-message"></use></svg>
               <span data-i18n="chat.sessions">会话列表</span>
             </button>
 
@@ -232,7 +253,7 @@
                   </div>
                   <span class="runtime-summary"><span data-i18n="chat.tokens">本次消耗</span> <strong id="token-count">0</strong></span>
                   <details class="runtime-details">
-                    <summary data-i18n="chat.runtimeDetails">运行详情</summary>
+                    <summary><span data-i18n="chat.runtimeDetails">运行详情</span><svg class="ui-icon disclosure-icon" aria-hidden="true"><use href="#icon-chevron-down"></use></svg></summary>
                     <div class="runtime-strip" aria-label="Runtime details">
                       <span><strong data-i18n="chat.worker">节点</strong> <span id="chat-worker-id">-</span></span>
                       <span><strong data-i18n="chat.container">容器</strong> <span id="chat-container-id">-</span></span>
@@ -244,7 +265,7 @@
                     </div>
                   </details>
                   <button type="button" class="rail-toggle focus-mode-toggle" id="chat-focus-mode" aria-pressed="false" data-i18n-title="chat.enterFocus" data-i18n-aria-label="chat.enterFocus" title="专注模式" aria-label="专注模式">
-                    <span aria-hidden="true">⛶</span>
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-maximize"></use></svg>
                   </button>
                 </div>
               </div>
@@ -285,7 +306,7 @@
             </section>
 
             <button class="panel-rail file-rail" data-toggle-panel="files">
-              <span aria-hidden="true">☰</span>
+              <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
               <span data-i18n="files.title">文件</span>
             </button>
 
@@ -296,7 +317,7 @@
                   <h2 data-i18n="files.title">文件</h2>
                   <p data-i18n="files.help">当前工作区</p>
                 </div>
-                <button class="rail-toggle" data-toggle-panel="files" data-i18n-title="files.collapse" title="收起文件">›</button>
+                <button class="rail-toggle" data-toggle-panel="files" data-i18n-title="files.collapse" title="收起文件"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></button>
               </div>
               <div class="file-tree" id="file-tree"></div>
             </aside>
@@ -346,11 +367,11 @@
                 <strong id="recharge-remaining-percent">—</strong>
               </div>
               <div class="recharge-products">
-                <button type="button" class="recharge-product" data-recharge-amount="50"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥50</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
-                <button type="button" class="recharge-product" data-recharge-amount="100"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥100</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
-                <button type="button" class="recharge-product" data-recharge-amount="200"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥200</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><span aria-hidden="true">↗</span></span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="50"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥50</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><svg class="ui-icon" aria-hidden="true"><use href="#icon-external-link"></use></svg></span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="100"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥100</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><svg class="ui-icon" aria-hidden="true"><use href="#icon-external-link"></use></svg></span></button>
+                <button type="button" class="recharge-product" data-recharge-amount="200"><span class="recharge-product-label" data-i18n="nav.recharge">充值</span><strong>¥200</strong><span class="recharge-product-action"><span data-i18n="recharge.wechatPay">微信支付</span><svg class="ui-icon" aria-hidden="true"><use href="#icon-external-link"></use></svg></span></button>
               </div>
-              <button type="button" class="recharge-debug" data-recharge-amount="1"><span data-i18n="recharge.debugSelect">调试</span><strong>¥1</strong><span aria-hidden="true">↗</span></button>
+              <button type="button" class="recharge-debug" data-recharge-amount="1"><span data-i18n="recharge.debugSelect">调试</span><strong>¥1</strong><svg class="ui-icon" aria-hidden="true"><use href="#icon-external-link"></use></svg></button>
             </section>
             <section class="panel recharge-history-panel">
               <div class="panel-head">
@@ -381,7 +402,7 @@
               </div>
               <div class="admin-search-toolbar">
                 <label class="search" for="admin-search">
-                  <span aria-hidden="true">⌕</span>
+                  <svg class="ui-icon" aria-hidden="true"><use href="#icon-search"></use></svg>
                   <input id="admin-search" type="search" data-i18n-placeholder="admin.search" placeholder="搜索小组或用户名" autocomplete="off" />
                 </label>
               </div>
@@ -425,7 +446,7 @@
             <h2 id="workspace-modal-title" data-i18n="workspace.createTitle">新建工作区</h2>
             <p data-i18n="workspace.createHelp">命名工作区；文件夹可稍后添加。</p>
           </div>
-          <button type="button" class="rail-toggle" data-close-workspace-modal aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-workspace-modal aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <label class="field">
           <span data-i18n="workspace.name">工作区名称</span>
@@ -466,7 +487,7 @@
             <h2 id="workspace-parent-title" data-i18n="workspace.moveInHierarchy">调整工作区层级</h2>
             <p id="workspace-parent-workspace-name"></p>
           </div>
-          <button type="button" class="rail-toggle" data-close-workspace-parent aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-workspace-parent aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <input type="hidden" name="workspaceId" />
         <label class="field">
@@ -488,7 +509,7 @@
             <h2 id="workspace-access-title" data-i18n="workspace.manageAccess">管理访问权限</h2>
             <p id="workspace-access-workspace-name"></p>
           </div>
-          <button type="button" class="rail-toggle" data-close-workspace-access aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-workspace-access aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <input type="hidden" name="workspaceId" />
         <fieldset class="visibility-fieldset">
@@ -517,7 +538,7 @@
           </div>
           <div class="toolbar-actions">
             <button type="button" class="btn" id="preview-download" data-i18n="preview.download">下载</button>
-            <button type="button" class="rail-toggle" data-close-preview-modal aria-label="Close">×</button>
+            <button type="button" class="rail-toggle" data-close-preview-modal aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
           </div>
         </div>
         <div class="preview-content" id="preview-content"></div>
@@ -530,7 +551,7 @@
             <h2 id="workspace-destination-title" data-i18n="files.chooseDestination">选择上传位置</h2>
             <p data-i18n="files.destinationHelp">选择工作区中已有的文件夹，或使用工作区根目录。</p>
           </div>
-          <button type="button" class="rail-toggle" data-close-destination aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-destination aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <div class="destination-folder-list" id="workspace-destination-list" role="group" aria-labelledby="workspace-destination-title"></div>
         <p class="destination-selected"><span data-i18n="files.destinationSelected">上传到：</span> <strong id="workspace-destination-selected"></strong></p>
@@ -547,7 +568,7 @@
             <h2 id="batch-account-title" data-i18n="admin.batchTitle">批量创建邀请</h2>
             <p data-i18n="admin.batchHelp">为同一小组创建多个待激活账号。</p>
           </div>
-          <button type="button" class="rail-toggle" data-close-batch-account aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-batch-account aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <div id="identity-customer-fields" class="identity-customer-section hidden">
           <label class="field"><span data-identity-label="customer">客户</span><select name="customerId" id="identity-customer-select"></select></label>
@@ -607,7 +628,7 @@
             <h2 id="account-settings-title" data-i18n="admin.userSettings">用户设置</h2>
             <p id="account-settings-name"></p>
           </div>
-          <button type="button" class="rail-toggle" data-close-account-settings aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-account-settings aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <input type="hidden" name="accountId" />
         <div id="account-customer-field" class="identity-customer-section hidden">
@@ -660,7 +681,7 @@
             <h2 id="group-settings-title" data-i18n="admin.groupSettings">小组设置</h2>
             <p id="group-settings-summary"></p>
           </div>
-          <button type="button" class="rail-toggle" data-close-group-settings aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-group-settings aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <input type="hidden" name="groupId" />
         <label class="field">
@@ -691,7 +712,7 @@
             <h2 id="codex-settings-title" data-i18n="codex.title">Codex 设置</h2>
             <p id="codex-settings-status"></p>
           </div>
-          <button type="button" class="rail-toggle" data-close-codex-settings aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-codex-settings aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <div class="segmented" role="radiogroup" aria-label="API provider">
           <label class="segment"><input type="radio" name="mode" value="micu" checked /> <span data-i18n="codex.defaultMicu">Default MicuAPI</span></label>
@@ -725,7 +746,7 @@
             <h2 id="recharge-import-title" data-i18n="admin.importRechargeTitle">批量充值预览</h2>
             <p id="recharge-import-summary"></p>
           </div>
-          <button type="button" class="rail-toggle" data-close-recharge-import aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-recharge-import aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <div class="recharge-import-table-wrap">
           <table class="recharge-import-table">
@@ -747,11 +768,11 @@
             <h2 id="recharge-qr-title"><span id="recharge-payment-heading" data-i18n="recharge.payTitle">扫码支付</span> <span id="recharge-qr-amount"></span></h2>
             <p id="recharge-scan-help" data-i18n="recharge.scanHelp">请使用对应的支付应用扫描二维码。</p>
           </div>
-          <button type="button" class="rail-toggle" data-close-recharge-qr aria-label="Close">×</button>
+          <button type="button" class="rail-toggle" data-close-recharge-qr aria-label="Close"><svg class="ui-icon" aria-hidden="true"><use href="#icon-x"></use></svg></button>
         </div>
         <img class="payment-qr" id="recharge-qr-image" alt="Payment QR code" />
         <div class="payment-success hidden" id="recharge-payment-notice" role="status" aria-live="polite" aria-atomic="true">
-          <span class="payment-success-icon" aria-hidden="true">✓</span>
+          <span class="payment-success-icon" aria-hidden="true"><svg class="ui-icon"><use href="#icon-check"></use></svg></span>
           <h3 id="recharge-payment-notice-title"></h3>
           <span class="payment-success-label" data-i18n="recharge.paidAmount">付款金额</span>
           <strong id="recharge-payment-notice-amount"></strong>

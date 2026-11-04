@@ -17,6 +17,10 @@ const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]
 let renderedEventSessionId = "";
 let renderedEventSignature = "";
 
+function uiIcon(name, className = "") {
+  return `<svg class="ui-icon${className ? ` ${className}` : ""}" aria-hidden="true"><use href="#icon-${name}"></use></svg>`;
+}
+
 function pendingPanel(selector, loading, failed) {
   const node = document.querySelector(selector);
   if (!node) return false;
@@ -151,7 +155,11 @@ function treeRows(items, collapsedFolders, options = {}) {
       const expandable = file.type === "folder" && file.hasChildren;
       const collapsed = expandable && collapsedFolders.has(path);
       const loading = expandable && options.loadingFolders?.has(path);
-      const icon = file.type === "folder" ? (loading ? "…" : expandable ? (collapsed ? "▸" : "▾") : "·") : "·";
+      const icon = loading
+        ? uiIcon("loader", "is-spinning")
+        : expandable
+          ? uiIcon(collapsed ? "chevron-right" : "chevron-down")
+          : uiIcon(file.type === "folder" ? "folder" : "file");
       const folderAttr = expandable ? `data-folder-path="${safePath}"` : "";
       const checkable = options.checkboxes && (file.type === "file" || file.hasChildren);
       const selected = selectionState(file, items, options.selectedPaths);
@@ -241,7 +249,7 @@ function workspaceCardMarkup(workspace, index) {
       </div>
       <div class="toolbar-actions workspace-card-actions">
         ${canAdministerWorkspace(workspace) || canCollaborateInWorkspace(workspace) ? `<details class="action-menu workspace-more">
-          <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}</summary>
+          <summary class="btn" aria-label="${t("actions.more")}" title="${t("actions.more")}">${t("actions.more")}${uiIcon("chevron-down", "disclosure-icon")}</summary>
           <div class="action-menu-items">
             ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="manage-access" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.manageAccess")}</button>` : ""}
             ${canAdministerWorkspace(workspace) ? `<button type="button" class="btn" data-action="move-workspace" data-index="${index}" data-workspace-id="${safeWorkspaceId}">${t("workspace.moveInHierarchy")}</button>` : ""}
@@ -252,7 +260,7 @@ function workspaceCardMarkup(workspace, index) {
           </div>
         </details>` : ""}
         <button type="button" class="btn primary" data-action="open" data-index="${index}" data-workspace-id="${safeWorkspaceId}">
-          ${t("workspace.open")} <span aria-hidden="true">→</span>
+          ${t("workspace.open")} ${uiIcon("arrow-right")}
         </button>
       </div>
     </article>
@@ -268,7 +276,7 @@ function workspaceHierarchyMarkup(items, includedIds = null, searching = false) 
     const expanded = hasChildren && (searching || (override === undefined ? workspaceNodeInitiallyExpanded(node.depth) : override));
     return `<div class="workspace-tree-node" data-workspace-node="${escapeHtml(workspaceId)}" style="--workspace-depth:${node.depth}">
       <div class="workspace-tree-row">
-        ${hasChildren ? `<button type="button" class="workspace-tree-toggle" data-workspace-fold="${escapeHtml(workspaceId)}" aria-expanded="${expanded}" aria-label="${t(expanded ? "workspace.collapseChildren" : "workspace.expandChildren")}">${expanded ? "⌄" : "›"}</button>` : `<span class="workspace-tree-spacer" aria-hidden="true"></span>`}
+        ${hasChildren ? `<button type="button" class="workspace-tree-toggle" data-workspace-fold="${escapeHtml(workspaceId)}" aria-expanded="${expanded}" aria-label="${t(expanded ? "workspace.collapseChildren" : "workspace.expandChildren")}">${uiIcon(expanded ? "chevron-down" : "chevron-right")}</button>` : `<span class="workspace-tree-spacer" aria-hidden="true"></span>`}
         ${workspaceCardMarkup(node.workspace, node.index)}
       </div>
       ${hasChildren ? `<div class="workspace-tree-children${expanded ? "" : " hidden"}">${node.children.map(renderNode).join("")}</div>` : ""}
@@ -564,7 +572,7 @@ export function renderEvents() {
       : expanded
         ? t("chat.hideEarlierMessages")
         : t("chat.showEarlierMessages").replace("{count}", hiddenCount.toLocaleString());
-    const toggle = `<button type="button" class="chat-turn-toggle" data-chat-turn-toggle data-run-id="${escapeHtml(group.runId)}" data-chat-turn-lazy="${String(Boolean(compactMeta.compactTurn && !loaded))}" aria-expanded="${String(expanded)}"><span aria-hidden="true">${expanded ? "▾" : "▸"}</span>${escapeHtml(label)}</button>`;
+    const toggle = `<button type="button" class="chat-turn-toggle" data-chat-turn-toggle data-run-id="${escapeHtml(group.runId)}" data-chat-turn-lazy="${String(Boolean(compactMeta.compactTurn && !loaded))}" aria-expanded="${String(expanded)}">${uiIcon(expanded ? "chevron-down" : "chevron-right")}${escapeHtml(label)}</button>`;
     const detailStatus = expanded && !loaded
       ? `<div class="chat-turn-status ${failed ? "error" : ""}" role="${failed ? "alert" : "status"}">${escapeHtml(t(failed ? "chat.foldLoadFailed" : "chat.loadingFoldedMessages"))}</div>`
       : "";
@@ -727,7 +735,7 @@ export function renderAdmin() {
           ${token ? `<code class="invite-token">${escapeHtml(token)}</code>` : ""}
         </div>
         <div class="admin-actions">
-          <button type="button" class="btn icon-btn admin-settings-button" data-open-account-settings="${escapeHtml(account.id)}" aria-label="${escapeHtml(t("admin.configureUser"))}" title="${escapeHtml(t("admin.configureUser"))}">⚙</button>
+          <button type="button" class="btn icon-btn admin-settings-button" data-open-account-settings="${escapeHtml(account.id)}" aria-label="${escapeHtml(t("admin.configureUser"))}" title="${escapeHtml(t("admin.configureUser"))}">${uiIcon("settings")}</button>
         </div>
       </article>`;
   };
@@ -748,7 +756,7 @@ export function renderAdmin() {
             <div class="meta-line"><span>${Number(group.userCount || 0)} ${t("admin.usersCount")}</span><span>${Number(group.workspaceCount || 0)} ${t("admin.workspaces")}</span><span>${usage}</span><span>${liveRunLimit} ${t("admin.concurrentLiveRuns")}</span></div>
           </div>
           <div class="admin-actions">
-            <button type="button" class="btn icon-btn admin-settings-button" data-open-group-settings="${escapeHtml(group.id)}" aria-label="${escapeHtml(t("admin.configureGroup"))}" title="${escapeHtml(t("admin.configureGroup"))}">⚙</button>
+            <button type="button" class="btn icon-btn admin-settings-button" data-open-group-settings="${escapeHtml(group.id)}" aria-label="${escapeHtml(t("admin.configureGroup"))}" title="${escapeHtml(t("admin.configureGroup"))}">${uiIcon("settings")}</button>
           </div>
         </summary>
         <div class="meter ${limit !== null && used > limit ? "danger" : ""}"><span style="width: ${percent}%"></span></div>

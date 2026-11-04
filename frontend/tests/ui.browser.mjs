@@ -56,6 +56,28 @@ async function openApp(role = "platform_admin", viewport = { width: 1280, height
   return { page, requests };
 }
 
+test("shared radii and SVG controls follow the frontend design system", async () => {
+  const { page } = await openApp();
+  try {
+    const radii = await page.evaluate(() => {
+      const styles = getComputedStyle(document.documentElement);
+      return {
+        control: styles.getPropertyValue("--radius-control").trim(),
+        container: styles.getPropertyValue("--radius-container").trim(),
+        refresh: getComputedStyle(document.querySelector("#refresh-workspaces")).borderRadius,
+      };
+    });
+    assert.deepEqual(radii, { control: "8px", container: "12px", refresh: "8px" });
+    assert.equal(await page.locator("#refresh-workspaces use").getAttribute("href"), "#icon-refresh");
+    assert.equal(await page.locator("#admin-nav-button use").getAttribute("href"), "#icon-settings");
+
+    await page.locator("[data-open-workspace-modal]").click();
+    assert.equal(await page.locator("#workspace-modal .modal-panel").evaluate((node) => getComputedStyle(node).borderRadius), "12px");
+    assert.equal(await page.locator("#workspace-modal [data-close-workspace-modal] use").getAttribute("href"), "#icon-x");
+    assert.equal((await page.locator("#workspace-modal [data-close-workspace-modal]").innerText()).trim(), "");
+  } finally { await page.close(); }
+});
+
 test("administrator settings expose and submit only each role's permitted fields", async () => {
   for (const role of ["platform_admin", "system_admin", "user"]) {
     const { page, requests } = await openApp(role);

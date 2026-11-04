@@ -34,7 +34,7 @@ body { line-height: 1.55; }
   padding: clamp(24px, 4vw, 38px);
   border: 1px solid var(--line);
   border-top: 4px solid var(--primary);
-  border-radius: 16px;
+  border-radius: var(--radius-container);
   box-shadow: 0 18px 52px rgb(23 42 51 / 10%);
 }
 .login-brand { margin-bottom: 8px; }
@@ -55,7 +55,7 @@ body { line-height: 1.55; }
 .view:not(#chat-view) .panel {
   padding: 12px 16px 16px;
   border: 1px solid var(--line);
-  border-radius: 14px;
+  border-radius: var(--radius-container);
   background: var(--surface);
   box-shadow: var(--shadow-soft);
 }
@@ -75,14 +75,14 @@ body { line-height: 1.55; }
 .search input:focus-visible { outline: 0; }
 .workspace-result-count { color: var(--muted); font-size: 13px; white-space: nowrap; }
 
-.workspace-item { align-items: center; gap: 10px; padding: 7px 6px; border-radius: 8px; }
+.workspace-item { align-items: center; gap: 10px; padding: 7px 6px; border-radius: var(--radius-control); }
 .workspace-item > div:first-child { min-width: 0; }
 .workspace-item h3 { margin: 0; font-size: 14px; line-height: 1.3; }
 .workspace-item.active { box-shadow: inset 3px 0 var(--primary); }
 .workspace-item .meta-line { gap: 3px 10px; margin-top: 3px; font-size: 12px; line-height: 1.3; }
 .workspace-item .pill { min-height: 20px; padding-inline: 6px; }
 .workspace-card-actions { flex-wrap: nowrap; }
-.workspace-card-actions > .btn.primary { white-space: nowrap; }
+.workspace-card-actions > .btn.primary { display: inline-flex; align-items: center; gap: 6px; white-space: nowrap; }
 .workspace-card-actions > .btn.primary, .workspace-more > summary { min-height: 34px; padding-inline: 10px; }
 .workspace-file-actions { justify-content: flex-end; }
 .empty-state { padding: 32px 12px; text-align: center; font-size: 14px; }
@@ -91,7 +91,8 @@ body { line-height: 1.55; }
 .action-menu[open] { z-index: 20; }
 .action-menu > summary { display: inline-flex; align-items: center; list-style: none; user-select: none; cursor: pointer; }
 .action-menu > summary::-webkit-details-marker { display: none; }
-.action-menu > summary::after { content: "⌄"; margin-left: 8px; font-size: 16px; line-height: 1; }
+.action-menu > summary .disclosure-icon { width: 15px; height: 15px; margin-left: 7px; transition: transform 150ms ease; }
+.action-menu[open] > summary .disclosure-icon { transform: rotate(180deg); }
 .action-menu-items {
   position: absolute;
   top: calc(100% + 6px);
@@ -102,7 +103,7 @@ body { line-height: 1.55; }
   min-width: 180px;
   padding: 7px;
   border: 1px solid var(--line-strong);
-  border-radius: 10px;
+  border-radius: var(--radius-container);
   background: var(--surface);
   box-shadow: 0 12px 30px rgb(23 42 51 / 16%);
 }
@@ -110,14 +111,14 @@ body { line-height: 1.55; }
 .action-menu-status { display: block; padding: 8px 12px; color: var(--muted); font-size: 12px; }
 .workspace-file-more .action-menu-items { min-width: 195px; }
 
-.chat-layout { border: 1px solid var(--line); border-radius: 12px 12px 0 0; }
+.chat-layout { border: 1px solid var(--line); border-radius: var(--radius-container) var(--radius-container) 0 0; }
 .sessions-panel, .file-panel { background: #f9fbfb; }
 .compact-head, .chat-head { padding: 16px 18px; }
 .session-item { padding: 14px 12px; }
 .session-item.active { box-shadow: inset 3px 0 var(--primary); }
 .session-main strong { font-size: 14px; }
 .session-main span { font-size: 12px; }
-.rail-toggle { width: 36px; height: 36px; }
+.rail-toggle { display: grid; place-items: center; width: 36px; height: 36px; }
 .runtime-details { background: transparent; }
 .runtime-details > summary {
   display: inline-flex;
@@ -125,7 +126,7 @@ body { line-height: 1.55; }
   min-height: 32px;
   padding: 0 9px;
   border: 1px solid var(--line);
-  border-radius: 7px;
+  border-radius: var(--radius-control);
   background: var(--surface);
   color: var(--muted);
   font-size: 12px;
@@ -137,15 +138,15 @@ body { line-height: 1.55; }
 .runtime-strip { gap: 10px 22px; padding: 12px 18px; background: #f7fafb; }
 .chat-resource-status { flex: 1 1 260px; max-width: 340px; }
 .event { padding: 12px 18px; }
-.event-user p { border-radius: 12px 12px 4px 12px; background: #e7f2f3; }
+.event-user p { border-radius: var(--radius-container) var(--radius-container) var(--radius-control) var(--radius-container); background: #e7f2f3; }
 .event-markdown { max-width: 82ch; }
 .event-command { padding-block: 7px; }
 .composer { padding: 14px 18px; background: var(--surface); }
-.composer textarea { border-color: var(--line-strong); border-radius: 10px; }
+.composer textarea { border-color: var(--line-strong); border-radius: var(--radius-control); }
 .composer-actions { gap: 10px; }
 
 .recharge-balance { min-height: 96px; padding: 20px; }
-.recharge-product { gap: 22px; border-radius: 10px; }
+.recharge-product { gap: 22px; border-radius: var(--radius-container); }
 .recharge-product:hover:not(:disabled) { background: #f2f9f9; }
 .credential-warning { margin-top: 12px; }
 .admin-group { margin-block: 8px; padding: 10px 12px; }
@@ -162,10 +163,10 @@ body { line-height: 1.55; }
 .admin-user-item .pill { min-height: 20px; padding-inline: 6px; }
 .admin-user-item .invite-token { flex-basis: 100%; margin-top: 0; }
 .admin-settings-button { width: 32px !important; min-width: 32px !important; min-height: 32px; }
-.modal-panel { border-radius: 14px; padding: 22px; }
+.modal-panel { border-radius: var(--radius-container); padding: 22px; }
 
 @media (max-width: 980px) {
-  .chat-layout { border-radius: 12px; }
+  .chat-layout { border-radius: var(--radius-container); }
   .chat-view-active .chat-layout { overflow: auto; }
   .chat-view-active .chat-panel { min-height: 0; }
   .session-list { max-height: 24vh; }
@@ -202,7 +203,7 @@ body { line-height: 1.55; }
   *, *::before, *::after { scroll-behavior: auto !important; animation-duration: 0.01ms !important; transition-duration: 0.01ms !important; }
 }
 /* Compact identity controls share the modal's existing field/button system. */
-.identity-customer-section { display: grid; gap: 10px; padding: 12px; border: 1px solid #d8e3e7; border-radius: 10px; }
+.identity-customer-section { display: grid; gap: 10px; padding: 12px; border: 1px solid #d8e3e7; border-radius: var(--radius-container); }
 .identity-customer-create summary { cursor: pointer; color: #176976; font-size: .9rem; }
 .identity-customer-grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto; gap: 10px; align-items: end; margin-top: 10px; }
 .identity-customer-section .field { min-width: 0; margin: 0; }

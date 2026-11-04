@@ -70,6 +70,7 @@ Stopping a chat requests graceful termination of the active container. The backe
 See [chat-runtime.md](chat-runtime.md).
 
 Deployment and runtime settings are documented in [configuration.md](configuration.md).
+Frontend radius and icon conventions are documented in [frontend-design.md](frontend-design.md).
 
 ## Design Constraints
 

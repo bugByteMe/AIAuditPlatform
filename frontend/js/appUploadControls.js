@@ -1,4 +1,14 @@
 // Workspace upload cancellation and the lazy destination-folder picker.
+function createUiIcon(name, className = "") {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", `ui-icon${className ? ` ${className}` : ""}`);
+  svg.setAttribute("aria-hidden", "true");
+  const use = document.createElementNS("http://www.w3.org/2000/svg", "use");
+  use.setAttribute("href", `#icon-${name}`);
+  svg.append(use);
+  return svg;
+}
+
 export function createUploadControls(context) {
   const { api, state, t, showToast, loadWorkspaces, safeCurrentWorkspace, uploadFilesToCurrentWorkspace } = context;
   let picker = null;
@@ -36,7 +46,12 @@ export function createUploadControls(context) {
         expand.type = "button";
         expand.className = "destination-expand";
         expand.dataset.destinationExpand = path;
-        expand.textContent = hasChildren ? (picker.expanded.has(path) ? "▾" : "▸") : "·";
+        if (hasChildren) {
+          const icon = picker.loading.has(path)
+            ? createUiIcon("loader", "is-spinning")
+            : createUiIcon(picker.expanded.has(path) ? "chevron-down" : "chevron-right");
+          expand.append(icon);
+        }
         expand.disabled = !hasChildren || picker.loading.has(path);
         expand.setAttribute("aria-label", t("files.expand"));
         row.append(expand);
