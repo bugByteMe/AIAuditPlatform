@@ -59,6 +59,17 @@ class WorkspaceAccessTest(unittest.TestCase):
       )
     self.assertEqual(context.exception.code, "forbidden")
 
+  def test_group_collaborator_can_rename_and_move_files(self) -> None:
+    workspace = self.store.create_workspace(OWNER, "Group", True, [UploadedFile("input.txt", b"data")])
+    self.store.add_files_to_workspace(
+      workspace["id"], OWNER, [UploadedFile("shared/placeholder.txt", b"placeholder")]
+    )
+    updated, moved = self.store.move_workspace_path(
+      workspace["id"], COLLABORATOR, "input.txt", "shared/renamed.txt",
+    )
+    self.assertEqual(moved["destinationPath"], "shared/renamed.txt")
+    self.assertIn("shared/renamed.txt", {item["path"] for item in updated["files"]})
+
   def test_access_replacement_and_owner_group_transfer_fail_closed(self) -> None:
     workspace = self.store.create_workspace(OWNER, "Access", False, [], visibility="private")
     updated, access, added, removed = self.store.update_workspace_access(

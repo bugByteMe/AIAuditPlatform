@@ -113,6 +113,26 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('method: "DELETE"', controls)
         self.assertIn('depth: "1"', controls)
 
+    def test_fancytree_is_vendored_and_shared_by_workspace_file_surfaces(self) -> None:
+        adapter = (FRONTEND_ROOT / "js" / "fileTreeAdapter.js").read_text(encoding="utf-8")
+        render = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
+        controls = (FRONTEND_ROOT / "js" / "appUploadControls.js").read_text(encoding="utf-8")
+        bindings = (FRONTEND_ROOT / "js" / "appEventBindings.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        jquery = FRONTEND_ROOT / "vendor" / "jquery" / "jquery-3.7.1.min.js"
+        fancytree = FRONTEND_ROOT / "vendor" / "fancytree" / "jquery.fancytree-all-deps-2.38.5.min.js"
+
+        self.assertTrue(jquery.is_file())
+        self.assertTrue(fancytree.is_file())
+        self.assertIn('vendor/jquery/jquery-3.7.1.min.js', html)
+        self.assertIn('vendor/fancytree/jquery.fancytree-all-deps-2.38.5.min.js', html)
+        self.assertIn('extensions: config.mode === "destination" ? [] : ["dnd5", "edit"]', adapter)
+        self.assertIn("renderArtifactFileTree", render)
+        self.assertIn("renderChatFileTree", render)
+        self.assertIn("renderDestinationFileTree", controls)
+        self.assertIn('data-file-menu-action="rename"', html)
+        self.assertIn("startFileTreeRename", bindings)
+
     def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")

@@ -17,3 +17,8 @@ Interface icons come from the inline SVG symbol sprite in `frontend/index.html` 
 
 Unicode characters must not be used as button, navigation, disclosure, loading, or file-type icons. Mathematical symbols inside rendered chat content and semantic text such as currency amounts are not interface icons and remain text.
 
+## File trees
+
+All workspace file-tree surfaces use the shared adapter in `frontend/js/fileTreeAdapter.js`. jQuery 3.7.1 and Fancytree 2.38.5 are pinned under `frontend/vendor/` with their license files and are loaded before the application module, so the application does not depend on a CDN or a frontend build step. The application supplies its own skin using the shared radius tokens and SVG icon sprite; stock Fancytree themes are not used.
+
+The chat explorer and artifact selector enable lazy loading, keyboard navigation, F2/context-menu rename, and same-workspace drag/drop. The upload destination tree deliberately remains selection-only. File moves reject conflicts instead of overwriting or auto-renaming a destination.

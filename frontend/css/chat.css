@@ -899,67 +899,10 @@ select {
   overflow: auto;
 }
 
-.file-row {
-  display: grid;
-  grid-template-columns: 18px auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 6px;
-  width: 100%;
-  min-height: 30px;
-  padding: 0 10px 0 calc(10px + var(--level) * 18px);
-  border: 0;
-  background: transparent;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.file-row:not(.selectable) .file-name {
-  grid-column: 2 / 4;
-}
-
-.file-row:not(.selectable) .file-meta {
-  grid-column: 4;
-}
-
-.file-row.selectable .file-name {
-  grid-column: 3;
-}
-
-.file-row.folder .file-icon {
-  color: var(--primary);
-}
-
-.file-row:hover {
-  background: #eef8f9;
-}
-
-.file-icon,
 .file-meta,
 .file-status {
   color: var(--muted);
   font-size: 12px;
-}
-
-.file-icon {
-  display: grid;
-  place-items: center;
-}
-
-.file-icon .ui-icon {
-  width: 14px;
-  height: 14px;
-}
-
-.file-name {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  font-size: 13px;
-}
-
-.file-row.folder .file-name {
-  font-weight: 700;
 }
 
 .file-status {
@@ -981,3 +924,113 @@ select {
   color: var(--muted);
   font-size: 13px;
 }
+
+/* Fancytree is intentionally unskinned: these rules keep it inside the app's
+   shared 8px control / 12px container radius and SVG icon system. */
+.fancytree-host > ul.fancytree-container,
+.fancytree-host ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  outline: 0;
+}
+
+.fancytree-helper-hidden { display: none; }
+.fancytree-host li { position: relative; margin: 0; padding: 0; }
+
+.fancytree-host ul ul {
+  padding-left: 18px;
+}
+
+.fancytree-host .fancytree-node {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: max-content;
+  min-height: 30px;
+  padding: 2px 8px;
+  border-radius: var(--radius-control);
+  color: var(--text);
+  cursor: default;
+}
+
+.fancytree-host .fancytree-node:hover,
+.fancytree-host .fancytree-active,
+.fancytree-host .fancytree-focused {
+  background: #eef8f9;
+}
+
+.fancytree-host .fancytree-selected {
+  background: var(--surface-soft, #eaf1f8);
+}
+
+.fancytree-host .fancytree-expander {
+  display: grid;
+  place-items: center;
+  flex: 0 0 18px;
+  width: 18px;
+  height: 18px;
+  border-radius: var(--radius-control);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.fancytree-host .fancytree-expander:hover { background: var(--surface-2); }
+.fancytree-host .fancytree-expander .ui-icon { width: 13px; height: 13px; }
+.fancytree-host .app-tree-icon { flex: none; width: 15px; height: 15px; color: var(--primary); }
+
+.fancytree-host .fancytree-title {
+  max-width: 260px;
+  overflow: hidden;
+  color: inherit;
+  font-size: 13px;
+  line-height: 24px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.fancytree-host .fancytree-folder > .fancytree-title { font-weight: 650; }
+.fancytree-host .file-meta { margin-left: auto; padding-left: 14px; }
+.fancytree-host .file-status { margin-left: 2px; }
+
+.fancytree-host .fancytree-checkbox {
+  position: relative;
+  flex: 0 0 15px;
+  width: 15px;
+  height: 15px;
+  border: 1px solid var(--line-strong, #9fb0ba);
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+}
+
+.fancytree-host .fancytree-selected > .fancytree-checkbox,
+.fancytree-host .fancytree-partsel > .fancytree-checkbox {
+  border-color: var(--primary);
+  background: var(--primary);
+}
+
+.fancytree-host .fancytree-selected > .fancytree-checkbox::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  top: 1px;
+  width: 4px;
+  height: 8px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+
+.fancytree-host .fancytree-partsel:not(.fancytree-selected) > .fancytree-checkbox::after {
+  content: "";
+  position: absolute;
+  inset: 6px 3px;
+  background: #fff;
+}
+
+.fancytree-host .file-tree-root > .app-tree-icon { color: var(--muted); }
+.fancytree-host .fancytree-edit-input { min-width: 140px; height: 28px; border-radius: var(--radius-control); }
+.fancytree-drag-helper { position: absolute; z-index: 10000; padding: 5px 8px; border-radius: var(--radius-control); background: #fff; box-shadow: var(--shadow-soft); }
+.fancytree-drop-marker { position: absolute; z-index: 10001; width: 4px; height: 4px; background: var(--primary); }

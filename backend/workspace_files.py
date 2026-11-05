@@ -87,6 +87,53 @@ class WorkspaceFilesMixin:
       raise StorageError("not_found", "file not found")
     return file_path
 
+  def move_workspace_path(
+    self, workspace_id: str, user: dict, raw_source_path: str, raw_destination_path: str,
+  ) -> tuple[dict, dict]:
+    with self.coordination_locks.hold(f"workspace:{workspace_id}"):
+      metadata = self.load_workspace_metadata(workspace_id)
+      workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
+      if not self.user_can_mutate_workspace(user, workspace):
+        raise StorageError("forbidden", "workspace file access denied")
+      if workspace.get("locked"):
+        raise StorageError("workspace_locked", "workspace has an active write lock")
+
+      source_relative = normalize_relative_path(raw_source_path)
+      destination_relative = normalize_relative_path(raw_destination_path)
+      if source_relative == destination_relative:
+        raise StorageError("bad_request", "source and destination paths must differ")
+
+      workspace_path = self.workspace_path(workspace_id)
+      source_candidate = workspace_path / source_relative
+      destination_candidate = workspace_path / destination_relative
+      for relative_path in (source_relative, destination_relative):
+        cursor = workspace_path
+        for part in Path(relative_path).parts:
+          cursor /= part
+          if cursor.is_symlink():
+            raise StorageError("unsafe_path", "workspace paths cannot traverse a symbolic link")
+      source = ensure_under_root(workspace_path, source_candidate)
+      destination = ensure_under_root(workspace_path, destination_candidate)
+      if not source.exists():
+        raise StorageError("not_found", "file or folder not found")
+      if destination.exists():
+        raise StorageError("path_conflict", "destination path already exists")
+
+      if not destination.parent.exists() or not destination.parent.is_dir():
+        raise StorageError("not_found", "destination folder not found")
+      if source.is_dir() and source in destination.parents:
+        raise StorageError("bad_request", "a folder cannot be moved into itself")
+
+      moved_type = "folder" if source.is_dir() else "file"
+      source.rename(destination)
+      self.refresh_workspace_metadata(metadata, workspace, "file_move", user["username"])
+      self.save_workspace_metadata(workspace_id, metadata)
+      return self.public_workspace(workspace, metadata), {
+        "sourcePath": source_relative,
+        "destinationPath": destination_relative,
+        "type": moved_type,
+      }
+
   def file_metadata(self, workspace_id: str, raw_path: str) -> dict:
     metadata = self.file_response_metadata(workspace_id, raw_path)
     digest = stream_sha256(self.workspace_file_path(workspace_id, raw_path))

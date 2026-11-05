@@ -16,6 +16,7 @@ import {
 } from "./js/chatEvents.js";
 import { applyLocale, t } from "./js/i18n.js";
 import { defaultCollapsedFolders } from "./js/fileTreeState.js";
+import { configureFileTrees, startFileTreeRename } from "./js/fileTreeAdapter.js";
 import { state } from "./js/state.js";
 import {
   renderAdmin,
@@ -176,7 +177,6 @@ function replaceWorkspace(updatedWorkspace) {
 function resetFileTreeState(workspace) {
   state.collapsedFileFolders = defaultCollapsedFolders(workspace?.files);
   state.collapsedArtifactFolders = defaultCollapsedFolders(workspace?.files);
-  state.loadingFileFolders = new Set();
   state.selectedArtifacts = new Set(
     (workspace?.files || [])
       .filter((file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren))
@@ -190,36 +190,51 @@ function mergeWorkspaceTreeFiles(workspace, incomingFiles) {
   workspace.files = sortTreeFiles([...files.values()]);
 }
 
-async function expandWorkspaceFolder(path, collapsedFolders, renderTree) {
-  const workspace = safeCurrentWorkspace();
-  if (!workspace || state.loadingFileFolders.has(path)) return;
+async function loadWorkspaceFolder(path, workspaceId = safeCurrentWorkspace()?.id) {
+  const workspace = state.workspaces.find((item) => item.id === workspaceId);
+  if (!workspace) return [];
   const folder = (workspace.files || []).find((file) => file.type === "folder" && file.path === path);
-  if (!folder?.hasChildren) return;
-  if (folder.childrenLoaded) {
-    collapsedFolders.delete(path);
-    renderTree();
-    return;
-  }
-  state.loadingFileFolders.add(path);
-  renderTree();
+  if (folder?.childrenLoaded) return directTreeChildren(workspace, path);
+  const params = new URLSearchParams({ path, depth: "1" });
+  const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/files?${params.toString()}`);
+  const latestWorkspace = state.workspaces.find((item) => item.id === workspace.id);
+  if (!latestWorkspace) return [];
+  mergeWorkspaceTreeFiles(latestWorkspace, result.files || []);
+  const latestFolder = latestWorkspace.files.find((file) => file.type === "folder" && file.path === path);
+  if (latestFolder) latestFolder.childrenLoaded = true;
+  return result.files || [];
+}
+
+function remapSelectedPaths(paths, sourcePath, destinationPath) {
+  return new Set([...paths].map((path) => {
+    if (path === sourcePath) return destinationPath;
+    if (path.startsWith(`${sourcePath}/`)) return `${destinationPath}${path.slice(sourcePath.length)}`;
+    return path;
+  }));
+}
+
+async function moveWorkspacePath(sourcePath, destinationPath) {
+  const workspace = safeCurrentWorkspace();
+  if (!workspace || !sourcePath || !destinationPath) return null;
+  const selected = remapSelectedPaths(state.selectedArtifacts, sourcePath, destinationPath);
+  const collapsedFiles = remapSelectedPaths(state.collapsedFileFolders, sourcePath, destinationPath);
+  const collapsedArtifacts = remapSelectedPaths(state.collapsedArtifactFolders, sourcePath, destinationPath);
   try {
-    const params = new URLSearchParams({ path, depth: "1" });
-    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/files?${params.toString()}`);
-    const latestWorkspace = state.workspaces.find((item) => item.id === workspace.id);
-    if (!latestWorkspace) return;
-    mergeWorkspaceTreeFiles(latestWorkspace, result.files || []);
-    defaultCollapsedFolders(result.files).forEach((path) => {
-      state.collapsedFileFolders.add(path);
-      state.collapsedArtifactFolders.add(path);
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspace.id)}/files`, {
+      method: "PATCH",
+      body: JSON.stringify({ sourcePath, destinationPath }),
     });
-    const latestFolder = latestWorkspace.files.find((file) => file.type === "folder" && file.path === path);
-    if (latestFolder) latestFolder.childrenLoaded = true;
-    collapsedFolders.delete(path);
+    replaceWorkspace(result.workspace);
+    state.selectedArtifacts = selected;
+    state.collapsedFileFolders = collapsedFiles;
+    state.collapsedArtifactFolders = collapsedArtifacts;
+    closeFileContextMenu();
+    renderDynamic();
+    showToast(t("toast.fileMoved"));
+    return result;
   } catch (error) {
-    showToast(error.message || t("toast.workspaceLoadFailed"));
-  } finally {
-    state.loadingFileFolders.delete(path);
-    renderTree();
+    showToast(error.message);
+    throw error;
   }
 }
 
@@ -1008,7 +1023,9 @@ const appContext = {
   replaceWorkspace,
   resetFileTreeState,
   mergeWorkspaceTreeFiles,
-  expandWorkspaceFolder,
+  loadWorkspaceFolder,
+  moveWorkspacePath,
+  startFileTreeRename,
   refreshCurrentUser,
   nameEditorElement,
   beginNameEdit,
@@ -1059,6 +1076,16 @@ Object.assign(appContext, createWorkspaceActions(appContext));
 Object.assign(appContext, createEventBindings(appContext));
 Object.assign(appContext, createUploadActions(appContext));
 Object.assign(appContext, createUploadControls(appContext));
+configureFileTrees({
+  loadFolder: loadWorkspaceFolder,
+  movePath: moveWorkspacePath,
+  preview: openFilePreview,
+  showToast,
+  setArtifactSelection(paths) {
+    state.selectedArtifacts = new Set(paths);
+    renderArtifacts();
+  },
+});
 const {
   stopChatStream,
   currentSessionObject,
@@ -1125,8 +1152,6 @@ const {
   cancelWorkspaceUpload,
   openDestinationPicker,
   closeDestinationPicker,
-  selectDestinationFolder,
-  expandDestinationFolder,
   confirmDestinationPicker,
   acceptNativeUpload,
 } = appContext;

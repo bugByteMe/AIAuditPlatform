@@ -88,6 +88,7 @@ class WorkloadRoutingTest(unittest.TestCase):
       ("POST", "/api/workspaces/ws-1/fork"): ("file", "workspace.fork"),
       ("DELETE", "/api/workspaces/ws-1"): ("file", "workspace.delete"),
       ("DELETE", "/api/workspaces/ws-1/files"): ("file", "workspace.delete"),
+      ("PATCH", "/api/workspaces/ws-1/files"): ("file", "workspace.move"),
       ("PUT", "/api/uploads/upload-1/files/0"): ("upload", "uploads"),
       ("GET", "/api/uploads/upload-1"): ("upload", "uploads"),
       ("POST", "/api/workspaces/ws-1/chat/runs"): ("external", "chat.run_start"),

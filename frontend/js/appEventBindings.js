@@ -23,7 +23,7 @@ export function createEventBindings(context) {
   const showToast = (...args) => context.showToast(...args);
   const safeCurrentWorkspace = (...args) => context.safeCurrentWorkspace(...args);
   const clamp = (...args) => context.clamp(...args);
-  const expandWorkspaceFolder = (...args) => context.expandWorkspaceFolder(...args);
+  const startFileTreeRename = (...args) => context.startFileTreeRename(...args);
   const beginNameEdit = (...args) => context.beginNameEdit(...args);
   const cancelNameEdit = (...args) => context.cancelNameEdit(...args);
   const commitNameEdit = (...args) => context.commitNameEdit(...args);
@@ -94,8 +94,6 @@ export function createEventBindings(context) {
   const cancelWorkspaceUpload = (...args) => context.cancelWorkspaceUpload(...args);
   const openDestinationPicker = (...args) => context.openDestinationPicker(...args);
   const closeDestinationPicker = (...args) => context.closeDestinationPicker(...args);
-  const selectDestinationFolder = (...args) => context.selectDestinationFolder(...args);
-  const expandDestinationFolder = (...args) => context.expandDestinationFolder(...args);
   const confirmDestinationPicker = (...args) => context.confirmDestinationPicker(...args);
   const acceptNativeUpload = (...args) => context.acceptNativeUpload(...args);
   const setChatFocusMode = (enabled) => {
@@ -354,16 +352,6 @@ export function createEventBindings(context) {
         return;
       }
 
-      const destinationExpand = event.target.closest("[data-destination-expand]");
-      if (destinationExpand) {
-        expandDestinationFolder(destinationExpand.dataset.destinationExpand);
-        return;
-      }
-      const destinationSelect = event.target.closest("[data-destination-path]");
-      if (destinationSelect) {
-        selectDestinationFolder(destinationSelect.dataset.destinationPath);
-        return;
-      }
       if (event.target.closest("#workspace-destination-confirm")) {
         confirmDestinationPicker();
         return;
@@ -381,19 +369,6 @@ export function createEventBindings(context) {
       }
 
       if (event.target.matches("[data-artifact]")) {
-        return;
-      }
-
-      const folderRow = event.target.closest("[data-folder-path]");
-      if (folderRow) {
-        const path = folderRow.dataset.folderPath;
-        const collapsedSet = folderRow.dataset.tree === "artifacts" ? state.collapsedArtifactFolders : state.collapsedFileFolders;
-        const renderTree = folderRow.dataset.tree === "artifacts" ? renderArtifacts : renderFileExplorer;
-        if (collapsedSet.has(path)) expandWorkspaceFolder(path, collapsedSet, renderTree);
-        else {
-          collapsedSet.add(path);
-          renderTree();
-        }
         return;
       }
 
@@ -486,14 +461,19 @@ export function createEventBindings(context) {
     });
 
     document.addEventListener("contextmenu", (event) => {
-      const row = event.target.closest('[data-context-menu="artifact-file"]');
-      if (!row) return;
+      const row = event.target.closest('.fancytree-node[data-tree-mode="artifacts"], .fancytree-node[data-tree-mode="chat-files"]');
+      if (!row || !row.dataset.filePath) return;
       event.preventDefault();
       const menu = document.querySelector("#file-context-menu");
       menu.dataset.filePath = row.dataset.filePath;
       menu.dataset.fileType = row.dataset.fileType;
+      menu.dataset.treeMode = row.dataset.treeMode;
+      const workspace = safeCurrentWorkspace();
+      const mutable = Boolean(workspace && !workspace.locked);
+      menu.querySelector('[data-file-menu-action="rename"]').classList.toggle("hidden", !mutable);
+      menu.querySelector('[data-file-menu-action="delete"]').classList.toggle("hidden", !mutable);
       menu.style.left = `${Math.min(event.clientX, window.innerWidth - 180)}px`;
-      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 90)}px`;
+      menu.style.top = `${Math.min(event.clientY, window.innerHeight - 130)}px`;
       menu.classList.remove("hidden");
     });
   }
@@ -945,21 +925,6 @@ export function createEventBindings(context) {
       }
     });
 
-    document.querySelector("#artifact-tree").addEventListener("change", (event) => {
-      if (!event.target.matches("[data-artifact]")) return;
-      const workspace = safeCurrentWorkspace();
-      const path = event.target.dataset.artifact;
-      if (event.target.checked) {
-        [...state.selectedArtifacts]
-          .filter((selected) => selected === path || selected.startsWith(`${path}/`))
-          .forEach((selected) => state.selectedArtifacts.delete(selected));
-        state.selectedArtifacts.add(path);
-      } else {
-        deselectTreePath(workspace, path);
-      }
-      renderArtifacts();
-    });
-
     document.querySelector("#select-all-artifacts").addEventListener("change", (event) => {
       const workspace = safeCurrentWorkspace();
       state.selectedArtifacts = event.target.checked
@@ -1012,18 +977,17 @@ export function createEventBindings(context) {
         closeFileContextMenu();
         return;
       }
+      if (action.dataset.fileMenuAction === "rename") {
+        startFileTreeRename(path, menu.dataset.treeMode);
+        closeFileContextMenu();
+        return;
+      }
       if (action.dataset.fileMenuAction === "delete") {
         deleteCurrentWorkspacePath(path);
       }
     });
     document.querySelector("#sync-folder").addEventListener("click", () => {
       showToast("showDirectoryPicker" in window ? t("toast.download") : t("toast.syncUnavailable"));
-    });
-
-    document.addEventListener("dblclick", (event) => {
-      const row = event.target.closest("[data-file-path]");
-      if (!row || row.dataset.fileType !== "file") return;
-      openFilePreview(row.dataset.filePath);
     });
 
     document.addEventListener("pointerdown", (event) => {

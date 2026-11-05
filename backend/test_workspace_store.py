@@ -474,6 +474,42 @@ class WorkspaceStoreTest(unittest.TestCase):
     self.assertNotIn("workpapers/income.txt", paths)
     self.assertEqual(artifact_statuses["workpapers/income.txt"], "deleted")
 
+  def test_move_workspace_path_renames_file_and_folder_and_records_diff(self) -> None:
+    workspace = self.create_workspace(shared=True)
+    updated, moved = self.store.move_workspace_path(
+      workspace["id"], OWNER, "workpapers/income.txt", "reports/income-renamed.txt",
+    )
+    paths = {item["path"] for item in updated["files"]}
+    statuses = {item["path"]: item["status"] for item in updated["artifacts"]}
+    self.assertEqual(moved["type"], "file")
+    self.assertNotIn("workpapers/income.txt", paths)
+    self.assertIn("reports/income-renamed.txt", paths)
+    self.assertEqual(statuses["workpapers/income.txt"], "deleted")
+    self.assertEqual(statuses["reports/income-renamed.txt"], "added")
+
+    updated, moved = self.store.move_workspace_path(
+      workspace["id"], OWNER, "reports", "renamed-reports",
+    )
+    self.assertEqual(moved["type"], "folder")
+    self.assertIn("renamed-reports/income-renamed.txt", {item["path"] for item in updated["files"]})
+
+  def test_move_workspace_path_rejects_conflicts_descendants_and_locked_workspace(self) -> None:
+    workspace = self.create_workspace(shared=True)
+    with self.assertRaises(StorageError) as context:
+      self.store.move_workspace_path(workspace["id"], OWNER, "workpapers", "workpapers/nested")
+    self.assertEqual(context.exception.code, "bad_request")
+
+    with self.assertRaises(StorageError) as context:
+      self.store.move_workspace_path(workspace["id"], OWNER, "workpapers/income.txt", "reports/summary.md")
+    self.assertEqual(context.exception.code, "path_conflict")
+
+    metadata = self.store.load_workspace_metadata(workspace["id"])
+    metadata["workspaces"][workspace["id"]]["locked"] = True
+    self.store.save_workspace_metadata(workspace["id"], metadata)
+    with self.assertRaises(StorageError) as context:
+      self.store.move_workspace_path(workspace["id"], OWNER, "workpapers/income.txt", "income.txt")
+    self.assertEqual(context.exception.code, "workspace_locked")
+
   def test_refresh_artifacts_detects_added_modified_and_deleted(self) -> None:
     workspace = self.create_workspace()
     root = self.store.workspace_path(workspace["id"])

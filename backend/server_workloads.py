@@ -129,6 +129,8 @@ def classify_request(method: str, path: str) -> tuple[str | None, str]:
       return "file", f"workspace.{action}"
     if method == "DELETE" and action in {"", "files"}:
       return "file", "workspace.delete"
+    if method == "PATCH" and action == "files":
+      return "file", "workspace.move"
     if method == "POST" and action == "chat" and subaction == "runs" and len(parts) == 5:
       return "external", "chat.run_start"
 

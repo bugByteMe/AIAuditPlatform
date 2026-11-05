@@ -1,7 +1,7 @@
 ---
 title: Workspace and Artifacts
 form: design
-updated: 2026-10-30
+updated: 2026-11-05
 status: active
 tags: [workspace, uploads, artifacts]
 ---
@@ -30,9 +30,11 @@ of a deeper folder when the user expands it.
 
 File-tree nodes expose their workspace-relative path, absolute display level, type, and whether folder children exist and are already present in the response. The authenticated file-tree endpoint accepts a normalized folder path and a bounded depth; current browser expansion requests use a depth of one. Backend traversal stops at the requested depth and applies the same workspace permission and path-containment checks as file access.
 
-Folder nodes also include `childCount`, the number of direct visible files and folders. Both workspace trees initially collapse folders with more than five direct children and folders whose children have not yet loaded. Folders with at most five loaded children remain expanded until the user changes them. The upload destination picker loads directories one level at a time and offers the workspace root and existing folders only.
+Folder nodes also include `childCount`, the number of direct visible files and folders. Both workspace trees initially collapse folders with more than five direct children and folders whose children have not yet loaded. Folders with at most five loaded children remain expanded until the user changes them. The chat file explorer, artifact selector, and upload destination picker share the locally vendored Fancytree adapter. The upload picker is selection-only and loads directories one level at a time; the two primary trees additionally support keyboard/context-menu rename and same-workspace drag/drop.
 
 Both frontend trees share loaded node data while retaining independent expanded/collapsed state. A workspace snapshot change invalidates lazily loaded descendants so deleted or replaced paths cannot remain visible. Folder selections are represented as subtree selections and are expanded by the backend for downloads, so selecting or operating on a folder does not require sending its full tree to the browser.
+
+`PATCH /api/workspaces/<id>/files` moves or renames one file or directory using normalized `sourcePath` and `destinationPath` values. The operation uses the existing workspace mutation permission and lock checks, rejects symlink traversal, missing parents, overwrite conflicts, and moves of a directory into its own descendants, then records a new snapshot. It never changes workspace permissions. Group collaborators who may upload and delete files may also rename and move them.
 
 Users may create an empty workspace through `POST /api/workspaces` and add files
 later, or create one by selecting files or folders in the web UI. Empty

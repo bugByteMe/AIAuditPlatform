@@ -12,6 +12,7 @@ import {
 import { state } from "./state.js";
 import { renderWorkspaceTitle } from "./workspaceTitle.js";
 import { filterCollaboratingWorkspaces } from "./collaboratingWorkspaces.js";
+import { renderArtifactFileTree, renderChatFileTree } from "./fileTreeAdapter.js";
 
 const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
 let renderedEventSessionId = "";
@@ -118,71 +119,6 @@ function pathIsSelected(path, selectedPaths) {
   if (!selectedPaths) return false;
   const parts = path.split("/");
   return parts.some((_, index) => selectedPaths.has(parts.slice(0, index + 1).join("/")));
-}
-
-function selectionState(item, items, selectedPaths) {
-  const path = item.path || item.name;
-  if (pathIsSelected(path, selectedPaths)) return { checked: true, indeterminate: false };
-  if (item.type !== "folder") return { checked: false, indeterminate: false };
-  const descendantsSelected = [...(selectedPaths || [])].some((selected) => selected.startsWith(`${path}/`));
-  if (!descendantsSelected) return { checked: false, indeterminate: false };
-  const directChildren = items.filter((candidate) => {
-    const candidatePath = candidate.path || candidate.name;
-    return candidatePath.startsWith(`${path}/`) && candidatePath.split("/").length === path.split("/").length + 1;
-  });
-  const childStates = directChildren.map((child) => selectionState(child, items, selectedPaths));
-  return {
-    checked: childStates.length > 0 && childStates.every((state) => state.checked),
-    indeterminate: childStates.some((state) => state.checked || state.indeterminate),
-  };
-}
-
-function treeRows(items, collapsedFolders, options = {}) {
-  if (!items.length) return `<div class="file-empty">${options.emptyText || t("files.empty")}</div>`;
-  return items
-    .filter((file) => {
-      const path = file.path || file.name;
-      const parts = path.split("/");
-      const ancestors = parts.slice(0, file.type === "folder" ? -1 : parts.length - 1);
-      return !ancestors.some((_, index) => collapsedFolders.has(ancestors.slice(0, index + 1).join("/")));
-    })
-    .map((file) => {
-      const path = file.path || file.name;
-      const safePath = escapeHtml(path);
-      const safeName = escapeHtml(file.name);
-      const status = file.status ? `<span class="file-status ${file.status}">${t(`artifact.${file.status}`)}</span>` : "";
-      const meta = file.type === "folder" ? t("files.folder") : file.size || t("files.file");
-      const expandable = file.type === "folder" && file.hasChildren;
-      const collapsed = expandable && collapsedFolders.has(path);
-      const loading = expandable && options.loadingFolders?.has(path);
-      const icon = loading
-        ? uiIcon("loader", "is-spinning")
-        : expandable
-          ? uiIcon(collapsed ? "chevron-right" : "chevron-down")
-          : uiIcon(file.type === "folder" ? "folder" : "file");
-      const folderAttr = expandable ? `data-folder-path="${safePath}"` : "";
-      const checkable = options.checkboxes && (file.type === "file" || file.hasChildren);
-      const selected = selectionState(file, items, options.selectedPaths);
-      const checkbox = checkable
-        ? `<input type="checkbox" data-artifact="${safePath}" ${file.type === "folder" ? `data-artifact-folder="${safePath}"` : ""} ${selected.checked ? "checked" : ""} ${selected.indeterminate ? 'data-indeterminate="true"' : ""} ${file.disabled ? "disabled" : ""} />`
-          : "";
-      const contextAttr = options.context ? `data-context-menu="${options.context}"` : "";
-      const treeAttr = options.tree ? `data-tree="${options.tree}"` : "";
-      return `
-        <div class="file-row ${file.type} ${checkbox ? "selectable" : ""}" style="--level: ${file.level || 0}" title="${safePath}" data-file-path="${safePath}" data-file-type="${file.type}" ${folderAttr} ${contextAttr} ${treeAttr}>
-          <span class="file-icon" aria-hidden="true">${icon}</span>
-          ${checkbox}
-          <span class="file-name">${safeName}</span>
-          <span class="file-meta">${meta}</span>
-          ${status}
-        </div>
-      `;
-    })
-    .join("");
-}
-
-function filesToTree(files, collapsedFolders, options = {}) {
-  return treeRows(files, collapsedFolders, options);
 }
 
 export function renderCurrentUser() {
@@ -668,31 +604,22 @@ export function renderArtifacts() {
     selectAll.indeterminate = state.selectedArtifacts.size > 0 && !selectAll.checked;
   }
   const artifactStatuses = new Map((workspace?.artifacts || []).map((artifact) => [artifact.path, artifact.status]));
-  const files = (workspace?.files || []).map((file) => ({
-    ...file,
-    status: file.type === "file" ? artifactStatuses.get(file.path) : "",
-  }));
-  tree.innerHTML = workspace
-    ? treeRows(files, state.collapsedArtifactFolders, {
-        checkboxes: true,
-        context: "artifact-file",
-        selectedPaths: state.selectedArtifacts,
-        loadingFolders: state.loadingFileFolders,
-        tree: "artifacts",
-        emptyText: t("files.empty"),
-      })
-    : "";
-  tree.querySelectorAll('[data-indeterminate="true"]').forEach((checkbox) => {
-    checkbox.indeterminate = true;
-  });
+  if (!workspace) {
+    tree.replaceChildren();
+    return;
+  }
+  renderArtifactFileTree(tree, workspace, artifactStatuses, canCollaborateInWorkspace(workspace));
 }
 
 export function renderFileExplorer() {
   if (pendingPanel("#file-tree", state.workspacesLoading, state.workspaceLoadError)) return;
   const workspace = currentWorkspace();
-  const files = workspace?.files || [];
   const tree = document.querySelector("#file-tree");
-  tree.innerHTML = filesToTree(files, state.collapsedFileFolders, { tree: "chat-files", loadingFolders: state.loadingFileFolders });
+  if (!workspace) {
+    tree.replaceChildren();
+    return;
+  }
+  renderChatFileTree(tree, workspace, canCollaborateInWorkspace(workspace));
 }
 
 export function renderAdmin() {

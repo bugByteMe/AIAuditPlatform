@@ -35,7 +35,6 @@ export const state = {
   workspaceAccessSelectedIds: new Set(),
   collapsedFileFolders: new Set(),
   collapsedArtifactFolders: new Set(),
-  loadingFileFolders: new Set(),
   chatLastEventIds: {},
   expandedChatTurns: new Set(),
   loadedChatTurns: new Set(),

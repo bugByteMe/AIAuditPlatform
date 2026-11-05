@@ -138,6 +138,16 @@ class WorkspaceHandlerMixin:
       self.write_json({"files": WORKSPACE_STORE.file_tree(workspace_id, parent=parent, depth=depth), "path": parent, "depth": depth})
     elif method == "POST" and action == "files" and not subaction:
       raise StorageError("upload_sessions_required", "use /api/uploads for workspace file uploads")
+    elif method == "PATCH" and action == "files" and not subaction:
+      payload = self.read_json()
+      workspace, moved = WORKSPACE_STORE.move_workspace_path(
+        workspace_id,
+        user,
+        str(payload.get("sourcePath") or ""),
+        str(payload.get("destinationPath") or ""),
+      )
+      add_audit(user["username"], "workspace path moved", f"{workspace_id} {moved['sourcePath']} -> {moved['destinationPath']}")
+      self.write_json({"workspace": workspace, "moved": moved})
     elif method == "DELETE" and action == "files" and not subaction:
       params = parse_query(query)
       path_to_delete = (params.get("path") or [""])[0]
