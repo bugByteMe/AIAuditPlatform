@@ -265,8 +265,11 @@ function signature(config) {
     mutable: config.mutable,
     locked: config.workspace?.locked,
     selectedPath: config.mode === "destination" ? config.selectedPath : undefined,
+    collapsedFolders: [...config.collapsedFolders].sort(),
     statuses: config.mode === "artifacts" ? [...config.statuses] : undefined,
-    files: (config.items || []).map((item) => [item.path, item.type, item.childrenLoaded, item.hasChildren]),
+    files: (config.items || []).map((item) => [
+      item.path, item.type, item.childrenLoaded, item.hasChildren, item.childCount,
+    ]),
   });
 }
 

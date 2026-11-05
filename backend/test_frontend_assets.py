@@ -138,6 +138,8 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn('vendor/jquery/jquery-3.7.1.min.js', html)
         self.assertIn('vendor/fancytree/jquery.fancytree-all-deps-2.38.5.min.js', html)
         self.assertIn('extensions: config.mode === "destination" ? [] : ["dnd5", "edit"]', adapter)
+        self.assertIn('collapsedFolders: [...config.collapsedFolders].sort()', adapter)
+        self.assertIn('item.childCount', adapter)
         self.assertIn("renderArtifactFileTree", render)
         self.assertIn("renderChatFileTree", render)
         self.assertIn("renderDestinationFileTree", controls)
