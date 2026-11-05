@@ -8,6 +8,7 @@ export function createChatStream(context) {
   let activeReconnectAttempts = 0;
   let fallbackPollingActive = false;
   let activeStreamGeneration = 0;
+  const latestHistoryLoads = new Map();
   const api = (...args) => context.api(...args);
   const authenticatedApiUrl = (...args) => context.authenticatedApiUrl(...args);
   const LIVE_CHAT_STATES = context.LIVE_CHAT_STATES;
@@ -198,32 +199,46 @@ export function createChatStream(context) {
 
   async function loadLatestSessionHistory(workspaceId, session) {
     if (!workspaceId || !session || session.historyLoaded) return;
-    session.historyLoading = true;
-    session.historyLoadingKind = "initial";
-    session.historyLoadError = false;
-    renderDynamic();
-    try {
-      const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
-        sessionId: session.id,
-        view: "turns",
-        limit: "20",
-      }).toString()}`);
-      const events = result.events || [];
-      mergeSessionEvents(session, events, state.chatLastEventIds);
-      state.chatLastEventIds[session.id] = Math.max(
-        Number(state.chatLastEventIds[session.id]) || 0,
-        Number(result.latestEventId) || 0,
-      );
-      session.historyBefore = Number(result.beforeTurn) || 0;
-      session.historyHasMore = Boolean(result.hasMore && session.historyBefore);
-      session.historyLoaded = true;
-    } catch (error) {
-      session.historyLoadError = true;
-      throw error;
-    } finally {
-      session.historyLoading = false;
-      session.historyLoadingKind = "";
+    const key = `${workspaceId}:${session.id}`;
+    if (latestHistoryLoads.has(key)) return latestHistoryLoads.get(key);
+    const load = (async () => {
+      let current = findSessionById(state.workspaces, workspaceId, session.id) || session;
+      current.historyLoading = true;
+      current.historyLoadingKind = "initial";
+      current.historyLoadError = false;
       renderDynamic();
+      try {
+        const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/events?${new URLSearchParams({
+          sessionId: session.id,
+          view: "turns",
+          limit: "20",
+        }).toString()}`);
+        current = findSessionById(state.workspaces, workspaceId, session.id);
+        if (!current) return;
+        mergeHistoricalEvents(current, result.events || []);
+        state.chatLastEventIds[session.id] = Math.max(
+          Number(state.chatLastEventIds[session.id]) || 0,
+          Number(result.latestEventId) || 0,
+        );
+        current.historyBefore = Number(result.beforeTurn) || 0;
+        current.historyHasMore = Boolean(result.hasMore && current.historyBefore);
+        current.historyLoaded = true;
+      } catch (error) {
+        current = findSessionById(state.workspaces, workspaceId, session.id) || current;
+        current.historyLoadError = true;
+        throw error;
+      } finally {
+        current = findSessionById(state.workspaces, workspaceId, session.id) || current;
+        current.historyLoading = false;
+        current.historyLoadingKind = "";
+        renderDynamic();
+      }
+    })();
+    latestHistoryLoads.set(key, load);
+    try {
+      await load;
+    } finally {
+      if (latestHistoryLoads.get(key) === load) latestHistoryLoads.delete(key);
     }
   }
 
@@ -301,7 +316,7 @@ export function createChatStream(context) {
 
   async function maybeStartChatStream() {
     const workspace = safeCurrentWorkspace();
-    const session = currentSessionObject();
+    let session = currentSessionObject();
     if (!workspace || !session) {
       stopChatStream();
       return;
@@ -312,6 +327,8 @@ export function createChatStream(context) {
     } catch (error) {
       console.warn("Chat history load failed", error);
     }
+    if (safeCurrentWorkspace()?.id !== workspace.id) return;
+    session = findSessionById(state.workspaces, workspace.id, session.id) || session;
     if (!LIVE_CHAT_STATES.has(session.status)) {
       stopChatStream();
       return;

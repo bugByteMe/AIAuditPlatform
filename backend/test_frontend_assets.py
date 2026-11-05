@@ -72,19 +72,30 @@ class FrontendAssetTests(unittest.TestCase):
 
     def test_chat_realtime_reconciliation_is_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        chat_stream_source = (FRONTEND_ROOT / "js" / "appChatStream.js").read_text(encoding="utf-8")
         chat_events_source = (FRONTEND_ROOT / "js" / "chatEvents.js").read_text(encoding="utf-8")
+        bindings_source = (FRONTEND_ROOT / "js" / "appEventBindings.js").read_text(encoding="utf-8")
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
-        self.assertIn("fallbackPollingActive", app_source)
-        self.assertIn('addEventListener("heartbeat"', app_source)
-        self.assertIn("pollChatEvents(workspaceId, sessionId, generation, false)", app_source)
-        self.assertIn("activatePollingFallback(workspaceId, sessionId, generation)", app_source)
-        self.assertIn("findSessionById(state.workspaces, workspaceId, sessionId)", app_source)
+        self.assertIn("fallbackPollingActive", chat_stream_source)
+        self.assertIn('addEventListener("heartbeat"', chat_stream_source)
+        self.assertIn("pollChatEvents(workspaceId, sessionId, generation, false)", chat_stream_source)
+        self.assertIn("activatePollingFallback(workspaceId, sessionId, generation)", chat_stream_source)
+        self.assertIn("findSessionById(state.workspaces, workspaceId, sessionId)", chat_stream_source)
         self.assertIn("initializeEventCursors(state.workspaces", app_source)
-        self.assertIn('before,\n      limit: "200"', app_source)
-        self.assertIn('querySelector("#event-stream").addEventListener("scroll"', app_source)
-        self.assertIn("mergeHistoricalEvents(current, events)", app_source)
-        self.assertIn('session.historyLoadingKind = "older"', app_source)
-        self.assertIn("data-retry-chat-history", app_source)
+        self.assertIn("mergeSessionEventTuples(existingEvents, incomingEvents)", app_source)
+        self.assertIn("existing?.historyLoaded", app_source)
+        self.assertIn('before: String(after),\n          limit: "200"', chat_stream_source)
+        self.assertIn('querySelector("#event-stream").addEventListener("scroll"', bindings_source)
+        self.assertIn("mergeHistoricalEvents(current, events)", chat_stream_source)
+        latest_history = chat_stream_source[
+            chat_stream_source.index("async function loadLatestSessionHistory"):
+            chat_stream_source.index("async function loadOlderSessionHistory")
+        ]
+        self.assertIn("mergeHistoricalEvents(current, result.events || [])", latest_history)
+        self.assertNotIn("mergeSessionEvents(session, events", latest_history)
+        self.assertIn("latestHistoryLoads", latest_history)
+        self.assertIn('session.historyLoadingKind = "older"', chat_stream_source)
+        self.assertIn("data-retry-chat-history", render_source)
         self.assertIn("export function mergeHistoricalEvents", chat_events_source)
         self.assertIn("sessionEventCursor", chat_events_source)
         self.assertIn("chat-history-spinner", render_source)
@@ -132,6 +143,19 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("renderDestinationFileTree", controls)
         self.assertIn('data-file-menu-action="rename"', html)
         self.assertIn("startFileTreeRename", bindings)
+
+    def test_file_tree_state_survives_snapshot_refresh_and_artifacts_start_unselected(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        replace_workspace = app_source[
+            app_source.index("function replaceWorkspace"):
+            app_source.index("function resetFileTreeState")
+        ]
+        reset_tree = app_source[
+            app_source.index("function resetFileTreeState"):
+            app_source.index("function mergeWorkspaceTreeFiles")
+        ]
+        self.assertNotIn("resetFileTreeState", replace_workspace)
+        self.assertIn("state.selectedArtifacts = new Set();", reset_tree)
 
     def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")

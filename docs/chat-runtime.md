@@ -173,6 +173,10 @@ returned and rendered while the run remains queued, starting, running, or
 stopping.
 
 Initial and older-page requests display an accessible loading indicator.
+The initial page is merged as history independently of the forward live-event
+cursor, so refreshing during an active run cannot cause older persisted events
+to be discarded. Subsequent workspace-detail refreshes retain the hydrated
+history and merge any newer summary events by persisted event ID.
 Older-page insertion preserves the first visible event as a scroll anchor;
 failures expose an inline retry action, and the top boundary explicitly indicates
 when the start of the conversation is reached. The compact history response also

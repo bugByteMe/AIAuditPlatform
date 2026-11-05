@@ -141,6 +141,15 @@ function sortTreeFiles(items) {
   return ordered;
 }
 
+function mergeSessionEventTuples(existingEvents, incomingEvents) {
+  const events = new Map();
+  [...(existingEvents || []), ...(incomingEvents || [])].forEach((event) => {
+    const id = Number(event?.[4]) || 0;
+    if (id) events.set(id, event);
+  });
+  return [...events.values()].sort((left, right) => (Number(left[4]) || 0) - (Number(right[4]) || 0));
+}
+
 function replaceWorkspace(updatedWorkspace) {
   const index = workspaceIndexById(updatedWorkspace.id);
   if (index < 0) return;
@@ -148,10 +157,14 @@ function replaceWorkspace(updatedWorkspace) {
   const currentSessions = new Map((current?.sessions || []).map((session) => [session.id, session]));
   const sessions = (updatedWorkspace.sessions || []).map((session) => {
     const existing = currentSessions.get(session.id);
+    const incomingEvents = session.events || [];
+    const existingEvents = existing?.events || [];
     return {
       ...existing,
       ...session,
-      events: session.events?.length ? session.events : (existing?.events || []),
+      events: existing?.historyLoaded
+        ? mergeSessionEventTuples(existingEvents, incomingEvents)
+        : incomingEvents.length ? incomingEvents : existingEvents,
       historyLoaded: Boolean(existing?.historyLoaded),
     };
   });
@@ -171,17 +184,12 @@ function replaceWorkspace(updatedWorkspace) {
     return;
   }
   state.workspaces[index] = updatedWorkspace;
-  if (index === state.selectedWorkspace) resetFileTreeState(updatedWorkspace);
 }
 
 function resetFileTreeState(workspace) {
   state.collapsedFileFolders = defaultCollapsedFolders(workspace?.files);
   state.collapsedArtifactFolders = defaultCollapsedFolders(workspace?.files);
-  state.selectedArtifacts = new Set(
-    (workspace?.files || [])
-      .filter((file) => Number(file.level || 0) === 0 && (file.type === "file" || file.hasChildren))
-      .map((file) => file.path),
-  );
+  state.selectedArtifacts = new Set();
 }
 
 function mergeWorkspaceTreeFiles(workspace, incomingFiles) {
