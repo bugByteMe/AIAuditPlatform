@@ -68,6 +68,12 @@ class ChatLifecycleTest(ChatRuntimeTestBase):
     first = runtime.start_run(workspace["id"], self.users["li.review"], {
       "prompt": "First", "model": "gpt-6-sol", "reasoning": "medium",
     })
+    self.assertEqual(
+      first["run"]["codexPreamble"],
+      "Place all temporary scripts, artifacts under /workspace/workdir",
+    )
+    self.assertEqual(first["run"]["prompt"], "First")
+    self.assertEqual(first["session"]["events"][0][1], "First")
     self.wait_for_status(runtime, workspace["id"], first["session"]["id"], "completed")
     public = runtime.public_session(first["session"]["id"], include_events=False)
     self.assertEqual(public["model"], "gpt-6-sol")
@@ -76,6 +82,7 @@ class ChatLifecycleTest(ChatRuntimeTestBase):
     second = runtime.start_run(workspace["id"], self.users["li.review"], {
       "prompt": "Second", "sessionId": first["session"]["id"],
     })
+    self.assertEqual(second["run"]["codexPreamble"], "")
     self.assertEqual(second["run"]["model"], "gpt-6-sol")
     self.assertEqual(second["run"]["reasoning"], "medium")
     self.wait_for_status(runtime, workspace["id"], first["session"]["id"], "completed")
@@ -429,6 +436,7 @@ class ChatLifecycleTest(ChatRuntimeTestBase):
 
     run = runtime.start_run(workspace["id"], self.users["li.review"], {"prompt": "Branch question", "sessionId": fork["id"]})
     self.assertTrue(run["run"]["codexFork"])
+    self.assertEqual(run["run"]["codexPreamble"], "")
     self.assertEqual(run["run"]["codexSessionId"], "native-source")
     self.wait_for_status(runtime, workspace["id"], fork["id"], "completed")
     source_after = runtime.public_session(source["id"])

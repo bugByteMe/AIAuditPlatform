@@ -60,6 +60,7 @@ class WorkerClient:
         "sessionId",
         "user",
         "prompt",
+        "codexPreamble",
         "model",
         "reasoning",
         "codexFork",

@@ -172,6 +172,8 @@ are never compacted: its user message and all currently persisted run events are
 returned and rendered while the run remains queued, starting, running, or
 stopping.
 
+For the first user message of a new, non-forked chat, the server adds the Codex-only preamble `Place all temporary scripts, artifacts under /workspace/workdir`. The visible and persisted user message remains unchanged. Follow-up turns do not repeat the preamble, and forked chats retain the instruction through their copied native Codex context.
+
 Initial and older-page requests display an accessible loading indicator.
 The initial page is merged as history independently of the forward live-event
 cursor, so refreshing during an active run cannot cause older persisted events

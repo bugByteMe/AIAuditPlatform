@@ -318,23 +318,27 @@ class DockerCodexRunner(CodexRunner):
 
   def codex_prompt(self, run: dict) -> str:
     collaborators = run.get("collaboratingWorkspaces") or []
-    if not collaborators:
+    preamble = str(run.get("codexPreamble") or "").strip()
+    if not collaborators and not preamble:
       return str(run["prompt"])
-    lines = [
-      "Runtime workspace layout:",
-      "- The current workspace is writable at /workspace.",
-      "- The following collaborating workspaces are live read-only references:",
-    ]
-    for item in collaborators:
-      workspace_id = str(item.get("id") or "")
-      name = json.dumps(str(item.get("name") or workspace_id), ensure_ascii=False)
-      lines.append(f"  - {name}: /collaborating-workspaces/{workspace_id}")
-    lines.extend([
-      "Use collaborating workspaces for reading, searching, comparison, and copying into /workspace; do not attempt to modify them.",
-      "",
-      "User request:",
-      str(run["prompt"]),
-    ])
+    lines = []
+    if preamble:
+      lines.extend([preamble, ""])
+    if collaborators:
+      lines.extend([
+        "Runtime workspace layout:",
+        "- The current workspace is writable at /workspace.",
+        "- The following collaborating workspaces are live read-only references:",
+      ])
+      for item in collaborators:
+        workspace_id = str(item.get("id") or "")
+        name = json.dumps(str(item.get("name") or workspace_id), ensure_ascii=False)
+        lines.append(f"  - {name}: /collaborating-workspaces/{workspace_id}")
+      lines.extend([
+        "Use collaborating workspaces for reading, searching, comparison, and copying into /workspace; do not attempt to modify them.",
+        "",
+      ])
+    lines.extend(["User request:", str(run["prompt"])])
     return "\n".join(lines)
 
   def session_home(self, username: str, session_id: str) -> Path:

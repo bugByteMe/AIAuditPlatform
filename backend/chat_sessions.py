@@ -269,6 +269,7 @@ class ChatSessionMixin:
         if session["workspaceId"] != workspace_id:
           raise StorageError("bad_request", "chat session belongs to another workspace")
       previous_run = self.chat_store.get_run(str(session.get("latestRunId") or ""))
+      first_user_message = not session.get("latestRunId") and not session.get("forkedFromSessionId")
       requested_collaborators = (
         payload.get("collaboratingWorkspaceIds")
         if "collaboratingWorkspaceIds" in payload
@@ -295,6 +296,7 @@ class ChatSessionMixin:
         "groupId": group_id,
         "status": "queued",
         "prompt": prompt,
+        "codexPreamble": "Place all temporary scripts, artifacts under /workspace/workdir" if first_user_message else "",
         "model": str(payload.get("model") or inherited_model),
         "reasoning": str(payload.get("reasoning") or inherited_reasoning),
         "worker": "queued",

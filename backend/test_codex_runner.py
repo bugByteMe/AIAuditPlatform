@@ -4,6 +4,17 @@ from unittest.mock import Mock
 
 
 class CodexRunnerTest(ChatRuntimeTestBase):
+  def test_first_message_preamble_precedes_user_request(self) -> None:
+    runner = DockerCodexRunner()
+    preamble = "Place all temporary scripts, artifacts under /workspace/workdir"
+    first_prompt = runner.codex_prompt({
+      "prompt": "Analyze the ledger",
+      "codexPreamble": preamble,
+    })
+    followup_prompt = runner.codex_prompt({"prompt": "Continue the analysis"})
+    self.assertEqual(first_prompt, f"{preamble}\n\nUser request:\nAnalyze the ledger")
+    self.assertEqual(followup_prompt, "Continue the analysis")
+
   def test_collaborating_workspace_mounts_are_read_only_and_prompted(self) -> None:
     runner = DockerCodexRunner()
     active_root = Path(self.tempdir.name) / "active"
@@ -13,6 +24,7 @@ class CodexRunnerTest(ChatRuntimeTestBase):
     collaborator.mkdir()
     run = {
       "prompt": "Compare the files",
+      "codexPreamble": "Place all temporary scripts, artifacts under /workspace/workdir",
       "collaboratingWorkspaces": [{"id": "ws_child", "name": "Prior year"}],
     }
     mounts = runner.collaboration_mounts(run, current)
@@ -22,6 +34,7 @@ class CodexRunnerTest(ChatRuntimeTestBase):
     self.assertIn("/workspace", prompt)
     self.assertIn("/collaborating-workspaces/ws_child", prompt)
     self.assertIn("live read-only", prompt)
+    self.assertTrue(prompt.startswith("Place all temporary scripts, artifacts under /workspace/workdir"))
     self.assertTrue(prompt.endswith("Compare the files"))
 
   def test_docker_runner_writes_session_scoped_codex_home(self) -> None:

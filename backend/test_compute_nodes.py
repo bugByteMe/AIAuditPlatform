@@ -122,6 +122,29 @@ class WorkerRegistryTest(unittest.TestCase):
     self.assertEqual(list(events), [])
     self.assertEqual(run["resultFiles"], manifest)
 
+  def test_worker_run_payload_includes_first_message_preamble(self):
+    client = object.__new__(WorkerClient)
+    client.lease_seconds = 30
+    client.timeout = 1
+    client.node = {"id": "worker-1"}
+    captured = {}
+
+    def request(method, path, payload=None, timeout=None):
+      if path == "/v1/runs":
+        captured.update(payload or {})
+        return {"container": "run-container"}
+      return {}
+
+    client.request = request
+    client.start({
+      "id": "run-1",
+      "codexPreamble": "Place all temporary scripts, artifacts under /workspace/workdir",
+    })
+    self.assertEqual(
+      captured["codexPreamble"],
+      "Place all temporary scripts, artifacts under /workspace/workdir",
+    )
+
   def test_terminal_worker_result_requires_workspace_manifest(self):
     client = object.__new__(WorkerClient)
     client.lease_seconds = 30
