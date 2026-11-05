@@ -1,4 +1,5 @@
 import { t } from "./i18n.js";
+import { WORKSPACE_PATH_DRAG_TYPE } from "./fileDrop.js";
 import { state } from "./state.js";
 
 const ROOT_KEY = "__workspace_root__";
@@ -232,8 +233,13 @@ function createOptions(record) {
       autoExpandMS: 650,
       preventRecursion: true,
       preventVoidMoves: true,
-      dragStart(node) {
-        return node.key !== ROOT_KEY && canMutate(record.config);
+      dragStart(node, data) {
+        if (node.key === ROOT_KEY || !canMutate(record.config)) return false;
+        try {
+          data.dataTransfer?.setData(WORKSPACE_PATH_DRAG_TYPE, node.data.path);
+          data.dataTransfer?.setData("text/plain", node.data.path);
+        } catch { /* The tree move still works when a browser rejects custom drag data. */ }
+        return true;
       },
       dragEnter(node, data) {
         if (!node.folder || !canMutate(record.config)) return false;
@@ -275,6 +281,7 @@ function signature(config) {
 
 function renderTree(element, config) {
   if (!element) return;
+  element.dataset.fileDropEnabled = String(canMutate(config));
   const $ = fancytree();
   if (!$) {
     element.textContent = t("files.treeUnavailable");

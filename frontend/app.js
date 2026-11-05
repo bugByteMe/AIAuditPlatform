@@ -16,6 +16,7 @@ import {
 } from "./js/chatEvents.js";
 import { applyLocale, t } from "./js/i18n.js";
 import { defaultCollapsedFolders } from "./js/fileTreeState.js";
+import { joinWorkspacePath } from "./js/fileDrop.js";
 import { configureFileTrees, startFileTreeRename } from "./js/fileTreeAdapter.js";
 import { state } from "./js/state.js";
 import {
@@ -867,22 +868,39 @@ async function updateWorkspaceRunLock(enabled) {
   }
 }
 
-async function uploadFilesToCurrentWorkspace(files, destinationPath = "", workspaceId = "") {
+async function uploadItemsToCurrentWorkspace(items, destinationPath = "", workspaceId = "") {
   const workspace = safeCurrentWorkspace();
-  const incoming = [...files];
-  if (!workspace || !incoming.length || (workspaceId && workspace.id !== workspaceId)) return;
-  const items = incoming.map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+  const incoming = [...items];
+  if (!workspace || !incoming.length || (workspaceId && workspace.id !== workspaceId)) {
+    const error = new Error(t("files.dropUnavailable"));
+    showToast(error.message);
+    throw error;
+  }
   setOperationProgress(t("progress.uploadFiles"), 0);
   try {
-    const updatedWorkspace = await runResumableUpload({ items, mode: "append", workspaceId: workspace.id, destinationPath, uploadLabel: t("progress.uploadFiles") });
+    const updatedWorkspace = await runResumableUpload({ items: incoming, mode: "append", workspaceId: workspace.id, destinationPath, uploadLabel: t("progress.uploadFiles") });
     replaceWorkspace(updatedWorkspace);
     document.querySelector("#workspace-add-menu").classList.add("hidden");
     renderDynamic();
     showToast(t("toast.filesUploaded"));
+    return {
+      workspace: updatedWorkspace,
+      uploadedPaths: incoming.map((item) => joinWorkspacePath(destinationPath, item.path)),
+    };
   } catch (error) {
     showToast(error.message);
+    throw error;
   } finally {
     clearOperationProgress();
+  }
+}
+
+async function uploadFilesToCurrentWorkspace(files, destinationPath = "", workspaceId = "") {
+  const items = [...files].map((file) => ({ file, path: file.webkitRelativePath || file.name }));
+  try {
+    return await uploadItemsToCurrentWorkspace(items, destinationPath, workspaceId);
+  } catch {
+    return null;
   }
 }
 
@@ -1071,6 +1089,7 @@ const appContext = {
   deselectTreePath,
   openFilePreview,
   updateWorkspaceRunLock,
+  uploadItemsToCurrentWorkspace,
   uploadFilesToCurrentWorkspace,
   deleteCurrentWorkspacePath,
   deleteSelectedWorkspacePaths,

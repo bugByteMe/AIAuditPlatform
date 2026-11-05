@@ -770,6 +770,30 @@
   border-top: 1px solid var(--line);
 }
 
+.drop-upload-hint {
+  display: none;
+  place-items: center;
+  align-content: center;
+  gap: 8px;
+  border: 1px dashed var(--primary);
+  border-radius: var(--radius-container);
+  background: #f3fafb;
+  color: var(--primary);
+  font-size: 13px;
+  font-weight: 650;
+  pointer-events: none;
+}
+
+.drop-upload-hint .ui-icon { width: 22px; height: 22px; }
+
+.composer-drop-hint {
+  position: absolute;
+  z-index: 5;
+  inset: 6px 8px;
+}
+
+.composer.is-file-drop-target .composer-drop-hint { display: grid; }
+
 .composer-resize-handle {
   position: absolute;
   z-index: 1;
@@ -897,6 +921,31 @@ select {
   min-height: 0;
   padding: 6px 0;
   overflow: auto;
+}
+
+.file-tree-drop-wrap {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+}
+
+.file-tree-drop-wrap .file-tree { height: 100%; }
+
+.file-tree-drop-hint {
+  position: absolute;
+  z-index: 5;
+  right: 6px;
+  bottom: 6px;
+  left: 6px;
+  min-height: 48px;
+}
+
+.file-tree-drop-wrap.is-file-drop-target .file-tree-drop-hint { display: grid; }
+
+.fancytree-host .fancytree-node.is-external-drop-folder {
+  outline: 2px solid var(--primary);
+  outline-offset: -2px;
+  background: #e6f5f6;
 }
 
 .file-meta,

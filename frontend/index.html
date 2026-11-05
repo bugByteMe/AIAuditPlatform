@@ -27,6 +27,7 @@
       <symbol id="icon-refresh" viewBox="0 0 24 24"><path d="M20 6v5h-5" /><path d="M4 18v-5h5" /><path d="M6.1 9a7 7 0 0 1 11.7-2.6L20 9M4 15l2.2 2.6A7 7 0 0 0 17.9 15" /></symbol>
       <symbol id="icon-loader" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.2-8.6" /></symbol>
       <symbol id="icon-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14" /></symbol>
+      <symbol id="icon-upload" viewBox="0 0 24 24"><path d="M12 16V4M7 9l5-5 5 5" /><path d="M5 14v5h14v-5" /></symbol>
       <symbol id="icon-maximize" viewBox="0 0 24 24"><path d="M8 3H3v5M16 3h5v5M8 21H3v-5M16 21h5v-5" /></symbol>
       <symbol id="icon-menu" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16" /></symbol>
       <symbol id="icon-external-link" viewBox="0 0 24 24"><path d="M14 5h5v5M19 5l-9 9" /><path d="M19 13v6H5V5h6" /></symbol>
@@ -275,6 +276,7 @@
               <form class="composer" id="composer">
                 <button type="button" class="composer-resize-handle" id="composer-resize-handle" data-i18n-title="chat.resizeComposer" data-i18n-aria-label="chat.resizeComposer" title="拖动调整输入框高度" aria-label="拖动调整输入框高度"></button>
                 <textarea data-i18n-placeholder="chat.placeholder" placeholder="输入审计任务，例如：检查收入确认底稿并生成异常清单"></textarea>
+                <div class="drop-upload-hint composer-drop-hint" aria-hidden="true"><svg class="ui-icon"><use href="#icon-upload"></use></svg><span data-i18n="files.dropComposerHint">插入工作区路径或上传文件</span></div>
                 <details class="collaborating-workspace-picker" id="collaborating-workspace-picker">
                   <summary id="collaborating-workspace-summary"></summary>
                   <div class="collaborating-workspace-panel">
@@ -319,7 +321,10 @@
                 </div>
                 <button class="rail-toggle" data-toggle-panel="files" data-i18n-title="files.collapse" title="收起文件"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></button>
               </div>
-              <div class="file-tree" id="file-tree"></div>
+              <div class="file-tree-drop-wrap">
+                <div class="file-tree" id="file-tree"></div>
+                <div class="drop-upload-hint file-tree-drop-hint" aria-hidden="true"><svg class="ui-icon"><use href="#icon-upload"></use></svg><span data-i18n="files.dropTreeHint">拖放到文件夹以上传</span></div>
+              </div>
             </aside>
           </div>
         </section>

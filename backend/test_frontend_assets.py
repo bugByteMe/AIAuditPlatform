@@ -249,6 +249,21 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("location ~ ^/api/uploads(?:/|$)", nginx_source)
         self.assertNotIn('uploadApi(\n      "/api/workspaces"', app_source)
 
+    def test_drag_upload_and_workspace_path_insertion_are_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        bindings = (FRONTEND_ROOT / "js" / "appEventBindings.js").read_text(encoding="utf-8")
+        tree = (FRONTEND_ROOT / "js" / "fileTreeAdapter.js").read_text(encoding="utf-8")
+        drop_helper = (FRONTEND_ROOT / "js" / "fileDrop.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        self.assertIn("async function uploadItemsToCurrentWorkspace", app_source)
+        self.assertIn('composer.addEventListener("drop"', bindings)
+        self.assertIn('fileTree.addEventListener("drop"', bindings)
+        self.assertIn("collectDroppedUpload", bindings)
+        self.assertIn("WORKSPACE_PATH_DRAG_TYPE", tree)
+        self.assertIn("webkitGetAsEntry", drop_helper)
+        self.assertIn("getAsFileSystemHandle", drop_helper)
+        self.assertIn('id="icon-upload"', html)
+
     def test_user_budget_inline_renaming_and_viewport_chat_layout_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         render_source = (FRONTEND_ROOT / "js" / "render.js").read_text(encoding="utf-8")
