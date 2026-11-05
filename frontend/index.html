@@ -211,7 +211,10 @@
               <input type="checkbox" id="select-all-artifacts" aria-label="Select all" />
               <span data-i18n="artifacts.selectAll">全选文件</span>
             </label>
-            <div class="file-tree artifact-tree" id="artifact-tree"></div>
+            <div class="file-tree-drop-wrap artifact-tree-drop-wrap">
+              <div class="file-tree artifact-tree" id="artifact-tree"></div>
+              <div class="drop-upload-hint file-tree-drop-hint" aria-hidden="true"><svg class="ui-icon"><use href="#icon-upload"></use></svg><span data-i18n="files.dropTreeHint">拖放到文件夹以上传</span></div>
+            </div>
             <input type="file" id="workspace-add-files-input" class="hidden" multiple />
             <input type="file" id="workspace-add-folder-input" class="hidden" multiple webkitdirectory />
           </section>

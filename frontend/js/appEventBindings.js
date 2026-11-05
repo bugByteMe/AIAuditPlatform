@@ -843,62 +843,64 @@ export function createEventBindings(context) {
       insertPathsAtSelection(composerInput, dropped.topLevelPaths);
     });
 
-    const fileTree = document.querySelector("#file-tree");
-    const fileTreeWrap = fileTree.closest(".file-tree-drop-wrap");
-    let highlightedDropFolder = null;
-    const clearTreeDropState = () => {
-      fileTreeWrap.classList.remove("is-file-drop-target");
-      highlightedDropFolder?.classList.remove("is-external-drop-folder");
-      highlightedDropFolder = null;
+    const bindExternalTreeUpload = (fileTree) => {
+      const fileTreeWrap = fileTree.closest(".file-tree-drop-wrap");
+      let highlightedDropFolder = null;
+      const clearTreeDropState = () => {
+        fileTreeWrap.classList.remove("is-file-drop-target");
+        highlightedDropFolder?.classList.remove("is-external-drop-folder");
+        highlightedDropFolder = null;
+      };
+      const treeDropDestination = (target) => {
+        const row = target.closest?.(".fancytree-node");
+        if (!row) return "";
+        return row.dataset.fileType === "folder" ? (row.dataset.filePath || "") : null;
+      };
+      const updateTreeDropState = (target) => {
+        const destination = treeDropDestination(target);
+        clearTreeDropState();
+        if (destination === null || fileTree.dataset.fileDropEnabled !== "true") return null;
+        const row = target.closest?.(".fancytree-node");
+        if (row) {
+          highlightedDropFolder = row;
+          row.classList.add("is-external-drop-folder");
+        }
+        fileTreeWrap.classList.add("is-file-drop-target");
+        return destination;
+      };
+      fileTree.addEventListener("dragover", (event) => {
+        if (!hasExternalFiles(event.dataTransfer)) return;
+        const destination = updateTreeDropState(event.target);
+        if (destination === null) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+      }, true);
+      fileTree.addEventListener("dragleave", (event) => {
+        if (!fileTree.contains(event.relatedTarget)) clearTreeDropState();
+      }, true);
+      fileTree.addEventListener("drop", async (event) => {
+        if (!hasExternalFiles(event.dataTransfer)) return;
+        const destinationPath = treeDropDestination(event.target);
+        clearTreeDropState();
+        if (destinationPath === null || fileTree.dataset.fileDropEnabled !== "true") return;
+        event.preventDefault();
+        event.stopPropagation();
+        const workspaceId = safeCurrentWorkspace()?.id || "";
+        let dropped;
+        try {
+          dropped = await collectDroppedUpload(event.dataTransfer);
+        } catch {
+          showToast(t("files.dropInvalid"));
+          return;
+        }
+        if (!dropped.items.length) {
+          showToast(t("files.dropEmpty"));
+          return;
+        }
+        try { await uploadItemsToCurrentWorkspace(dropped.items, destinationPath, workspaceId); } catch { /* Upload action reports API errors. */ }
+      }, true);
     };
-    const treeDropDestination = (target) => {
-      const row = target.closest?.(".fancytree-node");
-      if (!row) return "";
-      return row.dataset.fileType === "folder" ? (row.dataset.filePath || "") : null;
-    };
-    const updateTreeDropState = (target) => {
-      const destination = treeDropDestination(target);
-      clearTreeDropState();
-      if (destination === null || fileTree.dataset.fileDropEnabled !== "true") return null;
-      const row = target.closest?.(".fancytree-node");
-      if (row) {
-        highlightedDropFolder = row;
-        row.classList.add("is-external-drop-folder");
-      }
-      fileTreeWrap.classList.add("is-file-drop-target");
-      return destination;
-    };
-    fileTree.addEventListener("dragover", (event) => {
-      if (!hasExternalFiles(event.dataTransfer)) return;
-      const destination = updateTreeDropState(event.target);
-      if (destination === null) return;
-      event.preventDefault();
-      event.dataTransfer.dropEffect = "copy";
-    }, true);
-    fileTree.addEventListener("dragleave", (event) => {
-      if (!fileTree.contains(event.relatedTarget)) clearTreeDropState();
-    }, true);
-    fileTree.addEventListener("drop", async (event) => {
-      if (!hasExternalFiles(event.dataTransfer)) return;
-      const destinationPath = treeDropDestination(event.target);
-      clearTreeDropState();
-      if (destinationPath === null || fileTree.dataset.fileDropEnabled !== "true") return;
-      event.preventDefault();
-      event.stopPropagation();
-      const workspaceId = safeCurrentWorkspace()?.id || "";
-      let dropped;
-      try {
-        dropped = await collectDroppedUpload(event.dataTransfer);
-      } catch {
-        showToast(t("files.dropInvalid"));
-        return;
-      }
-      if (!dropped.items.length) {
-        showToast(t("files.dropEmpty"));
-        return;
-      }
-      try { await uploadItemsToCurrentWorkspace(dropped.items, destinationPath, workspaceId); } catch { /* Upload action reports API errors. */ }
-    }, true);
+    document.querySelectorAll("#file-tree, #artifact-tree").forEach(bindExternalTreeUpload);
     const resizeComposer = (height) => {
       const maxHeight = Math.max(82, Math.min(320, window.innerHeight * 0.35));
       composerInput.style.height = `${clamp(height, 82, maxHeight)}px`;
