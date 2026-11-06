@@ -122,7 +122,16 @@ export function createEventBindings(context) {
   const deleteWorkspace = (...args) => context.deleteWorkspace(...args);
 
   function bindGlobalClicks() {
+    const narrowChatLayout = window.matchMedia("(max-width: 799px)");
+    narrowChatLayout.addEventListener("change", () => {
+      state.narrowSessionPanelOpen = false;
+      state.narrowFilePanelOpen = false;
+      renderPanelState();
+    });
+
     document.addEventListener("click", (event) => {
+      const topbarMenuButton = event.target.closest(".topbar-more .action-menu-items .btn");
+      if (topbarMenuButton) topbarMenuButton.closest(".topbar-more").removeAttribute("open");
       const workspaceLink = event.target.closest("#event-stream a[data-workspace-file]");
       if (workspaceLink) {
         event.preventDefault();
@@ -378,8 +387,21 @@ export function createEventBindings(context) {
 
       const panelToggle = event.target.closest("[data-toggle-panel]");
       if (panelToggle) {
-        if (panelToggle.dataset.togglePanel === "sessions") state.isSessionPanelCollapsed = !state.isSessionPanelCollapsed;
-        if (panelToggle.dataset.togglePanel === "files") state.isFileExplorerCollapsed = !state.isFileExplorerCollapsed;
+        const narrowLayout = window.matchMedia("(max-width: 799px)").matches;
+        if (panelToggle.dataset.togglePanel === "sessions") {
+          if (narrowLayout) {
+            state.narrowSessionPanelOpen = !state.narrowSessionPanelOpen;
+            if (state.narrowSessionPanelOpen) state.narrowFilePanelOpen = false;
+          }
+          else state.isSessionPanelCollapsed = !state.isSessionPanelCollapsed;
+        }
+        if (panelToggle.dataset.togglePanel === "files") {
+          if (narrowLayout) {
+            state.narrowFilePanelOpen = !state.narrowFilePanelOpen;
+            if (state.narrowFilePanelOpen) state.narrowSessionPanelOpen = false;
+          }
+          else state.isFileExplorerCollapsed = !state.isFileExplorerCollapsed;
+        }
         renderPanelState();
         return;
       }

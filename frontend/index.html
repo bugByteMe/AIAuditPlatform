@@ -103,19 +103,19 @@
         </div>
 
         <nav class="nav-list" aria-label="Sections">
-          <button class="nav-item active" data-view="workspace">
+          <button class="nav-item active" data-view="workspace" data-i18n-aria-label="nav.workspace">
             <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-folder"></use></svg>
             <span data-i18n="nav.workspace">工作区</span>
           </button>
-          <button class="nav-item" data-view="chat">
+          <button class="nav-item" data-view="chat" data-i18n-aria-label="nav.chat">
             <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-message"></use></svg>
             <span data-i18n="nav.chat">实时会话</span>
           </button>
-          <button class="nav-item" data-view="recharge">
+          <button class="nav-item" data-view="recharge" data-i18n-aria-label="nav.recharge">
             <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-wallet"></use></svg>
             <span data-i18n="nav.recharge">充值</span>
           </button>
-          <button class="nav-item" data-view="admin" id="admin-nav-button">
+          <button class="nav-item" data-view="admin" id="admin-nav-button" data-i18n-aria-label="nav.admin">
             <svg class="icon ui-icon" aria-hidden="true"><use href="#icon-settings"></use></svg>
             <span data-i18n="nav.admin">管理</span>
           </button>
@@ -143,10 +143,17 @@
               <button class="segment active" data-lang="zh">中文</button>
               <button class="segment" data-lang="en">EN</button>
             </div>
-            <button class="btn ghost" data-i18n="actions.auditLog">审计日志</button>
-            <button class="btn" id="codex-settings-button" data-i18n="actions.codexSettings">Codex 设置</button>
             <button class="btn primary" data-open-workspace-modal data-i18n="actions.newWorkspace">新建工作区</button>
-            <button class="btn" id="logout-button" data-i18n="actions.logout">退出</button>
+            <details class="action-menu topbar-more">
+              <summary class="btn icon-btn" data-i18n-title="actions.more" data-i18n-aria-label="actions.more" title="更多操作" aria-label="更多操作">
+                <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
+              </summary>
+              <div class="action-menu-items">
+                <button class="btn ghost" data-i18n="actions.auditLog">审计日志</button>
+                <button class="btn" id="codex-settings-button" data-i18n="actions.codexSettings">Codex 设置</button>
+                <button class="btn" id="logout-button" data-i18n="actions.logout">退出</button>
+              </div>
+            </details>
           </div>
         </header>
 

@@ -1,5 +1,17 @@
 # Test Plan
 
+## Responsive frontend
+
+- Desktop navigation remains vertical, while an effective viewport from 800px
+  through 1199px uses a compact icon rail instead of a full-width navigation
+  header.
+- Below 800px, global navigation remains a short app bar and chat session/file
+  panels open as overlay drawers without reducing the chat grid or changing the
+  user's wider-layout fold preferences.
+- Chat headers and composer controls reflow according to their container width;
+  the tested laptop, narrow, and zoom-equivalent viewports have no page-level
+  horizontal scrolling or controls hidden behind panel rails.
+
 ## Permissions
 
 - A user cannot open, chat against, or download artifacts from another user's private workspace.

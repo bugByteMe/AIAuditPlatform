@@ -24,3 +24,24 @@ All workspace file-tree surfaces use the shared adapter in `frontend/js/fileTree
 The chat explorer and artifact selector enable lazy loading, keyboard navigation, F2/context-menu rename, and same-workspace drag/drop. The upload destination tree deliberately remains selection-only. File moves reject conflicts instead of overwriting or auto-renaming a destination.
 
 The chat explorer and workspace artifact tree additionally accept external file and directory drops on folder nodes or the workspace root. Composer drops either insert the application-specific path payload from an existing tree node or upload external content before inserting its workspace-relative top-level paths. Drop targets use the shared SVG icon sprite, radius tokens, resumable progress, and permission/lock state rather than introducing a separate uploader.
+
+## Responsive layout
+
+Responsive behavior is based on the effective CSS viewport, including the
+smaller viewport produced by browser zoom. The application must not counteract
+zoom with transforms or a reduced root font size.
+
+- At 1200px and wider, the full vertical sidebar and resizable chat side panels
+  use the desktop layout.
+- From 800px through 1199px, navigation becomes a 76px icon rail, secondary
+  top-bar actions move into the shared overflow menu, and chat side-panel widths
+  are clamped so the conversation keeps the majority of the available width.
+- Below 800px, navigation becomes a short app bar. Session and file panels are
+  closed initially and open as overlay drawers, without replacing the user's
+  wider-layout fold preferences.
+
+The chat header and composer use container queries because their usable width
+depends on sidebar and chat-panel state, not only on the browser viewport.
+Controls retain accessible target sizes while spacing, panel widths, and
+secondary chrome become denser. Page-level horizontal scrolling and panel rails
+covering composer controls are regressions.

@@ -1,103 +1,225 @@
-@media (max-width: 980px) {
-  .chat-view-active .app-shell {
+/*
+ * Global breakpoints respond to the effective CSS viewport. Browser zoom must
+ * trigger reflow; it must not be cancelled with transforms or smaller root text.
+ */
+@media (max-width: 1199px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed {
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .sidebar,
+  .app-shell.sidebar-collapsed .sidebar {
+    position: sticky;
+    top: 0;
     height: 100vh;
     height: 100dvh;
-    min-height: 0;
+    gap: 14px;
+    padding: 14px 10px;
+  }
+
+  .sidebar .brand,
+  .app-shell.sidebar-collapsed .brand {
+    justify-content: center;
+  }
+
+  .sidebar .brand > div:not(.brand-mark),
+  .sidebar .nav-item span:not(.icon),
+  .sidebar .session-card,
+  .sidebar .collapse-btn {
+    display: none;
+  }
+
+  .sidebar .nav-item,
+  .app-shell.sidebar-collapsed .nav-item {
+    justify-content: center;
+    min-height: 44px;
+    padding: 0;
+  }
+
+  .main {
+    padding-inline: clamp(12px, 2vw, 20px);
+  }
+
+  .topbar-actions {
+    flex-wrap: nowrap;
+  }
+
+  .topbar-more.action-menu > summary {
+    display: grid;
+  }
+
+  .topbar-more:not([open]) > .action-menu-items {
+    display: none;
+  }
+
+  .topbar-more[open] > .action-menu-items {
+    position: absolute;
+    display: grid;
+    min-width: 190px;
+    padding: 7px;
+    border: 1px solid var(--line-strong);
+    background: var(--surface);
+    box-shadow: 0 12px 30px rgb(23 42 51 / 16%);
+  }
+
+  .topbar-more > .action-menu-items .btn {
+    width: 100%;
+  }
+
+  .chat-layout {
+    grid-template-columns: clamp(220px, var(--sessions-width, 250px), 260px) minmax(0, 1fr);
+  }
+
+  .chat-layout:not(.files-collapsed) {
+    grid-template-columns:
+      clamp(220px, var(--sessions-width, 250px), 260px)
+      minmax(0, 1fr)
+      clamp(240px, var(--files-width, 280px), 300px);
+  }
+
+  .chat-layout.sessions-collapsed:not(.files-collapsed) {
+    grid-template-columns: minmax(0, 1fr) clamp(240px, var(--files-width, 280px), 300px);
+  }
+
+  .dashboard-grid,
+  .recharge-layout {
+    gap: 14px;
+  }
+
+  .runtime-strip {
+    width: min(560px, calc(100vw - 32px));
+  }
+}
+
+/* A narrow viewport uses short global chrome and overlay chat side panels. */
+@media (max-width: 799px) {
+  .app-shell,
+  .app-shell.sidebar-collapsed,
+  .chat-view-active .app-shell {
+    height: auto;
+    min-height: 100vh;
+    min-height: 100dvh;
+    grid-template-columns: minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
 
-  .app-shell,
-  .app-shell.sidebar-collapsed {
-    grid-template-columns: 1fr;
-  }
-
-  .sidebar {
+  .sidebar,
+  .app-shell.sidebar-collapsed .sidebar {
     position: static;
+    z-index: 20;
+    width: 100%;
     height: auto;
+    display: grid;
+    grid-template-columns: 40px minmax(0, 1fr);
+    align-items: center;
+    gap: 8px;
+    padding: 8px 12px;
   }
 
-  .chat-view-active .main {
-    height: auto;
-    min-height: 0;
+  .sidebar .brand,
+  .app-shell.sidebar-collapsed .brand {
+    min-height: 40px;
+  }
+
+  .brand-mark {
+    width: 36px;
+    height: 36px;
   }
 
   .nav-list {
     grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 4px;
   }
 
-  .nav-item {
-    justify-content: center;
+  .sidebar .nav-item,
+  .app-shell.sidebar-collapsed .nav-item {
+    min-height: 40px;
   }
 
-  .session-card {
-    display: none;
+  .main,
+  .chat-view-active .main {
+    min-height: 0;
+    padding: 8px 10px 0;
   }
 
-  .app-shell.sidebar-collapsed .brand > div:not(.brand-mark),
-  .app-shell.sidebar-collapsed .nav-item span:not(.icon) {
-    display: block;
-  }
-
-  .app-shell.sidebar-collapsed .collapse-btn {
-    position: static;
-    width: 30px;
-    height: 30px;
-    transform: none;
-  }
-
-  .dashboard-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .recharge-layout {
-    grid-template-columns: 1fr;
-  }
-
-  .chat-layout {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "sessions"
-      "chat";
-    grid-template-rows: auto minmax(0, 1fr);
+  .chat-view-active .main {
     height: auto;
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    overflow: hidden;
+  }
+
+  .topbar {
+    min-height: 44px;
+    margin-bottom: 8px;
+    padding-bottom: 8px;
+  }
+
+  .topbar-actions {
+    width: 100%;
+    justify-content: flex-end;
+    gap: 6px;
+  }
+
+  .topbar-actions > .btn {
+    min-height: 36px;
+    padding-inline: 10px;
+  }
+
+  .segmented {
+    padding: 2px;
+  }
+
+  .segment {
+    min-width: 42px;
+    min-height: 32px;
+    height: 32px;
+  }
+
+  .chat-view-active #chat-view,
+  .chat-view-active .chat-layout {
+    height: 100%;
     min-height: 0;
   }
 
-  .chat-layout:not(.files-collapsed) {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "sessions"
-      "chat"
-      "files";
-    grid-template-rows: auto minmax(0, 1fr) auto;
-  }
-
-  .chat-layout.sessions-collapsed {
-    grid-template-columns: 1fr;
-    grid-template-areas: "chat";
-    grid-template-rows: minmax(0, 1fr);
-  }
-
+  .chat-layout,
+  .chat-layout:not(.files-collapsed),
+  .chat-layout.sessions-collapsed,
   .chat-layout.sessions-collapsed:not(.files-collapsed) {
-    grid-template-columns: 1fr;
-    grid-template-areas:
-      "chat"
-      "files";
-    grid-template-rows: minmax(0, 1fr) auto;
-  }
-
-  .chat-view-active .chat-layout,
-  .chat-view-active .chat-layout:not(.files-collapsed),
-  .chat-view-active .chat-layout.sessions-collapsed,
-  .chat-view-active .chat-layout.sessions-collapsed:not(.files-collapsed) {
-    height: 100%;
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
+    grid-template-areas: "chat";
+    overflow: hidden;
+    border-radius: var(--radius-container);
   }
 
   .sessions-panel,
-  .file-panel,
+  .file-panel {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    z-index: 12;
+    width: min(320px, calc(100% - 44px));
+    border-bottom: 0;
+    background: var(--surface);
+    box-shadow: 0 14px 34px rgb(23 42 51 / 18%);
+  }
+
+  .sessions-panel {
+    left: 0;
+    border-right: 1px solid var(--line);
+  }
+
+  .file-panel {
+    right: 0;
+    border-left: 1px solid var(--line);
+  }
+
   .chat-panel {
+    grid-area: chat;
+    min-height: 0;
     border: 0;
-    border-bottom: 1px solid var(--line);
   }
 
   .resize-handle {
@@ -106,54 +228,52 @@
 
   .sessions-collapsed .session-rail,
   .files-collapsed .file-rail {
-    display: flex;
+    display: grid;
     width: 30px;
     min-width: 30px;
     min-height: 88px;
-    writing-mode: vertical-rl;
-    border: 1px solid var(--line-strong);
   }
 
-  .sessions-collapsed .session-rail { border-left: 0; }
-  .files-collapsed .file-rail { border-right: 0; }
-
-  .event-stream { min-height: 0; }
-
-  .chat-panel {
-    overflow: auto;
+  .session-list,
+  .file-tree {
+    max-height: none;
   }
 
-  .chat-head {
-    flex-shrink: 0;
+  .event-stream {
+    min-height: 0;
   }
 
   .runtime-strip {
-    width: min(560px, calc(100vw - 32px));
+    right: 0;
+    left: auto;
+    width: min(520px, calc(100vw - 24px));
+  }
+
+  .dashboard-grid,
+  .recharge-layout {
+    grid-template-columns: 1fr;
   }
 }
 
-@media (max-width: 700px) {
-  .main {
-    padding: 12px;
+@media (max-width: 560px) {
+  .topbar-actions > [data-open-workspace-modal] {
+    max-width: 132px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
-  .topbar,
   .toolbar,
   .panel-head {
     display: grid;
   }
 
-  .topbar-actions,
-  .toolbar-actions,
-  .composer-actions {
+  .toolbar-actions {
     justify-content: stretch;
   }
 
   .workspace-item,
-  .admin-item {
-    grid-template-columns: 1fr;
-  }
-
+  .admin-item,
   .admin-group > summary {
     grid-template-columns: 1fr;
   }
@@ -166,7 +286,10 @@
     flex-wrap: wrap;
   }
 
-  .admin-settings-invite {
+  .admin-settings-invite,
+  .credential-row,
+  .recharge-products {
+    display: grid;
     grid-template-columns: 1fr;
   }
 
@@ -179,20 +302,11 @@
     margin-left: 12px;
   }
 
-  .composer-actions .btn,
-  .composer-actions label,
-  .composer-actions select,
-  .segmented {
-    width: 100%;
+  .composer-actions .btn {
+    min-width: 76px;
   }
 
   .collaborating-workspace-panel {
     width: 100%;
-  }
-
-  .credential-row,
-  .recharge-products {
-    display: grid;
-    grid-template-columns: 1fr;
   }
 }

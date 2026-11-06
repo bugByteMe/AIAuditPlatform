@@ -176,6 +176,28 @@
   flex-wrap: wrap;
 }
 
+.topbar-more.action-menu > summary {
+  display: none;
+}
+
+.topbar-more > .action-menu-items,
+.topbar-more:not([open]) > .action-menu-items {
+  position: static;
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.topbar-more > .action-menu-items .btn {
+  width: auto;
+  white-space: nowrap;
+}
+
 body.chat-focus-mode .app-shell {
   grid-template-columns: minmax(0, 1fr);
 }

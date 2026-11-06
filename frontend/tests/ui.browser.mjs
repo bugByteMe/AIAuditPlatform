@@ -87,6 +87,45 @@ test("shared radii and SVG controls follow the frontend design system", async ()
   } finally { await page.close(); }
 });
 
+test("compact laptop and narrow chat layouts reflow without oversized global chrome", async () => {
+  const { page } = await openApp("platform_admin", { width: 1024, height: 768 });
+  try {
+    const sidebar = await page.locator(".sidebar").boundingBox();
+    assert.ok(sidebar.width <= 78, `compact sidebar is ${sidebar.width}px wide`);
+    assert.ok(sidebar.height >= 766, `compact sidebar is ${sidebar.height}px tall`);
+    assert.equal(await page.locator(".topbar-more > summary").isVisible(), true);
+    assert.equal(await page.locator("#codex-settings-button").isVisible(), false);
+
+    await page.locator(".topbar-more > summary").click();
+    assert.equal(await page.locator("#codex-settings-button").isVisible(), true);
+    await page.locator('[data-view="chat"]').click();
+    const sessions = await page.locator(".sessions-panel").boundingBox();
+    const chat = await page.locator(".chat-panel").boundingBox();
+    assert.ok(sessions.width >= 218 && sessions.width <= 262, `compact sessions width is ${sessions.width}px`);
+    assert.ok(chat.x >= sessions.x + sessions.width - 2, "compact laptop keeps sessions beside chat");
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+
+    await page.setViewportSize({ width: 760, height: 720 });
+    await page.waitForFunction(() => document.body.classList.contains("chat-narrow-layout"));
+    assert.equal(await page.locator(".session-rail").isVisible(), true);
+    const narrowSidebar = await page.locator(".sidebar").boundingBox();
+    assert.ok(narrowSidebar.height <= 64, `narrow app bar is ${narrowSidebar.height}px tall`);
+    const narrowChat = await page.locator(".chat-panel").boundingBox();
+
+    await page.locator(".session-rail").click();
+    const drawer = await page.locator(".sessions-panel").boundingBox();
+    const chatBehindDrawer = await page.locator(".chat-panel").boundingBox();
+    assert.ok(drawer.width <= 320, `session drawer is ${drawer.width}px wide`);
+    assert.equal(Math.round(chatBehindDrawer.width), Math.round(narrowChat.width));
+    assert.equal(await page.locator('.sessions-panel [data-toggle-panel="sessions"]').getAttribute("aria-expanded"), "true");
+    assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth));
+
+    await page.setViewportSize({ width: 1024, height: 768 });
+    await page.waitForFunction(() => !document.body.classList.contains("chat-narrow-layout"));
+    assert.equal(await page.locator(".sessions-panel").isVisible(), true, "desktop panel preference survives narrow overlay use");
+  } finally { await page.close(); }
+});
+
 test("administrator settings expose and submit only each role's permitted fields", async () => {
   for (const role of ["platform_admin", "system_admin", "user"]) {
     const { page, requests } = await openApp(role);

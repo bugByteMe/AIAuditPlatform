@@ -174,10 +174,7 @@ body { line-height: 1.55; }
 
 @media (max-width: 980px) {
   .chat-layout { border-radius: var(--radius-container); }
-  .chat-view-active .chat-layout { overflow: auto; }
   .chat-view-active .chat-panel { min-height: 0; }
-  .session-list { max-height: 24vh; }
-  .file-tree { max-height: 26vh; }
 }
 
 @media (max-width: 700px) {

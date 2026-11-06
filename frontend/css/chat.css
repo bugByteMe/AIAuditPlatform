@@ -208,6 +208,8 @@
 }
 
 .chat-panel {
+  container-name: chat-panel;
+  container-type: inline-size;
   min-width: 0;
   min-height: 0;
   display: flex;
@@ -914,6 +916,55 @@ select {
   border-radius: var(--radius-control);
   background: #ffffff;
   color: var(--text);
+}
+
+@container chat-panel (max-width: 720px) {
+  .chat-head {
+    align-items: stretch;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .chat-title-group {
+    flex: 1 1 100%;
+  }
+
+  .chat-title-group h2 {
+    flex: none;
+  }
+
+  .chat-head-meta {
+    width: 100%;
+    justify-content: space-between;
+    gap: 8px;
+  }
+
+  .composer {
+    padding: 10px 12px;
+  }
+
+  .composer textarea {
+    min-height: 72px;
+  }
+}
+
+@container chat-panel (max-width: 520px) {
+  .chat-head-meta {
+    flex-wrap: wrap;
+  }
+
+  .runtime-summary {
+    margin-left: auto;
+  }
+
+  .composer-actions label {
+    flex: 1 1 150px;
+  }
+
+  .composer-actions select {
+    min-width: 0;
+    max-width: 100%;
+  }
 }
 
 .file-tree {

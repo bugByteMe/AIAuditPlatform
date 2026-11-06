@@ -284,22 +284,28 @@ export function renderWorkspaceManagement() {
 export function renderPanelState() {
   const layout = document.querySelector(".chat-layout");
   if (!layout) return;
+  const narrowLayout = window.matchMedia("(max-width: 799px)").matches;
+  const sessionsCollapsed = state.isChatFocusMode || (narrowLayout ? !state.narrowSessionPanelOpen : state.isSessionPanelCollapsed);
+  const filesCollapsed = state.isChatFocusMode || (narrowLayout ? !state.narrowFilePanelOpen : state.isFileExplorerCollapsed);
   document.body.classList.toggle("chat-focus-mode", state.isChatFocusMode);
+  document.body.classList.toggle("chat-narrow-layout", narrowLayout);
   layout.style.setProperty("--sessions-width", `${state.sessionPanelWidth}px`);
   layout.style.setProperty("--files-width", `${state.filePanelWidth}px`);
-  layout.classList.toggle("sessions-collapsed", state.isSessionPanelCollapsed);
-  layout.classList.toggle("files-collapsed", state.isFileExplorerCollapsed);
+  layout.classList.toggle("sessions-collapsed", sessionsCollapsed);
+  layout.classList.toggle("files-collapsed", filesCollapsed);
   document.querySelectorAll('[data-toggle-panel="sessions"]').forEach((button) => {
-    button.dataset.i18nTitle = state.isSessionPanelCollapsed ? "chat.expandSessions" : "chat.collapseSessions";
+    button.dataset.i18nTitle = sessionsCollapsed ? "chat.expandSessions" : "chat.collapseSessions";
     button.dataset.i18nAriaLabel = button.dataset.i18nTitle;
     button.title = t(button.dataset.i18nTitle);
     button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-expanded", String(!sessionsCollapsed));
   });
   document.querySelectorAll('[data-toggle-panel="files"]').forEach((button) => {
-    button.dataset.i18nTitle = state.isFileExplorerCollapsed ? "files.expand" : "files.collapse";
+    button.dataset.i18nTitle = filesCollapsed ? "files.expand" : "files.collapse";
     button.dataset.i18nAriaLabel = button.dataset.i18nTitle;
     button.title = t(button.dataset.i18nTitle);
     button.setAttribute("aria-label", button.title);
+    button.setAttribute("aria-expanded", String(!filesCollapsed));
   });
   const focusButton = document.querySelector("#chat-focus-mode");
   if (focusButton) {

@@ -52,6 +52,8 @@ export const state = {
   filePanelWidth: 300,
   isSessionPanelCollapsed: false,
   isFileExplorerCollapsed: true,
+  narrowSessionPanelOpen: false,
+  narrowFilePanelOpen: false,
   isChatFocusMode: false,
   focusPanelState: null,
   operationProgress: null,
