@@ -31,9 +31,9 @@ Responsive behavior is based on the effective CSS viewport, including the
 smaller viewport produced by browser zoom. The application must not counteract
 zoom with transforms or a reduced root font size.
 
-- At 1200px and wider, the full vertical sidebar and resizable chat side panels
-  use the desktop layout.
-- From 800px through 1199px, navigation becomes a 76px icon rail, secondary
+- At 1200px and wider, the full 232px vertical sidebar and resizable chat side
+  panels use the desktop layout. Collapsing it produces a 64px icon rail.
+- From 800px through 1199px, navigation becomes a 64px icon rail, secondary
   top-bar actions move into the shared overflow menu, and chat side-panel widths
   are clamped so the conversation keeps the majority of the available width.
 - Below 800px, navigation becomes a short app bar. Session and file panels are
@@ -45,3 +45,10 @@ depends on sidebar and chat-panel state, not only on the browser viewport.
 Controls retain accessible target sizes while spacing, panel widths, and
 secondary chrome become denser. Page-level horizontal scrolling and panel rails
 covering composer controls are regressions.
+
+The global top bar is not rendered while the live-chat view is active. Workspace
+creation and global settings remain available from the other application views;
+the chat keeps only its session, runtime, file, and composer controls so vertical
+space is reserved for conversation history. At 1200px and wider, Codex settings
+and the other global actions are direct top-bar buttons. At narrower widths they
+move into the overflow menu.

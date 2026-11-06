@@ -258,7 +258,10 @@ limited to the configured preview prefix, so neither operation allocates memory
 proportional to the source file size.
 Office files (`.doc`, `.docx`, `.xls`, `.xlsx`, `.ppt`, `.pptx`) are download-only:
 inline preview and direct PDF rendering are disabled on the control plane. Text,
-image, and PDF previews remain available.
+image, and PDF previews remain available. A bounded, browser-side `.xlsx`
+preview using a locally vendored SheetJS worker is proposed in
+[xlsx-preview.md](xlsx-preview.md); until that plan is implemented and enabled,
+`.xlsx` remains download-only like the other Office formats.
 
 For remote runs, large baseline and result objects are stored as separate JSON
 files on shared storage. `runs.json` retains only protocol/version references and

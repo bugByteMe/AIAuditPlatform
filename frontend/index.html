@@ -144,14 +144,19 @@
               <button class="segment" data-lang="en">EN</button>
             </div>
             <button class="btn primary" data-open-workspace-modal data-i18n="actions.newWorkspace">新建工作区</button>
+            <div class="topbar-wide-actions">
+              <button class="btn ghost" data-i18n="actions.auditLog">审计日志</button>
+              <button class="btn" id="codex-settings-button" data-open-codex-settings data-i18n="actions.codexSettings">Codex 设置</button>
+              <button class="btn" id="logout-button" data-logout data-i18n="actions.logout">退出</button>
+            </div>
             <details class="action-menu topbar-more">
               <summary class="btn icon-btn" data-i18n-title="actions.more" data-i18n-aria-label="actions.more" title="更多操作" aria-label="更多操作">
                 <svg class="ui-icon" aria-hidden="true"><use href="#icon-menu"></use></svg>
               </summary>
               <div class="action-menu-items">
                 <button class="btn ghost" data-i18n="actions.auditLog">审计日志</button>
-                <button class="btn" id="codex-settings-button" data-i18n="actions.codexSettings">Codex 设置</button>
-                <button class="btn" id="logout-button" data-i18n="actions.logout">退出</button>
+                <button class="btn" id="codex-settings-menu-button" data-open-codex-settings data-i18n="actions.codexSettings">Codex 设置</button>
+                <button class="btn" id="logout-menu-button" data-logout data-i18n="actions.logout">退出</button>
               </div>
             </details>
           </div>

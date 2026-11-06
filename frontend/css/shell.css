@@ -1,12 +1,12 @@
 .app-shell {
   min-height: 100vh;
   display: grid;
-  grid-template-columns: 264px minmax(0, 1fr);
+  grid-template-columns: 232px minmax(0, 1fr);
   background: var(--bg);
 }
 
 .app-shell.sidebar-collapsed {
-  grid-template-columns: 76px minmax(0, 1fr);
+  grid-template-columns: 64px minmax(0, 1fr);
 }
 
 .sidebar {
@@ -123,7 +123,7 @@
 }
 
 .app-shell.sidebar-collapsed .sidebar {
-  padding: 16px 12px;
+  padding: 16px 8px;
 }
 
 .app-shell.sidebar-collapsed .brand {
@@ -138,7 +138,7 @@
 
 .app-shell.sidebar-collapsed .collapse-btn {
   position: absolute;
-  left: 48px;
+  left: 40px;
   top: 18px;
   width: 24px;
   height: 24px;
@@ -168,6 +168,7 @@
 }
 
 .topbar-actions,
+.topbar-wide-actions,
 .toolbar-actions,
 .composer-actions {
   display: flex;
@@ -180,22 +181,18 @@
   display: none;
 }
 
-.topbar-more > .action-menu-items,
-.topbar-more:not([open]) > .action-menu-items {
-  position: static;
+.topbar-wide-actions {
   display: flex;
   align-items: center;
   gap: 9px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
 }
 
-.topbar-more > .action-menu-items .btn {
-  width: auto;
+.topbar-wide-actions .btn {
   white-space: nowrap;
+}
+
+.chat-view-active .topbar {
+  display: none;
 }
 
 body.chat-focus-mode .app-shell {

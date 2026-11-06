@@ -340,7 +340,7 @@ export function createEventBindings(context) {
         return;
       }
 
-      if (event.target.closest("#codex-settings-button")) {
+      if (event.target.closest("[data-open-codex-settings]")) {
         openCodexSettingsModal();
         return;
       }
@@ -678,10 +678,12 @@ export function createEventBindings(context) {
       }
     });
 
-    document.querySelector("#logout-button").addEventListener("click", async () => {
-      await api("/api/logout", { method: "POST" }).catch(() => null);
-      showLogin();
-      showToast(t("toast.logout"));
+    document.querySelectorAll("[data-logout]").forEach((button) => {
+      button.addEventListener("click", async () => {
+        await api("/api/logout", { method: "POST" }).catch(() => null);
+        showLogin();
+        showToast(t("toast.logout"));
+      });
     });
 
     document.querySelector("#composer").addEventListener("submit", async (event) => {

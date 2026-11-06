@@ -91,14 +91,15 @@ test("compact laptop and narrow chat layouts reflow without oversized global chr
   const { page } = await openApp("platform_admin", { width: 1024, height: 768 });
   try {
     const sidebar = await page.locator(".sidebar").boundingBox();
-    assert.ok(sidebar.width <= 78, `compact sidebar is ${sidebar.width}px wide`);
+    assert.ok(sidebar.width <= 66, `compact sidebar is ${sidebar.width}px wide`);
     assert.ok(sidebar.height >= 766, `compact sidebar is ${sidebar.height}px tall`);
     assert.equal(await page.locator(".topbar-more > summary").isVisible(), true);
-    assert.equal(await page.locator("#codex-settings-button").isVisible(), false);
+    assert.equal(await page.locator("#codex-settings-menu-button").isVisible(), false);
 
     await page.locator(".topbar-more > summary").click();
-    assert.equal(await page.locator("#codex-settings-button").isVisible(), true);
+    assert.equal(await page.locator("#codex-settings-menu-button").isVisible(), true);
     await page.locator('[data-view="chat"]').click();
+    assert.equal(await page.locator(".topbar").isVisible(), false, "live chat hides the global workspace header");
     const sessions = await page.locator(".sessions-panel").boundingBox();
     const chat = await page.locator(".chat-panel").boundingBox();
     assert.ok(sessions.width >= 218 && sessions.width <= 262, `compact sessions width is ${sessions.width}px`);
@@ -123,6 +124,18 @@ test("compact laptop and narrow chat layouts reflow without oversized global chr
     await page.setViewportSize({ width: 1024, height: 768 });
     await page.waitForFunction(() => !document.body.classList.contains("chat-narrow-layout"));
     assert.equal(await page.locator(".sessions-panel").isVisible(), true, "desktop panel preference survives narrow overlay use");
+  } finally { await page.close(); }
+});
+
+test("wide layout exposes Codex settings and uses a thinner sidebar", async () => {
+  const { page } = await openApp("platform_admin", { width: 1440, height: 900 });
+  try {
+    const sidebar = await page.locator(".sidebar").boundingBox();
+    assert.ok(sidebar.width <= 234, `wide sidebar is ${sidebar.width}px wide`);
+    assert.equal(await page.locator("#codex-settings-button").isVisible(), true);
+    assert.equal(await page.locator(".topbar-more > summary").isVisible(), false);
+    await page.locator("#codex-settings-button").click();
+    assert.equal(await page.locator("#codex-settings-modal").isVisible(), true);
   } finally { await page.close(); }
 });
 

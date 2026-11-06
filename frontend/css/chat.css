@@ -6,7 +6,7 @@
   height: 100vh;
   height: 100dvh;
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
   padding-bottom: 0;
   overflow: hidden;
 }

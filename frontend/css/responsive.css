@@ -5,7 +5,7 @@
 @media (max-width: 1199px) {
   .app-shell,
   .app-shell.sidebar-collapsed {
-    grid-template-columns: 76px minmax(0, 1fr);
+    grid-template-columns: 64px minmax(0, 1fr);
   }
 
   .sidebar,
@@ -43,6 +43,10 @@
 
   .topbar-actions {
     flex-wrap: nowrap;
+  }
+
+  .topbar-wide-actions {
+    display: none;
   }
 
   .topbar-more.action-menu > summary {
@@ -146,7 +150,7 @@
   .chat-view-active .main {
     height: auto;
     display: grid;
-    grid-template-rows: auto minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr);
     overflow: hidden;
   }
 
