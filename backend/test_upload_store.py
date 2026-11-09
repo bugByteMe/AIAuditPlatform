@@ -496,6 +496,23 @@ class UploadManagerTest(unittest.TestCase):
     self.assertEqual(result["reconciled"], 1)
     self.assertEqual(self.manager.database.get(upload["id"])["status"], "committed")
 
+  def test_committed_status_does_not_wait_for_staging_cleanup(self):
+    upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)
+    self.manager.complete(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    while self.manager.local_worker.load(upload["id"])["status"] != "ready" and time.monotonic() < deadline:
+      time.sleep(0.02)
+
+    with patch.object(self.manager.local_worker, "purge", side_effect=AssertionError("cleanup blocked response")) as purge:
+      result = self.manager.status(upload["id"], USER)
+    self.assertEqual(result["status"], "committed")
+    purge.assert_not_called()
+    self.assertTrue(self.manager.database.get(upload["id"])["cleanupPending"])
+
+    self.assertEqual(self.manager.collect_garbage()["deleted"], 0)
+    self.assertFalse(self.manager.database.get(upload["id"])["cleanupPending"])
+
   def test_atomic_upload_commit_rolls_back_workspace_when_upload_update_fails(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
     upload = self.manager.create(USER, {

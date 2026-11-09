@@ -60,6 +60,11 @@ without traversing active workspaces or blob data.
 
 Compute workers stage chunks under shared storage, persist per-file offsets, stream files while hashing, create missing content-addressed blobs, and apply completed files to the active workspace. Only the control plane commits workspace and snapshot metadata. New workspaces remain invisible until commit; existing workspaces hold a mutation lease from session creation through commit or cancellation.
 Before treating a prepared file as absent, the control plane retries shared-filesystem visibility with exponential delays beginning at 100 ms and a two-second total bound. A file that is still temporarily invisible leaves the session in `processing`, so status reconciliation or garbage collection can retry finalization instead of failing the upload or releasing its append lease. The workspace metadata/snapshot update and terminal upload-session update commit in one database transaction; filesystem blobs written before that transaction are safe for deferred unreferenced-blob collection after rollback.
+Successful commit responses do not synchronously delete staging directories.
+They publish the durable `committed` state immediately with cleanup pending,
+and the bounded garbage collector performs the potentially slow
+shared-filesystem or remote-worker purge afterward. Cancellation, expiry, and
+failed-upload cleanup retain their existing eager best-effort behavior.
 Upload lease changes update only the workspace lock and active upload ID; they
 do not rewrite chat-session references. Cancelling an append upload or repairing
 a stale lease therefore leaves the workspace's chats intact.

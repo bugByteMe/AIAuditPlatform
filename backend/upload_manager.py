@@ -311,7 +311,6 @@ class UploadManager:
             self.worker_registry.release(session.get("workerId"), session["id"])
           except Exception:
             pass
-        self._cleanup_staging(session)
         if self.audit_callback and not session.get("auditRecorded"):
           event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
           try:
