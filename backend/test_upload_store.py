@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import hashlib
 import io
 import json
+import sqlite3
 import tempfile
 import time
 import unittest
@@ -418,6 +420,111 @@ class UploadManagerTest(unittest.TestCase):
     result = self.manager.status(upload["id"], USER)
     self.assertEqual(result["status"], "committed")
     self.assertTrue(self.store.blob_path(digest).is_file())
+
+  def test_temporary_missing_prepared_file_remains_processing_and_retries(self):
+    workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("same.txt", b"old")])
+    upload = self.manager.create(USER, {
+      "mode": "append", "workspaceId": workspace["id"], "files": [{"path": "same.txt", "size": 3}],
+    })
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"new"), 3)
+    self.manager.complete(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    while self.manager.local_worker.load(upload["id"])["status"] != "ready" and time.monotonic() < deadline:
+      time.sleep(0.02)
+    original = self.store.commit_prepared_upload
+    attempts = 0
+
+    def flaky_commit(*args, **kwargs):
+      nonlocal attempts
+      attempts += 1
+      if attempts == 1:
+        raise StorageError("upload_incomplete", "prepared upload file is missing: same.txt")
+      return original(*args, **kwargs)
+
+    with patch.object(self.store, "commit_prepared_upload", side_effect=flaky_commit):
+      first = self.manager.status(upload["id"], USER)
+      self.assertEqual(first["status"], "processing")
+      self.assertTrue(self.store.get_workspace(workspace["id"], USER)["locked"])
+      second = self.manager.status(upload["id"], USER)
+    self.assertEqual(second["status"], "committed")
+    self.assertEqual((self.store.workspace_path(workspace["id"]) / "same.txt").read_bytes(), b"new")
+
+  def test_prepared_file_visibility_retries_before_reporting_missing(self):
+    workspace_id = "ws_visibility"
+    workspace_root = self.store.workspace_path(workspace_id)
+    workspace_root.mkdir(parents=True)
+    hidden = workspace_root / ".same.txt.pending"
+    hidden.write_bytes(b"new")
+    digest = hashlib.sha256(b"new").hexdigest()
+
+    def publish(_delay):
+      hidden.replace(workspace_root / "same.txt")
+
+    with patch("workspace_snapshots.time.sleep", side_effect=publish) as sleep:
+      self.store.ensure_prepared_blobs(workspace_id, {
+        "same.txt": {"blob": digest, "checksum": f"sha256:{digest}", "size": 3},
+      })
+    sleep.assert_called_once()
+    self.assertTrue(self.store.blob_path(digest).is_file())
+
+  def test_unexpected_commit_error_fails_upload_and_releases_append_lock(self):
+    workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
+    upload = self.manager.create(USER, {
+      "mode": "append", "workspaceId": workspace["id"], "files": [{"path": "a.txt", "size": 3}],
+    })
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"new"), 3)
+    self.manager.complete(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    while self.manager.local_worker.load(upload["id"])["status"] != "ready" and time.monotonic() < deadline:
+      time.sleep(0.02)
+    with patch.object(self.store, "commit_prepared_upload", side_effect=RuntimeError("database failed")):
+      result = self.manager.status(upload["id"], USER)
+    self.assertEqual(result["status"], "failed")
+    self.assertFalse(self.store.get_workspace(workspace["id"], USER)["locked"])
+
+  def test_gc_reconciles_stale_processing_upload(self):
+    upload = self.manager.create(USER, {"mode": "create", "files": [{"path": "a.txt", "size": 3}]})
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"abc"), 3)
+    self.manager.complete(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    while self.manager.local_worker.load(upload["id"])["status"] != "ready" and time.monotonic() < deadline:
+      time.sleep(0.02)
+    session = self.manager.database.get(upload["id"])
+    session.update({"status": "processing", "updatedAt": time.time() - 120})
+    self.manager.database.save(session)
+    result = self.manager.collect_garbage()
+    self.assertEqual(result["reconciled"], 1)
+    self.assertEqual(self.manager.database.get(upload["id"])["status"], "committed")
+
+  def test_atomic_upload_commit_rolls_back_workspace_when_upload_update_fails(self):
+    workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
+    upload = self.manager.create(USER, {
+      "mode": "append", "workspaceId": workspace["id"], "files": [{"path": "a.txt", "size": 3}],
+    })
+    self.manager.receive_chunk(upload["id"], USER, 0, 0, io.BytesIO(b"new"), 3)
+    self.manager.complete(upload["id"], USER)
+    deadline = time.monotonic() + 5
+    while self.manager.local_worker.load(upload["id"])["status"] != "ready" and time.monotonic() < deadline:
+      time.sleep(0.02)
+    session = self.manager.database.get(upload["id"])
+    session["status"] = "processing"
+    self.manager.database.save(session)
+    before = self.store.get_workspace(workspace["id"], USER)
+    with sqlite3.connect(self.store.root / "upload.sqlite3") as connection:
+      connection.execute("""
+        CREATE TRIGGER reject_upload_commit BEFORE UPDATE ON upload_sessions
+        WHEN NEW.status = 'committed' BEGIN SELECT RAISE(ABORT, 'reject commit'); END
+      """)
+    completed = {**session, "status": "committed", "reservationHeld": False,
+                 "updatedAt": time.time(), "terminalAt": time.time(), "cleanupPending": True}
+    with self.assertRaises(sqlite3.DatabaseError):
+      self.store.commit_prepared_upload(
+        USER, session, self.manager.local_worker.result(upload["id"]), upload_session=completed,
+      )
+    after = self.store.get_workspace(workspace["id"], USER)
+    self.assertEqual(after["latestSnapshotId"], before["latestSnapshotId"])
+    self.assertTrue(after["locked"])
+    self.assertEqual(self.manager.database.get(upload["id"])["status"], "processing")
 
   def test_manifest_limits_are_rejected_before_staging(self):
     manager = UploadManager(self.store, settings=settings(max_file_bytes=2))

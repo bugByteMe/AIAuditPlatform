@@ -94,9 +94,11 @@ The database stores product metadata, not large workspace file payloads:
 - Artifact records and checksums.
 - Audit logs.
 
-The control plane periodically expires abandoned upload sessions, releases
-their reservations and workspace mutation leases, retries staging cleanup, and
-deletes terminal coordination rows after the configured retention period.
+The control plane periodically expires abandoned upload transfers, reconciles
+stale processing/finalization sessions, releases terminal reservations and
+workspace mutation leases, retries staging cleanup, and deletes terminal
+coordination rows after the configured retention period. Final workspace and
+upload-session state are published atomically in the metadata database.
 Workers independently remove only stale upload staging directories; workspace
 and blob directories are outside that collector's scope.
 

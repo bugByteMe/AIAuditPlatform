@@ -276,19 +276,72 @@ class UploadManager:
     if worker_status["status"] == "failed":
       self._terminal(session, "failed", worker_status.get("error") or "upload processing failed")
     elif worker_status["status"] == "ready":
-      session["status"] = "committing"
-      self.database.save(session)
-      result = client.upload_result(session["id"]) if self.worker_registry else self.local_worker.result(session["id"])
-      session["workspace"] = self.store.commit_prepared_upload(user, session, result)
-      self._terminal(session, "committed")
-      if self.audit_callback and not session.get("auditRecorded"):
-        event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
-        self.audit_callback(session["owner"], event, session["workspaceId"])
-        session["auditRecorded"] = True
-        self.database.save(session)
+      session["status"] = "processing"
+      try:
+        result = client.upload_result(session["id"]) if self.worker_registry else self.local_worker.result(session["id"])
+        completed = {
+          **session, "status": "committed", "error": "", "updatedAt": time.time(),
+          "terminalAt": time.time(), "cleanupPending": True, "reservationHeld": False,
+        }
+        completed["workspace"] = self.store.commit_prepared_upload(
+          user, session, result, upload_session=completed,
+        )
+      except WorkerUnavailable as exc:
+        session.update({
+          "status": "processing", "updatedAt": time.time(),
+          "commitAttempts": int(session.get("commitAttempts") or 0) + 1,
+        })
+        self._release_failed_reservation(session, exc)
+      except StorageError as exc:
+        if exc.code == "upload_incomplete":
+          session.update({
+            "status": "processing", "error": str(exc), "updatedAt": time.time(),
+            "commitAttempts": int(session.get("commitAttempts") or 0) + 1,
+          })
+          self.database.save(session)
+        else:
+          self._fail_commit(session, exc)
+      except Exception as exc:
+        self._fail_commit(session, exc)
+      else:
+        session.clear()
+        session.update(completed)
+        if self.worker_registry:
+          try:
+            self.worker_registry.release(session.get("workerId"), session["id"])
+          except Exception:
+            pass
+        self._cleanup_staging(session)
+        if self.audit_callback and not session.get("auditRecorded"):
+          event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
+          try:
+            self.audit_callback(session["owner"], event, session["workspaceId"])
+            session["auditRecorded"] = True
+            self.database.save(session)
+          except Exception:
+            pass
     else:
       self.database.save(session)
     return self.public(session, worker_status)
+
+  def _fail_commit(self, session: dict, error: Exception) -> None:
+    """Finish a failed commit when possible, but never let failure cleanup escape."""
+    try:
+      self._terminal(session, "failed", str(error))
+    except Exception as cleanup_error:
+      session.update({
+        "status": "processing", "error": f"{error}; cleanup pending: {cleanup_error}",
+        "updatedAt": time.time(), "reservationHeld": False,
+      })
+      if self.worker_registry:
+        try:
+          self.worker_registry.release(session.get("workerId"), session["id"])
+        except Exception:
+          pass
+      try:
+        self.database.save(session)
+      except Exception:
+        pass
 
   def complete(self, upload_id: str, user: dict) -> dict:
     with self.session_locks.hold(upload_id):
@@ -377,6 +430,20 @@ class UploadManager:
         if current and current.get("status") == "uploading" and float(current.get("updatedAt") or 0) < cutoff:
           self._terminal(current, "expired", "upload session expired")
           expired += 1
+    reconciled = 0
+    for candidate in self.database.stale_active(cutoff, {"processing", "committing"}, batch):
+      with self.session_locks.hold(candidate["id"]), self.store.coordination_locks.hold(f"workspace:{candidate['workspaceId']}"):
+        current = self.database.get(candidate["id"])
+        if current and current.get("status") in {"processing", "committing"} and float(current.get("updatedAt") or 0) < cutoff:
+          user = {
+            "username": current["owner"], "role": "user", "group": current.get("group", ""),
+            "groupId": current.get("groupId", ""),
+          }
+          try:
+            self._reconcile_session(current, user)
+            reconciled += 1
+          except Exception:
+            continue
     for candidate in self.database.cleanup_pending(batch):
       with self.session_locks.hold(candidate["id"]):
         current = self.database.get(candidate["id"])
@@ -384,7 +451,7 @@ class UploadManager:
           self._cleanup_staging(current)
     retention = int(getattr(self.settings, "upload_terminal_retention_seconds", 86400))
     deleted = self.database.delete_terminal_before(now - retention, batch)
-    return {"expired": expired, "deleted": len(deleted)}
+    return {"expired": expired, "reconciled": reconciled, "deleted": len(deleted)}
 
   def public(self, session: dict, worker_status: dict) -> dict:
     status = session.get("status") or worker_status.get("status") or "uploading"

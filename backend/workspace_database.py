@@ -343,10 +343,15 @@ class WorkspaceDatabase:
       snapshot_id,
     )
 
-  def save_workspace_state(self, workspace: dict, snapshots: dict, artifacts: list[dict]) -> set[str]:
+  def save_workspace_state(
+    self, workspace: dict, snapshots: dict, artifacts: list[dict], upload_session: dict | None = None,
+    access_grants: set[str] | None = None,
+  ) -> set[str]:
     """Persist one workspace while retaining the SQLite test adapter semantics."""
     workspace_id = str(workspace["id"])
     with closing(self.connect()) as connection, connection:
+      if upload_session is not None:
+        connection.execute("ATTACH DATABASE ? AS upload_coordination", (str(self.root / "upload.sqlite3"),))
       connection.execute("BEGIN IMMEDIATE")
       existing = connection.execute(
         "SELECT latest_snapshot_id FROM workspaces WHERE id = ?", (workspace_id,)
@@ -466,6 +471,30 @@ class WorkspaceDatabase:
       new_references = {row[0] for row in connection.execute(
         "SELECT DISTINCT blob FROM workspace_file_versions WHERE workspace_id = ?", (workspace_id,)
       )}
+      if access_grants is not None:
+        connection.execute("DELETE FROM workspace_access_grants WHERE workspace_id = ?", (workspace_id,))
+        connection.executemany(
+          "INSERT INTO workspace_access_grants(workspace_id, account_id) VALUES (?, ?)",
+          [(workspace_id, account_id) for account_id in sorted(access_grants)],
+        )
+      if upload_session is not None:
+        updated = connection.execute(
+          """
+          UPDATE upload_coordination.upload_sessions
+          SET status=?, worker_id=?, reserved_bytes=?, reservation_held=?, updated_at=?, terminal_at=?,
+              cleanup_pending=?, payload=?
+          WHERE id=? AND workspace_id=? AND status IN ('processing', 'committing', 'committed')
+          """,
+          (
+            str(upload_session.get("status") or "committed"), upload_session.get("workerId"),
+            int(upload_session.get("reservedBytes") or 0), int(bool(upload_session.get("reservationHeld"))),
+            float(upload_session.get("updatedAt") or 0), upload_session.get("terminalAt"),
+            int(bool(upload_session.get("cleanupPending"))), json.dumps(upload_session, ensure_ascii=False),
+            str(upload_session["id"]), workspace_id,
+          ),
+        )
+        if updated.rowcount != 1:
+          raise RuntimeError("upload_session_changed")
       return old_references - new_references
 
   def access_grant_ids(self, workspace_id: str) -> set[str]:

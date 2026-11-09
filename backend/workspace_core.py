@@ -209,7 +209,10 @@ class WorkspaceCoreMixin:
       raise StorageError("not_found", "workspace not found")
     return metadata
 
-  def save_workspace_metadata(self, workspace_id: str, metadata: dict) -> None:
+  def save_workspace_metadata(
+    self, workspace_id: str, metadata: dict, upload_session: dict | None = None,
+    access_grants: set[str] | None = None,
+  ) -> None:
     workspace = metadata.get("workspaces", {}).get(workspace_id)
     if workspace is None:
       raise StorageError("not_found", "workspace not found")
@@ -222,6 +225,8 @@ class WorkspaceCoreMixin:
           if snapshot.get("workspaceId") == workspace_id
         },
         list(metadata.get("artifacts", {}).get(workspace_id, [])),
+        upload_session,
+        access_grants,
       )
     except RuntimeError as exc:
       if str(exc) == "workspace_changed":

@@ -363,7 +363,9 @@ class WorkspaceLifecycleMixin:
     self.defer_blob_cleanup(candidates)
     return snapshot
 
-  def commit_prepared_upload(self, user: dict, session: dict, result: dict) -> dict:
+  def commit_prepared_upload(
+    self, user: dict, session: dict, result: dict, *, upload_session: dict | None = None,
+  ) -> dict:
     """Commit a worker-prepared manifest while keeping metadata control-plane-owned."""
     workspace_id = str(session["workspaceId"])
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):
@@ -406,7 +408,14 @@ class WorkspaceLifecycleMixin:
       else:
         workspace = self.get_workspace_from_metadata(metadata, workspace_id, user)
         if workspace.get("latestSnapshotId") == snapshot_id:
-          return self.public_workspace(workspace, metadata)
+          public = self.public_workspace(workspace, metadata)
+          access_grants = set(session.get("userIds") or []) if session["mode"] == "create" else None
+          if access_grants is not None:
+            public["accessCount"] = len(access_grants)
+          if upload_session is not None:
+            upload_session["workspace"] = public
+            self.save_workspace_metadata(workspace_id, metadata, upload_session, access_grants)
+          return public
         if workspace.get("activeUploadId") != session["id"]:
           raise StorageError("workspace_locked", "workspace upload lease is not owned by this upload")
         if workspace.get("latestSnapshotId") != session.get("parentSnapshotId"):
@@ -435,10 +444,14 @@ class WorkspaceLifecycleMixin:
         metadata["artifacts"][workspace_id] = []
       else:
         metadata["artifacts"][workspace_id] = self.diff_snapshots(parent, snapshot)
-      self.save_workspace_metadata(workspace_id, metadata)
-      if session["mode"] == "create":
-        self.database.replace_access_grants(workspace_id, set(session.get("userIds") or []))
-      return self.public_workspace(workspace, metadata)
+      public = self.public_workspace(workspace, metadata)
+      access_grants = set(session.get("userIds") or []) if session["mode"] == "create" else None
+      if access_grants is not None:
+        public["accessCount"] = len(access_grants)
+      if upload_session is not None:
+        upload_session["workspace"] = public
+      self.save_workspace_metadata(workspace_id, metadata, upload_session, access_grants)
+      return public
 
   def fork_workspace(self, workspace_id: str, user: dict, name: str | None = None) -> dict:
     with self.coordination_locks.hold(f"workspace:{workspace_id}"):

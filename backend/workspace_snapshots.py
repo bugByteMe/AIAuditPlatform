@@ -121,6 +121,11 @@ class WorkspaceSnapshotMixin:
     for relative, entry in files.items():
       digest = str(entry.get("blob") or "")
       source = ensure_under_root(workspace_path, workspace_path / normalize_relative_path(relative))
+      deadline = time.monotonic() + 2.0
+      delay = 0.1
+      while not source.is_file() and time.monotonic() < deadline:
+        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+        delay = min(delay * 2, 2.0)
       if not source.is_file():
         raise StorageError("upload_incomplete", f"prepared upload file is missing: {relative}")
       actual = stream_sha256(source)

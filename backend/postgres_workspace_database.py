@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import BigInteger, Boolean, CheckConstraint, Column, ForeignKey, Index, Integer, MetaData, String, Table, Text, and_, create_engine, delete, func, insert, or_, select, text, update
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 
@@ -253,7 +255,10 @@ class PostgresWorkspaceDatabase:
     if rows:
       connection.execute(insert(self.workspace_sessions), rows)
 
-  def save_workspace_state(self, workspace: dict, snapshots: dict, artifacts: list[dict]) -> set[str]:
+  def save_workspace_state(
+    self, workspace: dict, snapshots: dict, artifacts: list[dict], upload_session: dict | None = None,
+    access_grants: set[str] | None = None,
+  ) -> set[str]:
     """Persist one workspace without reading or rewriting unrelated rows."""
     workspace_id = str(workspace["id"])
     with self.engine.begin() as connection:
@@ -327,6 +332,36 @@ class PostgresWorkspaceDatabase:
       new_references = set(connection.execute(
         select(self.file_version_rows.c.blob).where(self.file_version_rows.c.workspace_id == workspace_id).distinct()
       ).scalars())
+      if access_grants is not None:
+        connection.execute(delete(self.workspace_access_grants).where(
+          self.workspace_access_grants.c.workspace_id == workspace_id,
+        ))
+        if access_grants:
+          connection.execute(insert(self.workspace_access_grants), [
+            {"workspace_id": workspace_id, "account_id": account_id}
+            for account_id in sorted(access_grants)
+          ])
+      if upload_session is not None:
+        updated = connection.execute(text("""
+          UPDATE upload_sessions
+          SET status=:status, worker_id=:worker_id, reserved_bytes=:reserved_bytes,
+              reservation_held=:reservation_held, updated_at=:updated_at, terminal_at=:terminal_at,
+              cleanup_pending=:cleanup_pending, payload=CAST(:payload AS JSON)
+          WHERE id=:id AND workspace_id=:workspace_id
+            AND status IN ('processing', 'committing', 'committed')
+        """), {
+          "status": str(upload_session.get("status") or "committed"),
+          "worker_id": upload_session.get("workerId"),
+          "reserved_bytes": int(upload_session.get("reservedBytes") or 0),
+          "reservation_held": bool(upload_session.get("reservationHeld")),
+          "updated_at": float(upload_session.get("updatedAt") or 0),
+          "terminal_at": upload_session.get("terminalAt"),
+          "cleanup_pending": bool(upload_session.get("cleanupPending")),
+          "payload": json.dumps(upload_session, ensure_ascii=False),
+          "id": str(upload_session["id"]), "workspace_id": workspace_id,
+        })
+        if updated.rowcount != 1:
+          raise RuntimeError("upload_session_changed")
       return old_references - new_references
 
   def delete_workspace_state(self, workspace_id: str) -> tuple[dict | None, set[str]]:
