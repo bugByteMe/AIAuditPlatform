@@ -99,7 +99,7 @@
             <strong>AI Audit</strong>
             <span data-i18n="brand.subtitle">审计智能体平台</span>
           </div>
-          <button class="collapse-btn" id="collapse-sidebar" aria-label="Collapse sidebar" title="Collapse sidebar"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg></button>
+          <button class="collapse-btn" id="collapse-sidebar" aria-label="Collapse sidebar" title="Collapse sidebar" aria-expanded="true"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-left"></use></svg></button>
         </div>
 
         <nav class="nav-list" aria-label="Sections">
@@ -334,7 +334,12 @@
                   <h2 data-i18n="files.title">文件</h2>
                   <p data-i18n="files.help">当前工作区</p>
                 </div>
-                <button class="rail-toggle" data-toggle-panel="files" data-i18n-title="files.collapse" title="收起文件"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></button>
+                <div class="toolbar-actions file-panel-actions">
+                  <button type="button" class="btn icon-btn ghost file-tree-refresh-button" id="refresh-chat-files" data-i18n-title="files.refresh" data-i18n-aria-label="files.refresh" title="刷新文件列表" aria-label="刷新文件列表">
+                    <svg class="ui-icon" aria-hidden="true"><use href="#icon-refresh"></use></svg>
+                  </button>
+                  <button class="rail-toggle" data-toggle-panel="files" data-i18n-title="files.collapse" title="收起文件"><svg class="ui-icon" aria-hidden="true"><use href="#icon-chevron-right"></use></svg></button>
+                </div>
               </div>
               <div class="file-tree-drop-wrap">
                 <div class="file-tree" id="file-tree"></div>

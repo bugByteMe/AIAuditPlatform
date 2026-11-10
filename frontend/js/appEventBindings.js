@@ -39,6 +39,7 @@ export function createEventBindings(context) {
   const refreshWorkspaceById = (...args) => context.refreshWorkspaceById(...args);
   const startNativeDownload = (...args) => context.startNativeDownload(...args);
   const routeToView = (...args) => context.routeToView(...args);
+  const setSidebarCollapsed = (...args) => context.setSidebarCollapsed(...args);
   const showAuthenticated = (...args) => context.showAuthenticated(...args);
   const showLogin = (...args) => context.showLogin(...args);
   const loadAccountControlData = (...args) => context.loadAccountControlData(...args);
@@ -129,7 +130,7 @@ export function createEventBindings(context) {
       renderPanelState();
     });
 
-    document.addEventListener("click", (event) => {
+    document.addEventListener("click", async (event) => {
       const topbarMenuButton = event.target.closest(".topbar-more .action-menu-items .btn");
       if (topbarMenuButton) topbarMenuButton.closest(".topbar-more").removeAttribute("open");
       const workspaceLink = event.target.closest("#event-stream a[data-workspace-file]");
@@ -326,7 +327,25 @@ export function createEventBindings(context) {
       }
 
       if (event.target.closest("#collapse-sidebar")) {
-        document.querySelector(".app-shell").classList.toggle("sidebar-collapsed");
+        setSidebarCollapsed(!document.querySelector(".app-shell").classList.contains("sidebar-collapsed"));
+        return;
+      }
+
+      const refreshChatFiles = event.target.closest("#refresh-chat-files");
+      if (refreshChatFiles) {
+        const workspaceId = safeCurrentWorkspace()?.id;
+        if (!workspaceId || refreshChatFiles.disabled) return;
+        refreshChatFiles.disabled = true;
+        refreshChatFiles.classList.add("is-loading");
+        refreshChatFiles.setAttribute("aria-busy", "true");
+        try {
+          const refreshed = await refreshWorkspaceById(workspaceId);
+          if (refreshed) showToast(t("toast.fileTreeRefreshed"));
+        } finally {
+          refreshChatFiles.disabled = false;
+          refreshChatFiles.classList.remove("is-loading");
+          refreshChatFiles.removeAttribute("aria-busy");
+        }
         return;
       }
 

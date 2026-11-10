@@ -72,7 +72,7 @@
   }
 
   .chat-layout {
-    grid-template-columns: clamp(220px, var(--sessions-width, 250px), 260px) minmax(0, 1fr);
+    grid-template-columns: clamp(220px, var(--sessions-width, 250px), 260px) minmax(0, 1fr) 0px;
   }
 
   .chat-layout:not(.files-collapsed) {
@@ -83,7 +83,7 @@
   }
 
   .chat-layout.sessions-collapsed:not(.files-collapsed) {
-    grid-template-columns: minmax(0, 1fr) clamp(240px, var(--files-width, 280px), 300px);
+    grid-template-columns: 0px minmax(0, 1fr) clamp(240px, var(--files-width, 280px), 300px);
   }
 
   .dashboard-grid,
@@ -220,6 +220,14 @@
     border-left: 1px solid var(--line);
   }
 
+  .sessions-collapsed .sessions-panel {
+    transform: translateX(-100%);
+  }
+
+  .files-collapsed .file-panel {
+    transform: translateX(100%);
+  }
+
   .chat-panel {
     grid-area: chat;
     min-height: 0;
@@ -256,6 +264,21 @@
   .dashboard-grid,
   .recharge-layout {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell,
+  .sidebar,
+  .brand > div:not(.brand-mark),
+  .nav-item span:not(.icon),
+  .session-card,
+  .chat-layout,
+  .sessions-panel,
+  .file-panel,
+  .session-rail,
+  .file-rail {
+    transition: none !important;
   }
 }
 

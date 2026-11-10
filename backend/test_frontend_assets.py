@@ -159,6 +159,21 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertNotIn("resetFileTreeState", replace_workspace)
         self.assertIn("state.selectedArtifacts = new Set();", reset_tree)
 
+    def test_chat_panel_transitions_auto_sidebar_collapse_and_file_refresh_are_wired(self) -> None:
+        app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
+        bindings = (FRONTEND_ROOT / "js" / "appEventBindings.js").read_text(encoding="utf-8")
+        html = (FRONTEND_ROOT / "index.html").read_text(encoding="utf-8")
+        shell_css = (FRONTEND_ROOT / "css" / "shell.css").read_text(encoding="utf-8")
+        chat_css = (FRONTEND_ROOT / "css" / "chat.css").read_text(encoding="utf-8")
+
+        self.assertIn('id="refresh-chat-files"', html)
+        self.assertIn('setSidebarCollapsed(true)', app_source)
+        self.assertIn('state.sidebarCollapsedBeforeChat', app_source)
+        self.assertIn('await refreshWorkspaceById(workspaceId)', bindings)
+        self.assertIn('transition: grid-template-columns 220ms ease', shell_css)
+        self.assertIn('transition: grid-template-columns 220ms ease', chat_css)
+        self.assertNotIn("display: none;\n}\n\n.sessions-collapsed .session-rail", chat_css)
+
     def test_concurrent_run_confirmation_and_scroll_preservation_are_wired(self) -> None:
         app_source = (FRONTEND_ROOT / "app.js").read_text(encoding="utf-8")
         api_source = (FRONTEND_ROOT / "js" / "api.js").read_text(encoding="utf-8")
@@ -291,7 +306,7 @@ class FrontendAssetTests(unittest.TestCase):
         self.assertIn("isChatFocusMode: false", state_source)
         self.assertIn('classList.toggle("chat-focus-mode"', render_source)
         self.assertIn("setChatFocusMode(!state.isChatFocusMode)", bindings)
-        self.assertIn('grid-template-areas: "chat"', chat_css)
+        self.assertIn("grid-template-columns: 0px minmax(0, 1fr) 0px", chat_css)
         self.assertIn("position: absolute", chat_css)
         self.assertIn("width: min(100%, 82ch)", chat_css)
         self.assertIn("body.chat-focus-mode .sidebar", shell_css)

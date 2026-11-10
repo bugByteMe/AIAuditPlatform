@@ -121,6 +121,11 @@ body { line-height: 1.55; }
 .session-header-actions #new-chat-button,
 .session-header-actions .session-collapse-button { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
 .session-header-actions .ui-icon { width: 17px; height: 17px; }
+.file-panel-actions { flex: none; flex-wrap: nowrap; gap: 6px; }
+.file-panel-actions .btn,
+.file-panel-actions .rail-toggle { width: 36px; min-width: 36px; height: 36px; min-height: 36px; }
+.file-tree-refresh-button.is-loading .ui-icon { animation: file-tree-refresh-spin 700ms linear infinite; }
+@keyframes file-tree-refresh-spin { to { transform: rotate(360deg); } }
 .session-item { padding: 14px 12px; }
 .session-item.active { box-shadow: inset 3px 0 var(--primary); }
 .session-main strong { font-size: 14px; }

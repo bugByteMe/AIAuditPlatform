@@ -3,6 +3,7 @@
   display: grid;
   grid-template-columns: 232px minmax(0, 1fr);
   background: var(--bg);
+  transition: grid-template-columns 220ms ease;
 }
 
 .app-shell.sidebar-collapsed {
@@ -20,6 +21,8 @@
   padding: 18px;
   background: #17232d;
   color: #f7fafc;
+  overflow: hidden;
+  transition: padding 220ms ease, gap 220ms ease;
 }
 
 .brand {
@@ -38,6 +41,19 @@
   display: block;
   color: #b7c3cf;
   font-size: 13px;
+}
+
+.brand > div:not(.brand-mark),
+.nav-item span:not(.icon),
+.session-card {
+  opacity: 1;
+  visibility: visible;
+  transition: opacity 140ms ease, visibility 0s linear;
+}
+
+.brand > div:not(.brand-mark),
+.nav-item span:not(.icon) {
+  white-space: nowrap;
 }
 
 .brand-mark {
@@ -133,7 +149,10 @@
 .app-shell.sidebar-collapsed .brand > div:not(.brand-mark),
 .app-shell.sidebar-collapsed .nav-item span:not(.icon),
 .app-shell.sidebar-collapsed .session-card {
-  display: none;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition-delay: 0s, 140ms;
 }
 
 .app-shell.sidebar-collapsed .collapse-btn {

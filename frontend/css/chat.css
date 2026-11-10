@@ -20,8 +20,8 @@
 .chat-layout {
   position: relative;
   display: grid;
-  grid-template-columns: var(--sessions-width, 280px) minmax(0, 1fr);
-  grid-template-areas: "sessions chat";
+  grid-template-columns: var(--sessions-width, 280px) minmax(0, 1fr) 0px;
+  grid-template-areas: "sessions chat files";
   gap: 0;
   height: 100%;
   min-height: 0;
@@ -29,6 +29,7 @@
   border-top: 1px solid var(--line);
   border-bottom: 1px solid var(--line);
   background: var(--surface);
+  transition: grid-template-columns 220ms ease;
 }
 
 .chat-view-active .chat-layout {
@@ -42,13 +43,11 @@
 }
 
 .chat-layout.sessions-collapsed {
-  grid-template-columns: minmax(0, 1fr);
-  grid-template-areas: "chat";
+  grid-template-columns: 0px minmax(0, 1fr) 0px;
 }
 
 .chat-layout.sessions-collapsed:not(.files-collapsed) {
-  grid-template-columns: minmax(0, 1fr) var(--files-width, 300px);
-  grid-template-areas: "chat files";
+  grid-template-columns: 0px minmax(0, 1fr) var(--files-width, 300px);
 }
 
 .sessions-panel {
@@ -80,6 +79,10 @@
   flex-direction: column;
   background: #fbfcfd;
   overflow: hidden;
+  opacity: 1;
+  visibility: visible;
+  transform: translateX(0);
+  transition: opacity 160ms ease, transform 220ms ease, visibility 0s linear;
 }
 
 .resize-handle {
@@ -114,15 +117,36 @@
 }
 
 .sessions-collapsed .sessions-panel,
-.files-collapsed .file-panel,
+.files-collapsed .file-panel {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition-delay: 0s, 0s, 220ms;
+}
+
+.sessions-collapsed .sessions-panel {
+  transform: translateX(-12px);
+}
+
+.files-collapsed .file-panel {
+  transform: translateX(12px);
+}
+
 .session-rail,
 .file-rail {
-  display: none;
+  display: grid;
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+  transition: opacity 150ms ease, visibility 0s linear 150ms;
 }
 
 .sessions-collapsed .session-rail,
 .files-collapsed .file-rail {
-  display: grid;
+  opacity: 1;
+  visibility: visible;
+  pointer-events: auto;
+  transition-delay: 70ms, 0s;
 }
 
 .panel-rail {

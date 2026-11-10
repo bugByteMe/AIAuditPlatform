@@ -25,6 +25,14 @@ The chat explorer and artifact selector enable lazy loading, keyboard navigation
 
 The chat explorer and workspace artifact tree additionally accept external file and directory drops on folder nodes or the workspace root. Composer drops either insert the application-specific path payload from an existing tree node or upload external content before inserting its workspace-relative top-level paths. Drop targets use the shared SVG icon sprite, radius tokens, resumable progress, and permission/lock state rather than introducing a separate uploader.
 
+Global navigation, chat-session, and chat-file panel collapse/expand changes use
+short width, opacity, and slide transitions, with transitions disabled under
+`prefers-reduced-motion`. Entering live chat automatically collapses global
+navigation and leaving restores its prior state; a user may still expand it
+while staying in chat. The chat file panel includes an explicit refresh action
+that reloads selected-workspace detail without resetting its independent folder
+fold state.
+
 ## Responsive layout
 
 Responsive behavior is based on the effective CSS viewport, including the

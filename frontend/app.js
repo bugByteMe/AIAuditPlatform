@@ -421,8 +421,23 @@ function viewFromLocation() {
   return VALID_VIEWS.has(view) ? view : "workspace";
 }
 
+function setSidebarCollapsed(collapsed) {
+  const shell = document.querySelector(".app-shell");
+  const button = document.querySelector("#collapse-sidebar");
+  shell?.classList.toggle("sidebar-collapsed", Boolean(collapsed));
+  button?.setAttribute("aria-expanded", String(!collapsed));
+}
+
 function switchView(view) {
   const nextView = VALID_VIEWS.has(view) ? view : "workspace";
+  const wasChat = document.body.classList.contains("chat-view-active");
+  if (nextView === "chat" && !wasChat) {
+    state.sidebarCollapsedBeforeChat = document.querySelector(".app-shell")?.classList.contains("sidebar-collapsed") || false;
+    setSidebarCollapsed(true);
+  } else if (nextView !== "chat" && wasChat) {
+    setSidebarCollapsed(Boolean(state.sidebarCollapsedBeforeChat));
+    state.sidebarCollapsedBeforeChat = null;
+  }
   if (nextView !== "chat" && state.isChatFocusMode) {
     if (state.focusPanelState) {
       state.isSessionPanelCollapsed = state.focusPanelState.sessions;
@@ -1059,6 +1074,7 @@ const appContext = {
   commitNameEdit,
   setOperationProgress,
   clearOperationProgress,
+  setSidebarCollapsed,
   refreshWorkspaceById,
   loadWorkspaces,
   startNativeDownload,

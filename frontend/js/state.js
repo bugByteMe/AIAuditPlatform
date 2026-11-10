@@ -56,6 +56,7 @@ export const state = {
   narrowFilePanelOpen: false,
   isChatFocusMode: false,
   focusPanelState: null,
+  sidebarCollapsedBeforeChat: null,
   operationProgress: null,
   composerSettingsSessionId: "",
   composerCollaborationSessionKey: "",

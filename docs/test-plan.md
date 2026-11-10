@@ -177,6 +177,11 @@
 - Live event refreshes follow the bottom only when the reader is already there and preserve position while older history is being read.
 - Collapsed session and file panels reserve no grid width; their floating edge
   controls remain keyboard-accessible without creating horizontal overflow.
+- Global navigation and chat side panels animate collapse/expand on ordinary
+  motion settings and change immediately under reduced-motion preferences.
+- Entering live chat collapses global navigation, leaving restores its previous
+  state, and the chat file-tree refresh action reloads workspace detail without
+  clearing folder fold state.
 - Chat focus mode hides global chrome, collapses both side panels, fills the
   viewport, and restores the previous panel state on button or Escape exit.
 - Run state, token usage, diagnostics, and the focus toggle share a compact
