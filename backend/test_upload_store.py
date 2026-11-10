@@ -467,6 +467,20 @@ class UploadManagerTest(unittest.TestCase):
     sleep.assert_called_once()
     self.assertTrue(self.store.blob_path(digest).is_file())
 
+  def test_valid_prepared_blob_bypasses_a_stale_missing_workspace_path(self):
+    workspace_id = "ws_deleted_path_cache"
+    self.store.workspace_path(workspace_id).mkdir(parents=True)
+    digest = hashlib.sha256(b"replacement").hexdigest()
+    blob = self.store.blob_path(digest)
+    blob.parent.mkdir(parents=True, exist_ok=True)
+    blob.write_bytes(b"replacement")
+
+    with patch("workspace_snapshots.time.sleep") as sleep:
+      self.store.ensure_prepared_blobs(workspace_id, {
+        "same.txt": {"blob": digest, "checksum": f"sha256:{digest}", "size": 11},
+      })
+    sleep.assert_not_called()
+
   def test_unexpected_commit_error_fails_upload_and_releases_append_lock(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
     upload = self.manager.create(USER, {

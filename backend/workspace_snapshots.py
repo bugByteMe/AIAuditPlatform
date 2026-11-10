@@ -118,10 +118,18 @@ class WorkspaceSnapshotMixin:
 
   def ensure_prepared_blobs(self, workspace_id: str, files: dict) -> None:
     workspace_path = self.workspace_path(workspace_id)
-    prepared = {
-      relative: ensure_under_root(workspace_path, workspace_path / normalize_relative_path(relative))
-      for relative in files
-    }
+    prepared = {}
+    for relative, entry in files.items():
+      digest = str(entry.get("blob") or "")
+      if str(entry.get("checksum") or "") != f"sha256:{digest}":
+        raise StorageError("upload_checksum_mismatch", f"prepared upload checksum differs: {relative}")
+      blob = self.blob_path(digest)
+      if blob.is_file() and stream_sha256(blob) == digest:
+        continue
+      prepared[relative] = ensure_under_root(
+        workspace_path, workspace_path / normalize_relative_path(relative),
+      )
+
     deadline = time.monotonic() + 2.0
     delay = 0.1
     missing = [relative for relative, source in prepared.items() if not source.is_file()]
@@ -132,21 +140,20 @@ class WorkspaceSnapshotMixin:
     if missing:
       raise StorageError("upload_incomplete", f"prepared upload file is missing: {missing[0]}")
 
-    for relative, entry in files.items():
+    for relative, source in prepared.items():
+      entry = files[relative]
       digest = str(entry.get("blob") or "")
-      source = prepared[relative]
       actual = stream_sha256(source)
-      if actual != digest or str(entry.get("checksum") or "") != f"sha256:{digest}":
+      if actual != digest:
         raise StorageError("upload_checksum_mismatch", f"prepared upload checksum differs: {relative}")
       blob = self.blob_path(digest)
-      if not blob.exists():
-        blob.parent.mkdir(parents=True, exist_ok=True)
-        temporary = blob.with_suffix(".tmp")
-        shutil.copyfile(source, temporary)
-        try:
-          temporary.replace(blob)
-        except FileExistsError:
-          temporary.unlink(missing_ok=True)
+      blob.parent.mkdir(parents=True, exist_ok=True)
+      temporary = blob.with_suffix(".tmp")
+      shutil.copyfile(source, temporary)
+      try:
+        temporary.replace(blob)
+      except FileExistsError:
+        temporary.unlink(missing_ok=True)
 
   def scan_workspace(self, workspace_id: str) -> dict:
     return scan_workspace_manifest(self.workspace_path(workspace_id), self.blob_dir)

@@ -101,6 +101,7 @@
 - Concurrent chat runs keep uploads, replacement, deletion, and forking locked until the final active run exits.
 - Upload progress distinguishes transfer, processing, and commit, and does not show 100% before metadata commit.
 - Prepared files that appear late through shared-filesystem cache propagation are retried from 100 ms within one two-second manifest-wide bound; a still-missing file remains processing and succeeds on later reconciliation when it becomes visible.
+- Re-uploading a just-deleted pathname commits from the worker-verified content-addressed blob without waiting for the active path's NFS negative-entry cache to expire; missing blobs still recover from a visible prepared file.
 - Upload finalization atomically publishes workspace/snapshot metadata and the committed upload row. A forced coordination-row failure rolls back the workspace update and preserves the append lease.
 - Garbage collection reconciles stale processing and legacy committing sessions, and one unavailable worker does not prevent later cleanup candidates from being processed.
 - A committed status response returns before staging deletion and leaves cleanup pending; a later collector pass purges staging and clears that flag, while expiry retains eager cleanup.
