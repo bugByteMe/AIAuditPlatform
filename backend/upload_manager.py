@@ -311,14 +311,6 @@ class UploadManager:
             self.worker_registry.release(session.get("workerId"), session["id"])
           except Exception:
             pass
-        if self.audit_callback and not session.get("auditRecorded"):
-          event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
-          try:
-            self.audit_callback(session["owner"], event, session["workspaceId"])
-            session["auditRecorded"] = True
-            self.database.save(session)
-          except Exception:
-            pass
     else:
       self.database.save(session)
     return self.public(session, worker_status)
@@ -407,6 +399,17 @@ class UploadManager:
       session["cleanupError"] = str(exc)
     self.database.save(session)
 
+  def _record_commit_audit(self, session: dict) -> None:
+    if not self.audit_callback or session.get("status") != "committed" or session.get("auditRecorded"):
+      return
+    event = "workspace created" if session["mode"] == "create" else "workspace files uploaded"
+    try:
+      self.audit_callback(session["owner"], event, session["workspaceId"])
+      session["auditRecorded"] = True
+      self.database.save(session)
+    except Exception:
+      pass
+
   def _gc_loop(self) -> None:
     configured_interval = int(getattr(self.settings, "upload_gc_interval_seconds", 300))
     idle_timeout = int(getattr(self.settings, "upload_session_idle_timeout_seconds", configured_interval))
@@ -448,6 +451,7 @@ class UploadManager:
         current = self.database.get(candidate["id"])
         if current and current.get("cleanupPending"):
           self._cleanup_staging(current)
+          self._record_commit_audit(current)
     retention = int(getattr(self.settings, "upload_terminal_retention_seconds", 86400))
     deleted = self.database.delete_terminal_before(now - retention, batch)
     return {"expired": expired, "reconciled": reconciled, "deleted": len(deleted)}

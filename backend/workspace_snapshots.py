@@ -118,16 +118,23 @@ class WorkspaceSnapshotMixin:
 
   def ensure_prepared_blobs(self, workspace_id: str, files: dict) -> None:
     workspace_path = self.workspace_path(workspace_id)
+    prepared = {
+      relative: ensure_under_root(workspace_path, workspace_path / normalize_relative_path(relative))
+      for relative in files
+    }
+    deadline = time.monotonic() + 2.0
+    delay = 0.1
+    missing = [relative for relative, source in prepared.items() if not source.is_file()]
+    while missing and time.monotonic() < deadline:
+      time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
+      delay = min(delay * 2, 2.0)
+      missing = [relative for relative in missing if not prepared[relative].is_file()]
+    if missing:
+      raise StorageError("upload_incomplete", f"prepared upload file is missing: {missing[0]}")
+
     for relative, entry in files.items():
       digest = str(entry.get("blob") or "")
-      source = ensure_under_root(workspace_path, workspace_path / normalize_relative_path(relative))
-      deadline = time.monotonic() + 2.0
-      delay = 0.1
-      while not source.is_file() and time.monotonic() < deadline:
-        time.sleep(min(delay, max(0.0, deadline - time.monotonic())))
-        delay = min(delay * 2, 2.0)
-      if not source.is_file():
-        raise StorageError("upload_incomplete", f"prepared upload file is missing: {relative}")
+      source = prepared[relative]
       actual = stream_sha256(source)
       if actual != digest or str(entry.get("checksum") or "") != f"sha256:{digest}":
         raise StorageError("upload_checksum_mismatch", f"prepared upload checksum differs: {relative}")

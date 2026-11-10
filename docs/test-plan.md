@@ -100,10 +100,11 @@
 - Existing workspaces remain mutation-locked until commit or cancellation; new workspaces are not visible before commit.
 - Concurrent chat runs keep uploads, replacement, deletion, and forking locked until the final active run exits.
 - Upload progress distinguishes transfer, processing, and commit, and does not show 100% before metadata commit.
-- Prepared files that appear late through shared-filesystem cache propagation are retried from 100 ms up to a two-second bound; a still-missing file remains processing and succeeds on later reconciliation when it becomes visible.
+- Prepared files that appear late through shared-filesystem cache propagation are retried from 100 ms within one two-second manifest-wide bound; a still-missing file remains processing and succeeds on later reconciliation when it becomes visible.
 - Upload finalization atomically publishes workspace/snapshot metadata and the committed upload row. A forced coordination-row failure rolls back the workspace update and preserves the append lease.
 - Garbage collection reconciles stale processing and legacy committing sessions, and one unavailable worker does not prevent later cleanup candidates from being processed.
 - A committed status response returns before staging deletion and leaves cleanup pending; a later collector pass purges staging and clears that flag, while expiry retains eager cleanup.
+- Successful-upload audit recording runs with deferred cleanup and cannot hold the committed status response open.
 - Worker upload endpoints require cluster authentication and no worker credential or internal upload URL is returned to browsers.
 - Workspace fork creates an independent workspace from the selected snapshot.
 - Group-shared workspace is visible to group members.

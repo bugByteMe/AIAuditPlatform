@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
 from compute_nodes import WorkerUnavailable
 from upload_store import UploadManager, WorkerUploadStore
@@ -504,14 +504,35 @@ class UploadManagerTest(unittest.TestCase):
     while self.manager.local_worker.load(upload["id"])["status"] != "ready" and time.monotonic() < deadline:
       time.sleep(0.02)
 
+    audit = Mock()
+    self.manager.audit_callback = audit
     with patch.object(self.manager.local_worker, "purge", side_effect=AssertionError("cleanup blocked response")) as purge:
       result = self.manager.status(upload["id"], USER)
     self.assertEqual(result["status"], "committed")
     purge.assert_not_called()
+    audit.assert_not_called()
     self.assertTrue(self.manager.database.get(upload["id"])["cleanupPending"])
 
     self.assertEqual(self.manager.collect_garbage()["deleted"], 0)
     self.assertFalse(self.manager.database.get(upload["id"])["cleanupPending"])
+    audit.assert_called_once_with(USER["username"], "workspace created", upload["workspaceId"])
+
+  def test_prepared_visibility_deadline_is_shared_by_the_manifest(self):
+    workspace_id = "ws_visibility_batch"
+    workspace_root = self.store.workspace_path(workspace_id)
+    workspace_root.mkdir(parents=True)
+    files = {}
+    for name, content in [("a.txt", b"a"), ("b.txt", b"b")]:
+      digest = hashlib.sha256(content).hexdigest()
+      files[name] = {"blob": digest, "checksum": f"sha256:{digest}", "size": 1}
+
+    clock = iter([0.0, 0.0, 0.0, 2.0])
+    with patch("workspace_snapshots.time.monotonic", side_effect=lambda: next(clock)), \
+         patch("workspace_snapshots.time.sleep") as sleep:
+      with self.assertRaises(StorageError) as missing:
+        self.store.ensure_prepared_blobs(workspace_id, files)
+    self.assertEqual(missing.exception.code, "upload_incomplete")
+    sleep.assert_called_once_with(0.1)
 
   def test_atomic_upload_commit_rolls_back_workspace_when_upload_update_fails(self):
     workspace = self.store.create_workspace(USER, "Existing", False, [UploadedFile("a.txt", b"old")])
