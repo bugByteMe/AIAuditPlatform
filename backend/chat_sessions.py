@@ -296,7 +296,7 @@ class ChatSessionMixin:
         "groupId": group_id,
         "status": "queued",
         "prompt": prompt,
-        "codexPreamble": "Place all temporary scripts, artifacts under /workspace/workdir" if first_user_message else "",
+        "codexPreamble": "Place all temporary scripts, artifacts under /workspace/workdir. Output files displayed/to be downloaded for users, should be placed at normal locations inside /workspace." if first_user_message else "",
         "model": str(payload.get("model") or inherited_model),
         "reasoning": str(payload.get("reasoning") or inherited_reasoning),
         "worker": "queued",
