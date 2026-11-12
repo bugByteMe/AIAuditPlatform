@@ -4,6 +4,28 @@ from unittest.mock import Mock
 
 
 class CodexRunnerTest(ChatRuntimeTestBase):
+  def test_container_ownership_does_not_follow_workspace_symlinks(self) -> None:
+    runner = DockerCodexRunner()
+    root = Path(self.tempdir.name) / "workspace"
+    target = Path(self.tempdir.name) / "outside.txt"
+    root.mkdir()
+    target.write_text("outside", encoding="utf-8")
+    target.chmod(0o644)
+    valid_link = root / "valid-link"
+    dangling_link = root / "dangling-link"
+    valid_link.symlink_to(target)
+    dangling_link.symlink_to("missing-target")
+
+    with patch("codex_runner.os.chown") as chown:
+      runner.make_tree_writable_for_container(root)
+
+    calls = {Path(call.args[0]): call for call in chown.call_args_list}
+    self.assertEqual(set(calls), {root, valid_link, dangling_link})
+    self.assertTrue(all(call.kwargs == {"follow_symlinks": False} for call in calls.values()))
+    self.assertEqual(target.stat().st_mode & 0o777, 0o644)
+    self.assertTrue(valid_link.is_symlink())
+    self.assertTrue(dangling_link.is_symlink())
+
   def test_first_message_preamble_precedes_user_request(self) -> None:
     runner = DockerCodexRunner()
     preamble = "Place all temporary scripts, artifacts under /workspace/workdir"
