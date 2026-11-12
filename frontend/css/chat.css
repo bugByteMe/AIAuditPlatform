@@ -872,9 +872,15 @@ select:focus {
   border-color: var(--primary);
 }
 
+.composer-pickers {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-top: 8px;
+}
+
 .collaborating-workspace-picker {
   position: relative;
-  margin-top: 8px;
   font-size: 13px;
 }
 
@@ -889,7 +895,7 @@ select:focus {
   z-index: 8;
   bottom: calc(100% + 6px);
   left: 0;
-  width: min(420px, 100%);
+  width: min(420px, calc(100vw - 48px));
   max-height: 300px;
   padding: 10px;
   overflow: auto;
@@ -919,6 +925,25 @@ select:focus {
 .collaborating-workspace-option span:last-child,
 .collaborating-workspace-message {
   color: var(--muted);
+}
+
+.capability-option {
+  align-items: flex-start;
+  padding: 5px 0;
+}
+
+.capability-option > input {
+  margin-top: 3px;
+}
+
+.capability-option-copy {
+  display: grid;
+  gap: 2px;
+}
+
+.capability-option-copy span {
+  color: var(--muted);
+  line-height: 1.35;
 }
 
 .composer-actions {

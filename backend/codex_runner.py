@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import os
 import queue
 import shutil
@@ -28,6 +29,7 @@ class DockerCodexRunner(CodexRunner):
     self.codex_root = SETTINGS.codex_root
     self.codex_home_root = SETTINGS.codex_home_root
     self.skill_path = SETTINGS.skill_path
+    self.mcp_server_config_path = SETTINGS.mcp_server_config_path
     self.container_uid = SETTINGS.container_uid
     self.container_gid = SETTINGS.container_gid
     self.timeout_seconds = SETTINGS.run_timeout_seconds
@@ -271,7 +273,7 @@ class DockerCodexRunner(CodexRunner):
     codex_home.mkdir(parents=True, exist_ok=True)
     shutil.rmtree(codex_home / "tmp", ignore_errors=True)
     os.chmod(codex_home, 0o700)
-    self.copy_skills(codex_home)
+    self.copy_skills(codex_home, run.get("skillIds") or [])
     auth = {"auth_mode": "apikey", "OPENAI_API_KEY": api_key}
     (codex_home / "auth.json").write_text(json.dumps(auth, ensure_ascii=False, indent=2), encoding="utf-8")
     os.chmod(codex_home / "auth.json", 0o600)
@@ -291,6 +293,7 @@ class DockerCodexRunner(CodexRunner):
       'trust_level = "trusted"',
       "",
     ]
+    config.extend(self.mcp_server_config_lines(run.get("mcpServerIds") or []))
     (codex_home / "config.toml").write_text("\n".join(config), encoding="utf-8")
     os.chmod(codex_home / "config.toml", 0o600)
     self.make_tree_writable_for_container(codex_home)
@@ -379,13 +382,42 @@ class DockerCodexRunner(CodexRunner):
     if path.exists():
       shutil.rmtree(path)
 
-  def copy_skills(self, codex_home: Path) -> None:
-    if not self.skill_path or not self.skill_path.exists():
-      return
+  def copy_skills(self, codex_home: Path, skill_ids: list[str]) -> None:
     destination = codex_home / "skills"
     if destination.exists():
       shutil.rmtree(destination)
-    shutil.copytree(self.skill_path, destination)
+    if not skill_ids:
+      return
+    if not self.skill_path or not self.skill_path.exists():
+      raise RunnerError("Configured capability skills are unavailable")
+    destination.mkdir(parents=True)
+    for skill_id in skill_ids:
+      source = self.skill_path / safe_segment(str(skill_id))
+      if source.parent != self.skill_path or not source.is_dir() or not (source / "SKILL.md").is_file():
+        raise RunnerError(f"Configured capability skill {skill_id} is unavailable")
+      shutil.copytree(source, destination / source.name)
+
+  def mcp_server_config_lines(self, selected_server_ids: list[str] | None = None) -> list[str]:
+    path = self.mcp_server_config_path
+    if not path:
+      if selected_server_ids:
+        raise RunnerError("Configured capability MCP servers are unavailable")
+      return []
+    servers = load_mcp_servers(path)
+    selected = set(servers) if selected_server_ids is None else set(selected_server_ids)
+    missing = sorted(selected - set(servers))
+    if missing:
+      raise RunnerError(f"Configured capability MCP servers are unavailable: {', '.join(missing)}")
+    lines: list[str] = []
+    for name, server in servers.items():
+      if name not in selected or server.get("enabled") is False:
+        continue
+      lines.append(f"[mcp_servers.{toml_key(name)}]")
+      for key in MCP_SERVER_FIELD_ORDER:
+        if key in server:
+          lines.append(f"{key} = {toml_value(server[key])}")
+      lines.append("")
+    return lines
 
   def make_tree_writable_for_container(self, root: Path) -> None:
     for path in [root, *root.rglob("*")]:
@@ -471,3 +503,132 @@ def safe_segment(value: str) -> str:
 
 def toml_string(value: str) -> str:
   return value.replace("\\", "\\\\").replace('"', '\\"')
+
+
+MCP_SERVER_FIELD_ALIASES = {
+  "bearerTokenEnvVar": "bearer_token_env_var",
+  "disabledTools": "disabled_tools",
+  "enabledTools": "enabled_tools",
+  "envVars": "env_vars",
+  "envHttpHeaders": "env_http_headers",
+  "headers": "http_headers",
+  "httpHeaders": "http_headers",
+  "startupTimeoutSec": "startup_timeout_sec",
+  "toolTimeoutSec": "tool_timeout_sec",
+}
+MCP_SERVER_FIELD_ORDER = (
+  "command",
+  "args",
+  "env",
+  "env_vars",
+  "cwd",
+  "url",
+  "bearer_token_env_var",
+  "http_headers",
+  "env_http_headers",
+  "enabled",
+  "required",
+  "startup_timeout_sec",
+  "tool_timeout_sec",
+  "enabled_tools",
+  "disabled_tools",
+)
+
+
+def load_mcp_servers(path: Path) -> dict[str, dict]:
+  try:
+    payload = json.loads(path.read_text(encoding="utf-8"))
+  except (OSError, json.JSONDecodeError) as exc:
+    raise RunnerError(f"Failed to read MCP server configuration from {path}: {exc}") from exc
+  if not isinstance(payload, dict):
+    raise RunnerError(f"MCP server configuration in {path} must be a JSON object")
+  unexpected_top_level = set(payload) - {"mcpServers", "mcp_servers"}
+  if unexpected_top_level:
+    raise RunnerError(
+      f"MCP server configuration in {path} has unsupported top-level fields: {', '.join(sorted(unexpected_top_level))}"
+    )
+  if "mcpServers" in payload and "mcp_servers" in payload:
+    raise RunnerError(f"MCP server configuration in {path} must not contain both mcpServers and mcp_servers")
+  servers = payload.get("mcpServers")
+  if servers is None:
+    servers = payload.get("mcp_servers")
+  if not isinstance(servers, dict):
+    raise RunnerError(f"MCP server configuration in {path} must contain an mcpServers object")
+  return {name: normalize_mcp_server(name, raw_server, path) for name, raw_server in servers.items()}
+
+
+def normalize_mcp_server(name, raw_server, path: Path) -> dict:
+  if not isinstance(name, str) or not name.strip():
+    raise RunnerError(f"MCP server configuration in {path} contains an invalid server name")
+  if not isinstance(raw_server, dict):
+    raise RunnerError(f"MCP server {name} in {path} must be a JSON object")
+  normalized = {}
+  server_type = raw_server.get("type")
+  if server_type is not None and server_type not in {"stdio", "http"}:
+    raise RunnerError(f"MCP server {name} in {path} has unsupported type {server_type!r}")
+  for source_key, value in raw_server.items():
+    if source_key == "type":
+      continue
+    key = MCP_SERVER_FIELD_ALIASES.get(source_key, source_key)
+    if key not in MCP_SERVER_FIELD_ORDER:
+      raise RunnerError(f"MCP server {name} in {path} has unsupported field {source_key}")
+    if key in normalized:
+      raise RunnerError(f"MCP server {name} in {path} configures {key} more than once")
+    normalized[key] = value
+  has_command = isinstance(normalized.get("command"), str) and bool(normalized["command"].strip())
+  has_url = isinstance(normalized.get("url"), str) and bool(normalized["url"].strip())
+  if has_command == has_url:
+    raise RunnerError(f"MCP server {name} in {path} must configure exactly one of command or url")
+  if (server_type == "stdio" and not has_command) or (server_type == "http" and not has_url):
+    raise RunnerError(f"MCP server {name} in {path} has a type that does not match its transport")
+  validate_mcp_server_fields(name, normalized, path, has_command)
+  return normalized
+
+
+def validate_mcp_server_fields(name: str, server: dict, path: Path, has_command: bool) -> None:
+  string_fields = {"command", "cwd", "url", "bearer_token_env_var"}
+  list_fields = {"args", "env_vars", "enabled_tools", "disabled_tools"}
+  map_fields = {"env", "http_headers", "env_http_headers"}
+  for key in string_fields & set(server):
+    if not isinstance(server[key], str) or not server[key].strip():
+      raise RunnerError(f"MCP server {name} field {key} in {path} must be a non-empty string")
+  for key in list_fields & set(server):
+    if not isinstance(server[key], list) or not all(isinstance(item, str) for item in server[key]):
+      raise RunnerError(f"MCP server {name} field {key} in {path} must be an array of strings")
+  for key in map_fields & set(server):
+    if not isinstance(server[key], dict) or not all(isinstance(item, str) and isinstance(value, str) for item, value in server[key].items()):
+      raise RunnerError(f"MCP server {name} field {key} in {path} must be an object of string values")
+  for key in {"enabled", "required"} & set(server):
+    if not isinstance(server[key], bool):
+      raise RunnerError(f"MCP server {name} field {key} in {path} must be a boolean")
+  for key in {"startup_timeout_sec", "tool_timeout_sec"} & set(server):
+    value = server[key]
+    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
+      raise RunnerError(f"MCP server {name} field {key} in {path} must be a positive number")
+  stdio_only = {"args", "env", "env_vars", "cwd"}
+  http_only = {"bearer_token_env_var", "http_headers", "env_http_headers"}
+  invalid_transport_fields = (http_only if has_command else stdio_only) & set(server)
+  if invalid_transport_fields:
+    transport = "stdio" if has_command else "HTTP"
+    raise RunnerError(
+      f"MCP server {name} in {path} has fields unsupported by its {transport} transport: "
+      f"{', '.join(sorted(invalid_transport_fields))}"
+    )
+
+
+def toml_key(value: str) -> str:
+  return json.dumps(value, ensure_ascii=False)
+
+
+def toml_value(value) -> str:
+  if isinstance(value, str):
+    return json.dumps(value, ensure_ascii=False)
+  if isinstance(value, bool):
+    return "true" if value else "false"
+  if isinstance(value, (int, float)):
+    return str(value)
+  if isinstance(value, list):
+    return "[" + ", ".join(toml_value(item) for item in value) + "]"
+  if isinstance(value, dict):
+    return "{ " + ", ".join(f"{toml_key(str(key))} = {toml_value(item)}" for key, item in value.items()) + " }"
+  raise TypeError(f"unsupported TOML value: {type(value).__name__}")

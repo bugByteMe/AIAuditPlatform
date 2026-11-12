@@ -1,9 +1,85 @@
 import threading
 
 from chat_runtime_test_support import *
+from capabilities import CapabilityCatalog
 
 
 class ChatLifecycleTest(ChatRuntimeTestBase):
+  def capability_catalog(self) -> CapabilityCatalog:
+    root = Path(self.tempdir.name)
+    skills = root / "capability-skills"
+    for name in ["base", "detail"]:
+      (skills / name).mkdir(parents=True, exist_ok=True)
+      (skills / name / "SKILL.md").write_text(f"# {name}\n", encoding="utf-8")
+    mcp_path = root / "capability-mcp.json"
+    mcp_path.write_text(json.dumps({
+      "mcpServers": {"documents": {"command": "node", "args": ["documents.js"]}},
+    }), encoding="utf-8")
+    capability_path = root / "capabilities.json"
+    capability_path.write_text(json.dumps({"capabilities": [
+      {
+        "id": "audit", "name": "Audit", "default": True,
+        "skills": ["base"], "mcpServers": ["documents"],
+      },
+      {
+        "id": "detail", "name": "Detail", "default": True,
+        "skills": ["base", "detail"], "mcpServers": ["documents"],
+      },
+    ]}), encoding="utf-8")
+    return CapabilityCatalog(capability_path, skills, mcp_path)
+
+  def test_capability_selection_defaults_inherits_clears_and_snapshots_resources(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(
+      self.store, self.users, FakeRunner(), capability_catalog=self.capability_catalog(),
+    )
+    created = runtime.create_session(workspace["id"], self.users["li.review"], "Capabilities")
+    self.assertEqual(created["capabilityIds"], ["audit", "detail"])
+
+    stored = runtime.chat_store.get_session(created["id"])
+    stored.pop("capabilityIds")
+    runtime.chat_store.save_session(stored)
+    self.assertEqual(runtime.public_session(created["id"], include_events=False)["capabilityIds"], ["audit", "detail"])
+
+    first = runtime.start_run(workspace["id"], self.users["li.review"], {
+      "prompt": "Use audit tools", "sessionId": created["id"], "capabilityIds": ["detail", "audit"],
+    })
+    self.assertEqual(first["run"]["capabilityIds"], ["audit", "detail"])
+    self.assertEqual(first["run"]["skillIds"], ["base", "detail"])
+    self.assertEqual(first["run"]["mcpServerIds"], ["documents"])
+    self.wait_for_status(runtime, workspace["id"], created["id"], "completed")
+
+    inherited = runtime.start_run(workspace["id"], self.users["li.review"], {
+      "prompt": "Continue", "sessionId": created["id"],
+    })
+    self.assertEqual(inherited["run"]["capabilityIds"], ["audit", "detail"])
+    self.wait_for_status(runtime, workspace["id"], created["id"], "completed")
+
+    cleared = runtime.start_run(workspace["id"], self.users["li.review"], {
+      "prompt": "No custom tools", "sessionId": created["id"], "capabilityIds": [],
+    })
+    self.assertEqual(cleared["session"]["capabilityIds"], [])
+    self.assertEqual(cleared["run"]["skillIds"], [])
+    self.assertEqual(cleared["run"]["mcpServerIds"], [])
+
+  def test_capability_selection_rejects_unknown_and_fork_filters_removed_ids(self) -> None:
+    workspace = self.create_workspace()
+    runtime = ChatRuntime(
+      self.store, self.users, FakeRunner(), capability_catalog=self.capability_catalog(),
+    )
+    with self.assertRaises(StorageError) as context:
+      runtime.start_run(workspace["id"], self.users["li.review"], {
+        "prompt": "Invalid", "capabilityIds": ["removed"],
+      })
+    self.assertEqual(context.exception.code, "invalid_capability")
+
+    source = runtime.create_session(workspace["id"], self.users["li.review"], "Source")
+    stored = runtime.chat_store.get_session(source["id"])
+    stored["capabilityIds"] = ["detail", "removed"]
+    runtime.chat_store.save_session(stored)
+    fork = runtime.fork_session(workspace["id"], source["id"], self.users["li.review"])
+    self.assertEqual(fork["capabilityIds"], ["detail"])
+
   def test_run_mounts_visible_descendants_and_remembers_then_clears_selection(self) -> None:
     root = self.create_workspace()
     child = self.store.create_workspace(

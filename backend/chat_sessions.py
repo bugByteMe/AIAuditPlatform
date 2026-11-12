@@ -3,12 +3,17 @@ from __future__ import annotations
 import shutil
 import threading
 
+from capabilities import CapabilityConfigError
 from chat_common import RUNNING_STATES, TERMINAL_STATES
 from checkpoint_delta import capture_pre_run, cleanup_refs, scan_delta, write_baseline
 from workspace_store import StorageError, generated_id, now_string
 
 
 class ChatSessionMixin:
+  def list_capabilities(self, workspace_id: str, user: dict) -> list[dict]:
+    self.store.get_workspace(workspace_id, user)
+    return self.capability_catalog.public_capabilities()
+
   def public_workspace_sessions(self, workspace: dict) -> list[dict]:
     return self.public_sessions([str(item.get("id") or "") for item in workspace.get("sessions", [])])
 
@@ -70,6 +75,7 @@ class ChatSessionMixin:
         "totalTokens": 0,
         "latestRunId": None,
         "collaboratingWorkspaceIds": [],
+        "capabilityIds": self.capability_catalog.default_ids(),
         "createdBy": user["username"],
         "created": timestamp,
       }
@@ -124,6 +130,7 @@ class ChatSessionMixin:
         "collaboratingWorkspaceIds": self.store.filter_collaborating_workspace_ids(
           workspace_id, user, source.get("collaboratingWorkspaceIds") or [],
         ),
+        "capabilityIds": self.capability_catalog.effective_session_ids(source),
         "createdBy": user["username"],
         "created": timestamp,
         "forkedFromSessionId": session_id,
@@ -278,6 +285,15 @@ class ChatSessionMixin:
       collaborating_workspaces = self.store.resolve_collaborating_workspaces(
         workspace_id, user, requested_collaborators,
       )
+      requested_capabilities = (
+        payload.get("capabilityIds")
+        if "capabilityIds" in payload
+        else self.capability_catalog.effective_session_ids(session)
+      )
+      try:
+        capability_resources = self.capability_catalog.resolve(requested_capabilities)
+      except CapabilityConfigError as exc:
+        raise StorageError("invalid_capability", str(exc)) from exc
       if collaborating_workspaces and self.worker_registry and not self.worker_registry.compatible(
         self.requested_cpu, self.requested_memory_bytes, collaboration_mount_protocol=1,
       ):
@@ -309,6 +325,9 @@ class ChatSessionMixin:
         "updated": timestamp,
         "baseSnapshotId": workspace.get("latestSnapshotId"),
         "collaboratingWorkspaces": collaborating_workspaces,
+        "capabilityIds": capability_resources["capabilityIds"],
+        "skillIds": capability_resources["skillIds"],
+        "mcpServerIds": capability_resources["mcpServerIds"],
         "resultSnapshotId": None,
         "tokens": 0,
         "inputTokens": 0,
@@ -329,6 +348,7 @@ class ChatSessionMixin:
       session["status"] = "queued"
       session["latestRunId"] = run["id"]
       session["collaboratingWorkspaceIds"] = [item["id"] for item in collaborating_workspaces]
+      session["capabilityIds"] = capability_resources["capabilityIds"]
       session["updated"] = timestamp
       session["codexHomeUser"] = user["username"]
       self.chat_store.save_session(session)
@@ -360,6 +380,7 @@ class ChatSessionMixin:
       "totalTokens": 0,
       "latestRunId": None,
       "collaboratingWorkspaceIds": [],
+      "capabilityIds": self.capability_catalog.default_ids(),
       "createdBy": user["username"],
       "created": timestamp,
     }

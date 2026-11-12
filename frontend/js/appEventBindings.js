@@ -16,6 +16,7 @@ export function createEventBindings(context) {
   const renderFileExplorer = (...args) => context.renderFileExplorer(...args);
   const renderPanelState = (...args) => context.renderPanelState(...args);
   const renderCollaboratingWorkspacePicker = (...args) => context.renderCollaboratingWorkspacePicker(...args);
+  const renderCapabilityPicker = (...args) => context.renderCapabilityPicker(...args);
   const renderWorkspaces = (...args) => context.renderWorkspaces(...args);
   const isEventStreamNearTop = (...args) => context.isEventStreamNearTop(...args);
   const canManageAccounts = (...args) => context.canManageAccounts(...args);
@@ -724,6 +725,13 @@ export function createEventBindings(context) {
           reasoning,
           collaboratingWorkspaceIds: [...state.composerCollaboratingWorkspaceIds],
         };
+        if (
+          state.capabilityCandidatesWorkspaceId === workspace.id
+          && !state.capabilityCandidatesLoading
+          && !state.capabilityCandidatesError
+        ) {
+          request.capabilityIds = [...state.composerCapabilityIds];
+        }
         let result;
         while (!result) {
           try {
@@ -831,6 +839,20 @@ export function createEventBindings(context) {
       else next.delete(checkbox.dataset.collaboratingWorkspaceId);
       state.composerCollaboratingWorkspaceIds = next;
       renderCollaboratingWorkspacePicker();
+    });
+    document.querySelector("#capability-search").addEventListener("input", (event) => {
+      state.capabilityQuery = event.target.value;
+      renderCapabilityPicker();
+      document.querySelector("#capability-search")?.focus();
+    });
+    document.querySelector("#capability-options").addEventListener("change", (event) => {
+      const checkbox = event.target.closest("[data-capability-id]");
+      if (!checkbox) return;
+      const next = new Set(state.composerCapabilityIds);
+      if (checkbox.checked) next.add(checkbox.dataset.capabilityId);
+      else next.delete(checkbox.dataset.capabilityId);
+      state.composerCapabilityIds = next;
+      renderCapabilityPicker();
     });
     const composerHandle = document.querySelector("#composer-resize-handle");
     const composer = document.querySelector("#composer");

@@ -23,6 +23,7 @@ import {
   renderAdmin,
   renderArtifacts,
   renderChatSessions,
+  renderCapabilityPicker,
   renderCollaboratingWorkspacePicker,
   renderCurrentUser,
   renderEvents,
@@ -41,6 +42,7 @@ import { renderPaymentNotice } from "./js/paymentNotice.js";
 import { resolveStartup, setStartupScreen } from "./js/startupUi.js";
 import { startMonitoredDownload } from "./js/nativeDownload.js";
 import { reconcileCollaboratingWorkspaceIds } from "./js/collaboratingWorkspaces.js";
+import { defaultCapabilityIds, reconcileCapabilityIds } from "./js/capabilities.js";
 import {
   buildWorkspaceHierarchy, flattenWorkspaceHierarchy, workspaceDescendantIds, workspaceGroupsMatch,
 } from "./js/workspaceGroups.js";
@@ -95,6 +97,39 @@ async function loadCollaboratingWorkspaceCandidates(workspaceId = safeCurrentWor
     if (safeCurrentWorkspace()?.id === workspaceId) {
       state.collaboratingWorkspaceCandidatesLoading = false;
       renderCollaboratingWorkspacePicker();
+    }
+  }
+}
+
+async function loadCapabilityCandidates(workspaceId = safeCurrentWorkspace()?.id) {
+  if (!workspaceId) {
+    state.capabilityCandidates = [];
+    state.capabilityCandidatesWorkspaceId = "";
+    state.capabilityCandidatesLoading = false;
+    state.capabilityCandidatesError = false;
+    renderCapabilityPicker();
+    return;
+  }
+  if (state.capabilityCandidatesWorkspaceId !== workspaceId) state.capabilityCandidates = [];
+  state.capabilityCandidatesLoading = true;
+  state.capabilityCandidatesError = false;
+  renderCapabilityPicker();
+  try {
+    const result = await api(`/api/workspaces/${encodeURIComponent(workspaceId)}/chat/capabilities`);
+    if (safeCurrentWorkspace()?.id !== workspaceId) return;
+    state.capabilityCandidates = result.capabilities || [];
+    state.capabilityCandidatesWorkspaceId = workspaceId;
+    const session = safeCurrentWorkspace()?.sessions?.[state.selectedSession];
+    state.composerCapabilityIds = new Set(session
+      ? reconcileCapabilityIds(state.composerCapabilityIds, state.capabilityCandidates)
+      : defaultCapabilityIds(state.capabilityCandidates));
+  } catch (error) {
+    if (safeCurrentWorkspace()?.id !== workspaceId) return;
+    state.capabilityCandidatesError = true;
+  } finally {
+    if (safeCurrentWorkspace()?.id === workspaceId) {
+      state.capabilityCandidatesLoading = false;
+      renderCapabilityPicker();
     }
   }
 }
@@ -375,6 +410,7 @@ async function loadWorkspaces() {
     maybeStartChatStream();
     if (workspaceId) {
       void loadCollaboratingWorkspaceCandidates(workspaceId);
+      void loadCapabilityCandidates(workspaceId);
       void refreshWorkspaceById(workspaceId).then((workspace) => {
         if (!workspace || safeCurrentWorkspace()?.id !== workspaceId) return;
         resetFileTreeState(workspace);
@@ -1035,6 +1071,7 @@ const appContext = {
   renderAdmin,
   renderArtifacts,
   renderChatSessions,
+  renderCapabilityPicker,
   renderCollaboratingWorkspacePicker,
   renderCurrentUser,
   renderEvents,
@@ -1056,6 +1093,7 @@ const appContext = {
   VALID_VIEWS,
   renderDynamic,
   loadCollaboratingWorkspaceCandidates,
+  loadCapabilityCandidates,
   showToast,
   safeCurrentWorkspace,
   clamp,

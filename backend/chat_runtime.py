@@ -5,6 +5,7 @@ import threading
 from pathlib import Path
 
 from chat_common import RUNNING_STATES, TERMINAL_STATES
+from capabilities import CapabilityCatalog
 from chat_execution import ChatExecutionMixin
 from chat_sessions import ChatSessionMixin
 from chat_store import ChatStore
@@ -26,6 +27,7 @@ class ChatRuntime(ChatSessionMixin, ChatExecutionMixin):
     worker_registry: WorkerRegistry | None = None,
     groups: dict[str, dict] | None = None,
     budget_checker=None,
+    capability_catalog: CapabilityCatalog | None = None,
   ):
     self.store = store
     self.users = users
@@ -36,6 +38,7 @@ class ChatRuntime(ChatSessionMixin, ChatExecutionMixin):
       user["usedTokens"] = self.chat_store.ensure_user_usage(username, int(user.get("usedTokens") or 0))
     self.save_users = save_users
     self.budget_checker = budget_checker
+    self.capability_catalog = capability_catalog or CapabilityCatalog()
     self.capacity = max(1, capacity)
     self.requested_cpu = float(SETTINGS.run_cpus)
     self.requested_memory_bytes = parse_memory_bytes(SETTINGS.run_memory)

@@ -66,6 +66,13 @@ export const state = {
   collaboratingWorkspaceCandidatesLoading: false,
   collaboratingWorkspaceCandidatesError: false,
   collaboratingWorkspaceQuery: "",
+  composerCapabilitySessionKey: "",
+  composerCapabilityIds: new Set(),
+  capabilityCandidates: [],
+  capabilityCandidatesWorkspaceId: "",
+  capabilityCandidatesLoading: false,
+  capabilityCandidatesError: false,
+  capabilityQuery: "",
   workspaceCreateUploadController: null,
   nameEditor: null,
 };

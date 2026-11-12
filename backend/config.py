@@ -174,6 +174,18 @@ class Settings:
     self.codex_home_root = self._codex_home_root()
     raw_skill_path = str(_value("skill_path", "SKILL_PATH", ""))
     self.skill_path = Path(raw_skill_path).expanduser() if raw_skill_path else None
+    raw_mcp_server_config_path = str(_value("mcp_server_config_path", "AI_AUDIT_MCP_SERVER_CONFIG_PATH", "")).strip()
+    if raw_mcp_server_config_path:
+      mcp_server_config_path = Path(raw_mcp_server_config_path).expanduser()
+      self.mcp_server_config_path = mcp_server_config_path if mcp_server_config_path.is_absolute() else ROOT / mcp_server_config_path
+    else:
+      self.mcp_server_config_path = None
+    raw_capability_config_path = str(_value("capability_config_path", "AI_AUDIT_CAPABILITY_CONFIG_PATH", "")).strip()
+    if raw_capability_config_path:
+      capability_config_path = Path(raw_capability_config_path).expanduser()
+      self.capability_config_path = capability_config_path if capability_config_path.is_absolute() else ROOT / capability_config_path
+    else:
+      self.capability_config_path = None
     self.container_uid = _int("container_uid", "AI_AUDIT_CODEX_UID", 1001)
     self.container_gid = _int("container_gid", "AI_AUDIT_CODEX_GID", 1001)
     self.run_timeout_seconds = _int("run_timeout_seconds", "AI_AUDIT_RUN_TIMEOUT_SECONDS", 3600)

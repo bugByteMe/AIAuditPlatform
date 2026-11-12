@@ -336,4 +336,8 @@
   .collaborating-workspace-panel {
     width: 100%;
   }
+
+  .composer-pickers > details {
+    width: 100%;
+  }
 }

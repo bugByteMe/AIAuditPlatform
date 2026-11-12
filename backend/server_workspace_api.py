@@ -198,6 +198,8 @@ class WorkspaceHandlerMixin:
       self.write_json({
         "workspaces": WORKSPACE_STORE.collaborating_workspace_candidates(workspace_id, user),
       })
+    elif method == "GET" and action == "capabilities" and not tail:
+      self.write_json({"capabilities": CHAT_RUNTIME.list_capabilities(workspace_id, user)})
     elif method == "GET" and action == "sessions" and not tail:
       self.write_json({"sessions": CHAT_RUNTIME.list_sessions(workspace_id, user)})
     elif method == "POST" and action == "sessions" and not tail:
@@ -226,7 +228,8 @@ class WorkspaceHandlerMixin:
       ) or "-"
       add_audit(
         user["username"], "chat run queued",
-        f"{workspace_id} {result['run']['id']} collaboratingWorkspaceIds={collaborator_ids}",
+        f"{workspace_id} {result['run']['id']} collaboratingWorkspaceIds={collaborator_ids} "
+        f"capabilityIds={','.join(result['run'].get('capabilityIds') or []) or '-'}",
       )
       self.write_json(result, HTTPStatus.CREATED)
     elif method == "POST" and action == "runs" and tail:

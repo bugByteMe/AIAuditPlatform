@@ -12,6 +12,7 @@ import {
 import { state } from "./state.js";
 import { renderWorkspaceTitle } from "./workspaceTitle.js";
 import { filterCollaboratingWorkspaces } from "./collaboratingWorkspaces.js";
+import { defaultCapabilityIds, filterCapabilities, localizedCapabilityText } from "./capabilities.js";
 import { renderArtifactFileTree, renderChatFileTree } from "./fileTreeAdapter.js";
 
 const ACTIVE_CHAT_STATES = new Set(["queued", "starting", "running", "stopping"]);
@@ -370,6 +371,62 @@ export function renderCollaboratingWorkspacePicker() {
   `).join("");
 }
 
+export function renderCapabilityPicker() {
+  const workspace = currentWorkspace();
+  const session = currentSession();
+  const sessionKey = workspace ? `${workspace.id}:${session?.id || "new"}` : "";
+  if (state.composerCapabilitySessionKey !== sessionKey) {
+    state.composerCapabilitySessionKey = sessionKey;
+    state.composerCapabilityIds = new Set(
+      session?.capabilityIds
+      || defaultCapabilityIds(state.capabilityCandidates),
+    );
+    state.capabilityQuery = "";
+  }
+
+  const summary = document.querySelector("#capability-summary");
+  const search = document.querySelector("#capability-search");
+  const options = document.querySelector("#capability-options");
+  if (!summary || !search || !options) return;
+
+  const disabled = ACTIVE_CHAT_STATES.has(session?.status || "stopped") || !canCollaborateInWorkspace(workspace);
+  const selectedCount = state.composerCapabilityIds.size;
+  summary.textContent = selectedCount
+    ? t("chat.capabilitySelected").replace("{count}", selectedCount.toLocaleString())
+    : t("chat.capabilities");
+  search.value = state.capabilityQuery;
+  search.disabled = disabled || state.capabilityCandidatesLoading;
+
+  if (state.capabilityCandidatesLoading) {
+    options.innerHTML = `<p class="collaborating-workspace-message">${escapeHtml(t("chat.capabilityLoading"))}</p>`;
+    return;
+  }
+  if (state.capabilityCandidatesError) {
+    options.innerHTML = `<p class="collaborating-workspace-message">${escapeHtml(t("chat.capabilityLoadError"))}</p>`;
+    return;
+  }
+  const candidates = filterCapabilities(state.capabilityCandidates, state.capabilityQuery, state.lang);
+  if (!candidates.length) {
+    const message = state.capabilityCandidates.length ? t("chat.capabilityNoMatches") : t("chat.capabilityEmpty");
+    options.innerHTML = `<p class="collaborating-workspace-message">${escapeHtml(message)}</p>`;
+    return;
+  }
+  options.innerHTML = candidates.map((item) => {
+    const name = localizedCapabilityText(item.name, state.lang) || item.id;
+    const description = localizedCapabilityText(item.description, state.lang);
+    return `
+      <label class="collaborating-workspace-option capability-option">
+        <input type="checkbox" data-capability-id="${escapeHtml(item.id)}"
+          ${state.composerCapabilityIds.has(item.id) ? "checked" : ""} ${disabled ? "disabled" : ""} />
+        <span class="capability-option-copy">
+          <strong>${escapeHtml(name)}</strong>
+          ${description ? `<span>${escapeHtml(description)}</span>` : ""}
+        </span>
+      </label>
+    `;
+  }).join("");
+}
+
 export function renderChatSessions() {
   if (state.workspacesLoading || state.workspaceLoadError) {
     document.querySelector('#composer button[type="submit"]').disabled = true;
@@ -384,6 +441,7 @@ export function renderChatSessions() {
   const session = currentSession();
   const status = session?.status || "stopped";
   renderCollaboratingWorkspacePicker();
+  renderCapabilityPicker();
   const canCollaborate = canCollaborateInWorkspace(workspace);
   document.querySelector('#composer button[type="submit"]').disabled = !canCollaborate || ACTIVE_CHAT_STATES.has(status);
   document.querySelector("#composer textarea").disabled = !canCollaborate;

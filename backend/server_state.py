@@ -8,6 +8,7 @@ from decimal import Decimal
 from pathlib import Path
 
 from account_store import AccountStore
+from capabilities import CapabilityCatalog
 from chat_common import KeyedLockPool
 from chat_runtime import ChatRuntime
 from config import SETTINGS
@@ -28,6 +29,12 @@ SESSION_TTL_SECONDS = SETTINGS.session_ttl_seconds
 PBKDF2_ITERATIONS = SETTINGS.pbkdf2_iterations
 
 WORKSPACE_STORE = WorkspaceStore(WORKSPACE_STORAGE_DIR, SETTINGS.database_url)
+
+CAPABILITY_CATALOG = CapabilityCatalog(
+  SETTINGS.capability_config_path,
+  SETTINGS.skill_path,
+  SETTINGS.mcp_server_config_path,
+)
 
 REGISTRATION_LOCKS = KeyedLockPool()
 
@@ -139,6 +146,7 @@ CHAT_RUNTIME = ChatRuntime(
   save_users=None,
   groups=ACCOUNT_STORE.groups,
   budget_checker=check_micu_budget,
+  capability_catalog=CAPABILITY_CATALOG,
 )
 
 SESSIONS: dict[str, dict] = {}

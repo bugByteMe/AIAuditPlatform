@@ -15,6 +15,7 @@ export function createWorkspaceActions(context) {
   const routeToView = (...args) => context.routeToView(...args);
   const workspaceAt = (...args) => context.workspaceAt(...args);
   const loadCollaboratingWorkspaceCandidates = (...args) => context.loadCollaboratingWorkspaceCandidates(...args);
+  const loadCapabilityCandidates = (...args) => context.loadCapabilityCandidates(...args);
 
   async function selectWorkspace(index) {
     state.selectedWorkspace = Number(index);
@@ -23,6 +24,7 @@ export function createWorkspaceActions(context) {
     const workspaceId = safeCurrentWorkspace()?.id;
     renderDynamic();
     void loadCollaboratingWorkspaceCandidates(workspaceId);
+    void loadCapabilityCandidates(workspaceId);
     if (workspaceId && !safeCurrentWorkspace()?.detailLoaded) await refreshWorkspaceById(workspaceId);
     if (safeCurrentWorkspace()?.id !== workspaceId) return;
     resetFileTreeState(safeCurrentWorkspace());

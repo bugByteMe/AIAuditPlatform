@@ -163,7 +163,53 @@ receiver uses its own SQLite inbox and does not need `AI_AUDIT_DATABASE_URL`.
 
 ## Codex Runtime
 
-- `codex_image`, `codex_root`, `codex_home_root`, and `skill_path` configure runtime paths.
+- `codex_image`, `codex_root`, `codex_home_root`, `skill_path`, `capability_config_path`, and `mcp_server_config_path` configure runtime paths. Relative capability and MCP paths resolve from the application root. They may be overridden with `AI_AUDIT_CAPABILITY_CONFIG_PATH` and `AI_AUDIT_MCP_SERVER_CONFIG_PATH`.
+- `mcp_server_config_path` points to a JSON file that is validated at control-plane startup and reread whenever a session-scoped Codex home is prepared. The file uses a top-level `mcpServers` object. Each server must configure either a stdio `command` (with optional `args`, `env`, `envVars`, and `cwd`) or an HTTP `url` (with optional `bearerTokenEnvVar`, `headers`, and `envHttpHeaders`). Shared fields include `enabled`, `required`, `startupTimeoutSec`, `toolTimeoutSec`, `enabledTools`, and `disabledTools`. Codex-style snake_case field names are also accepted. Prefer environment-variable references over embedding credentials in this file.
+
+```json
+{
+  "mcpServers": {
+    "local-tools": {
+      "type": "stdio",
+      "command": "node",
+      "args": ["/opt/mcp/server.js"],
+      "envVars": ["MCP_API_KEY"]
+    },
+    "remote-tools": {
+      "type": "http",
+      "url": "https://mcp.example.com/api",
+      "bearerTokenEnvVar": "MCP_TOKEN"
+    }
+  }
+}
+```
+
+`capability_config_path` maps user-facing capabilities to top-level skill
+directories beneath `skill_path` and to server IDs in the MCP file. The catalog
+is immutable for the life of the control-plane process, so changes require a
+restart. Names and descriptions may be strings or localized `zh`/`en` objects;
+a missing translation falls back to the available value. Multiple capabilities
+may be defaults and multiple selected capabilities load the deduplicated union
+of their resources. An empty selection loads no custom skills or MCP servers.
+Invalid, duplicate, or unresolved definitions prevent startup.
+
+```json
+{
+  "capabilities": [
+    {
+      "id": "financial-audit",
+      "name": {"zh": "财务审计", "en": "Financial audit"},
+      "description": {
+        "zh": "加载财务报表审计技能和数据连接器",
+        "en": "Loads financial-statement audit skills and data connectors"
+      },
+      "default": true,
+      "skills": ["balance-sheet-dahua", "profit-loss-dahua"],
+      "mcpServers": ["financial-database", "document-search"]
+    }
+  ]
+}
+```
 - The bundled Codex runner image includes OCRmyPDF and Tesseract language data for Simplified Chinese (`chi_sim`) and Traditional Chinese (`chi_tra`) PDF OCR.
 - `container_uid`, `container_gid`, `run_timeout_seconds`, `run_network`, `run_cpus`, and `run_memory` configure container execution.
 - `process_wait_timeout_seconds`, `docker_stop_grace_seconds`, `docker_stop_timeout_seconds`, and `scheduler_poll_seconds` configure process shutdown and scheduling timing.

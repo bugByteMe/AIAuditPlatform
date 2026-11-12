@@ -88,10 +88,15 @@ class CodexRunnerTest(ChatRuntimeTestBase):
       "sessionId": "chat_1",
       "model": "gpt-5-codex",
       "reasoning": "high",
+      "skillIds": ["audit-skill"],
       "codexSettings": {"baseUrl": "https://codex.example/v1", "apiKey": "sk-test"},
     }
     codex_home = runner.prepare_codex_home(run)
     self.assertEqual((codex_home / "skills" / "audit-skill" / "SKILL.md").read_text(encoding="utf-8"), "# Audit Skill\n")
+
+    run["skillIds"] = []
+    runner.prepare_codex_home(run)
+    self.assertFalse((codex_home / "skills").exists())
 
   def test_docker_runner_removes_stale_codex_tmp_before_run(self) -> None:
     runner = DockerCodexRunner()

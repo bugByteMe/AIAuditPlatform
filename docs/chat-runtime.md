@@ -42,6 +42,16 @@ workspace-layout preamble to the Codex prompt while the persisted user event
 retains the original prompt. Codex starts in writable `/workspace`; selected
 references are available live and read-only under
 `/collaborating-workspaces/<workspace-id>`.
+
+Run requests may also include `capabilityIds`. The control plane validates the
+selection against the startup-loaded capability catalog, stores it as the
+chat's selection for later turns, and snapshots the deduplicated skill and MCP
+server IDs on the run. Missing selections inherit the chat value; legacy chats
+without a stored value use all configured defaults, while an explicit empty
+array loads no custom resources. Chat forks inherit only capability IDs still
+present in the catalog. Before local or remote execution, the control node
+replaces the session-scoped custom skills and MCP configuration with only the
+run snapshot. Workers do not read capability or source-skill configuration.
 6. Backend persists events and fans them out to the frontend.
 
 Users can select model and reasoning effort before starting a run. These settings are stored on the run record.
@@ -144,6 +154,7 @@ The prototype backend exposes chat runtime APIs under the workspace boundary:
 - `DELETE /api/workspaces/{workspace_id}/chat/sessions/{session_id}`
 - `POST /api/workspaces/{workspace_id}/chat/runs`
 - `GET /api/workspaces/{workspace_id}/chat/collaborating-workspaces`
+- `GET /api/workspaces/{workspace_id}/chat/capabilities`
 - `POST /api/workspaces/{workspace_id}/chat/runs/{run_id}/stop`
 - `GET /api/workspaces/{workspace_id}/chat/events?sessionId={session_id}&after={event_id}`
 - `GET /api/workspaces/{workspace_id}/chat/stream?sessionId={session_id}&after={event_id}`
@@ -264,7 +275,7 @@ If Codex does not expose a session id in JSON events, the backend falls back to 
 
 Each user account stores its own Codex `baseUrl` and API key in account storage. Before every run, the backend generates a writable session-scoped `CODEX_HOME` under `workspace_storage/codex/homes/<username>/<chat_session_id>/` with:
 
-- `config.toml`: model provider, base URL, model, reasoning effort, and trusted `/workspace`.
+- `config.toml`: model provider, base URL, model, reasoning effort, trusted `/workspace`, and MCP servers loaded from the configured JSON file.
 - `auth.json`: API key authentication for the selected user.
 
 The API key is write-only through the backend API and is never returned in public account/session responses. Run records do not persist Codex credentials or generated `CODEX_HOME` paths.

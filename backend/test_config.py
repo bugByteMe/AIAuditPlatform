@@ -20,6 +20,7 @@ class ConfigurationTest(unittest.TestCase):
       "audit_log_limit",
       "batch_invite_max_count",
       "blocked_upload_suffixes",
+      "capability_config_path",
       "chat_poll_interval_ms",
       "compute_nodes",
       "codex_home_root",
@@ -36,6 +37,7 @@ class ConfigurationTest(unittest.TestCase):
       "max_file_count",
       "max_text_preview_bytes",
       "max_workspace_bytes",
+      "mcp_server_config_path",
       "office_preview_timeout_seconds",
       "process_wait_timeout_seconds",
       "registration_min_password_length",
@@ -96,6 +98,8 @@ class ConfigurationTest(unittest.TestCase):
     self.assertGreaterEqual(SETTINGS.upload_request_queue, 0)
     self.assertGreater(SETTINGS.external_request_workers, 0)
     self.assertGreaterEqual(SETTINGS.external_request_queue, 0)
+    self.assertEqual(SETTINGS.capability_config_path, ROOT / "config" / "capabilities.json")
+    self.assertEqual(SETTINGS.mcp_server_config_path, ROOT / "config" / "mcp_servers.json")
 
   def test_compute_node_configuration_is_normalized(self) -> None:
     nodes = normalize_compute_nodes(

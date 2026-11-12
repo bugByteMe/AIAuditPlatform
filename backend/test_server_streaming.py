@@ -38,6 +38,9 @@ class FakeChatRuntime:
   def delete_session(self, workspace_id, session_id, user):
     return {"id": session_id, "runIds": ["run-1"]}
 
+  def list_capabilities(self, workspace_id, user):
+    return [{"id": "audit", "name": {"zh": "审计", "en": "Audit"}, "description": {"zh": "", "en": ""}, "default": True}]
+
 
 class TerminalChatRuntime(FakeChatRuntime):
   def events(self, workspace_id, session_id, after, user):
@@ -333,6 +336,16 @@ class ServerStreamingTest(unittest.TestCase):
       Handler.chat_api(handler, "DELETE", "workspace-1", "sessions", "chat-source", "")
     self.assertEqual(responses[0][0], {"deleted": {"id": "chat-source", "runIds": ["run-1"]}})
     add_audit.assert_called_once_with("owner", "chat session deleted", "workspace-1 chat-source runs=1")
+
+  def test_capability_catalog_route_returns_presentation_fields(self) -> None:
+    handler = object.__new__(Handler)
+    handler.require_user = lambda: {"username": "user", "role": "user", "group": "Audit"}
+    responses = []
+    handler.write_json = lambda payload, status=200, headers=None: responses.append((payload, status))
+    with patch("server.CHAT_RUNTIME", FakeChatRuntime()):
+      Handler.chat_api(handler, "GET", "workspace-1", "capabilities", "", "")
+    self.assertEqual(responses[0][0]["capabilities"][0]["id"], "audit")
+    self.assertNotIn("skills", responses[0][0]["capabilities"][0])
 
   def test_event_reconciliation_reports_terminal_status_without_new_events(self) -> None:
     handler = object.__new__(Handler)

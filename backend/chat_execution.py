@@ -379,6 +379,12 @@ class ChatExecutionMixin:
     creator = str(session.get("createdBy") or "")
     account = self.users.get(creator) or {}
     session["createdByDisplayName"] = str(account.get("displayName") or "").strip()
+    capability_ids = session.get("capabilityIds")
+    session["capabilityIds"] = (
+      self.capability_catalog.default_ids()
+      if capability_ids is None
+      else self.capability_catalog.filter_known_ids(capability_ids)
+    )
     if not run:
       session["resources"] = default_resources or self.resource_status()
       return session

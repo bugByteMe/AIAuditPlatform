@@ -159,6 +159,10 @@
 - Chat runs remember collaborating-workspace selections, explicit empty
   selections clear them, and chat forks retain only selections still eligible
   for the new chat user.
+- New and legacy chats receive configured default capabilities, run requests
+  remember or explicitly clear selections, unknown IDs are rejected, and forks
+  discard removed IDs. Prepared Codex homes contain only the deduplicated skill
+  and enabled MCP resources snapshotted for that run.
 - Remote runs with collaborating mounts use only workers advertising mount
   protocol version 1; ordinary runs remain schedulable on older workers.
 

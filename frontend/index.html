@@ -292,13 +292,22 @@
                 <button type="button" class="composer-resize-handle" id="composer-resize-handle" data-i18n-title="chat.resizeComposer" data-i18n-aria-label="chat.resizeComposer" title="拖动调整输入框高度" aria-label="拖动调整输入框高度"></button>
                 <textarea data-i18n-placeholder="chat.placeholder" placeholder="输入审计任务，例如：检查收入确认底稿并生成异常清单"></textarea>
                 <div class="drop-upload-hint composer-drop-hint" aria-hidden="true"><svg class="ui-icon"><use href="#icon-upload"></use></svg><span data-i18n="files.dropComposerHint">插入工作区路径或上传文件</span></div>
-                <details class="collaborating-workspace-picker" id="collaborating-workspace-picker">
-                  <summary id="collaborating-workspace-summary"></summary>
-                  <div class="collaborating-workspace-panel">
-                    <input type="search" id="collaborating-workspace-search" data-i18n-placeholder="chat.collaboratingSearch" placeholder="搜索协作工作区" autocomplete="off" />
-                    <div id="collaborating-workspace-options"></div>
-                  </div>
-                </details>
+                <div class="composer-pickers">
+                  <details class="collaborating-workspace-picker" id="collaborating-workspace-picker">
+                    <summary id="collaborating-workspace-summary"></summary>
+                    <div class="collaborating-workspace-panel">
+                      <input type="search" id="collaborating-workspace-search" data-i18n-placeholder="chat.collaboratingSearch" placeholder="搜索协作工作区" autocomplete="off" />
+                      <div id="collaborating-workspace-options"></div>
+                    </div>
+                  </details>
+                  <details class="collaborating-workspace-picker capability-picker" id="capability-picker">
+                    <summary id="capability-summary"></summary>
+                    <div class="collaborating-workspace-panel capability-panel">
+                      <input type="search" id="capability-search" data-i18n-placeholder="chat.capabilitySearch" placeholder="搜索能力" autocomplete="off" />
+                      <div id="capability-options"></div>
+                    </div>
+                  </details>
+                </div>
                 <div class="composer-actions">
                   <label>
                     <span data-i18n="chat.model">模型</span>
