@@ -281,7 +281,6 @@ class DockerCodexRunner(CodexRunner):
       'model_provider = "OpenAI"',
       f'model = "{toml_string(str(run["model"]))}"',
       f'model_reasoning_effort = "{toml_string(str(run["reasoning"]))}"',
-      "disable_response_storage = false",
       "",
       "[model_providers.OpenAI]",
       'name = "OpenAI"',

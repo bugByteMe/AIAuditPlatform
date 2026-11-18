@@ -180,7 +180,7 @@ test("chat cards show their creator and recharge highlights remaining usage", as
     assert.match(await page.locator("#chat-session-list").innerText(), /Example Member/);
     assert.equal(await page.locator("#chat-session-list .session-main span").last().getAttribute("title"), "example.member");
     assert.deepEqual(await page.locator('#composer [name="model"] option').evaluateAll((options) => options.map((option) => option.value)),
-      ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol"]);
+      ["gpt-5.6-sol", "gpt-6-astra", "gpt-6-sol", "gpt-6.1-sol", "gpt-6.2-sol", "gpt-6.2-astra"]);
     await page.locator('[data-view="recharge"]').click();
     assert.equal(await page.locator("#recharge-remaining-percent").innerText(), "42.5%");
   } finally { await page.close(); }

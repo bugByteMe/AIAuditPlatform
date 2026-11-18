@@ -55,7 +55,7 @@ run snapshot. Workers do not read capability or source-skill configuration.
 6. Backend persists events and fans them out to the frontend.
 
 Users can select model and reasoning effort before starting a run. These settings are stored on the run record.
-The composer offers `gpt-5.6-sol`, `gpt-6-astra`, `gpt-6-sol`, and `gpt-6.1-sol`, with high or medium reasoning effort. The runner writes the selected effort to the session-scoped Codex `config.toml` as `model_reasoning_effort` for each run. Chat-session cards show the session creator, which remains distinct from the user initiating any later run.
+The composer offers `gpt-5.6-sol`, `gpt-6-astra`, `gpt-6-sol`, `gpt-6.1-sol`, `gpt-6.2-sol`, and `gpt-6.2-astra`, with high or medium reasoning effort. The runner writes the selected effort to the session-scoped Codex `config.toml` as `model_reasoning_effort` for each run. Chat-session cards show the session creator, which remains distinct from the user initiating any later run.
 Public chat-session payloads include the latest run's model and reasoning effort.
 When the user enters a chat, the composer applies those settings once; ordinary
 event rerenders do not overwrite a manual selection. Run creation also inherits
