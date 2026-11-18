@@ -35,7 +35,7 @@ class WorkerClient:
     self.base_url = f"https://{host}:{node['port']}"
 
   def request(self, method: str, path: str, payload: dict | None = None, timeout: float | None = None) -> dict:
-    body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = None if payload is None else json.dumps(payload, ensure_ascii=True).encode("utf-8")
     request = urllib.request.Request(
       f"{self.base_url}{path}",
       data=body,
@@ -45,7 +45,16 @@ class WorkerClient:
     try:
       with urllib.request.urlopen(request, timeout=timeout or self.timeout, context=self.ssl_context) as response:
         return json.loads(response.read().decode("utf-8") or "{}")
-    except (OSError, ValueError, urllib.error.HTTPError, urllib.error.URLError) as exc:
+    except urllib.error.HTTPError as exc:
+      detail = ""
+      try:
+        error_payload = json.loads(exc.read().decode("utf-8") or "{}")
+        detail = str(error_payload.get("message") or error_payload.get("error") or "")
+      except (OSError, UnicodeDecodeError, ValueError):
+        detail = ""
+      suffix = f": {detail}" if detail else ""
+      raise WorkerUnavailable(f"worker {self.node['id']} request failed: HTTP {exc.code}{suffix}") from exc
+    except (OSError, ValueError, urllib.error.URLError) as exc:
       raise WorkerUnavailable(f"worker {self.node['id']} request failed: {exc}") from exc
 
   def health(self) -> dict:

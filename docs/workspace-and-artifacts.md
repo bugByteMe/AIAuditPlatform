@@ -262,6 +262,16 @@ Run checkpoint creation uses protocol version 2:
 5. The control plane validates referenced blobs, then updates only touched current/previous file-version rows in the checkpoint transaction.
 6. Displaced blobs enter deferred garbage collection. After the grace period, references are checked again before deletion.
 
+Before the pre-run and completion scans, the checkpoint layer validates filesystem
+path components as UTF-8. Components that are not valid UTF-8 are decoded strictly
+as GB18030 and renamed to their UTF-8 representation without following symlinks.
+This supports legacy Chinese archive filenames while keeping manifests, APIs, and
+database paths consistently UTF-8. Normalization plans are collision-checked before
+any rename; an undecodable name or an existing UTF-8 target fails checkpointing with
+an explicit error and never overwrites a file. The administrative
+`backend/repair_workspace_filenames.py` command previews the same repair by default
+and requires `--apply` to mutate an existing workspace.
+
 File checksums are computed with fixed-size streaming reads. Text preview reads are
 limited to the configured preview prefix, so neither operation allocates memory
 proportional to the source file size.
@@ -277,6 +287,9 @@ files on shared storage. `runs.json` retains only protocol/version references an
 small result statistics. The control plane fetches v2 results through the worker's
 result endpoint. During rolling upgrades it still accepts a legacy worker's inline
 full manifest; a missing v2 delta and missing legacy manifest is a checkpoint failure.
+Worker state, event, and checkpoint-sidecar JSON escapes non-ASCII code points so an
+unexpected filesystem surrogate cannot prevent terminal-state persistence or hide
+the worker's underlying checkpoint error.
 
 The active workspace directory remains materialized on the shared filesystem for normal browsing and future runs. Previous file versions are retained internally for bounded recovery and are not currently exposed through download or restore APIs. Historical whole-workspace checkpoints are not materializable.
 

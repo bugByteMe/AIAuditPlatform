@@ -1,13 +1,16 @@
 from __future__ import annotations
 
+import io
 import sys
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
+from unittest import mock
+from urllib.error import HTTPError
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from compute_nodes import WorkerClient, WorkerRegistry, WorkerRunFailed
+from compute_nodes import WorkerClient, WorkerRegistry, WorkerRunFailed, WorkerUnavailable
 
 
 class FakeWorkerClient:
@@ -206,6 +209,24 @@ class WorkerRegistryTest(unittest.TestCase):
     _, events = client.start(run)
     self.assertEqual(list(events), [{"type": "assistant", "message": "done", "_workerEventId": 4}])
     self.assertEqual(run["workerEventCursor"], 4)
+
+  def test_worker_http_error_includes_json_detail(self):
+    client = object.__new__(WorkerClient)
+    client.timeout = 1
+    client.node = {"id": "worker-1"}
+    client.base_url = "https://worker.invalid"
+    client.token = "test-token"
+    client.ssl_context = None
+    response = HTTPError(
+      "https://worker.invalid/v1/runs/run-1/result",
+      400,
+      "Bad Request",
+      {},
+      io.BytesIO(b'{"error":"invalid_filename_encoding","message":"filename is not UTF-8"}'),
+    )
+    with mock.patch("compute_nodes.urllib.request.urlopen", side_effect=response):
+      with self.assertRaisesRegex(WorkerUnavailable, "HTTP 400: filename is not UTF-8"):
+        client.request("GET", "/v1/runs/run-1/result")
 
 
 if __name__ == "__main__":

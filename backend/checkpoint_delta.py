@@ -1,9 +1,12 @@
 from __future__ import annotations
 
 import json
+import os
 import shutil
 import tempfile
 import time
+import unicodedata
+from dataclasses import dataclass
 from pathlib import Path
 
 from workspace_common import (
@@ -13,6 +16,115 @@ from workspace_common import (
 
 CHECKPOINT_PROTOCOL_VERSION = 2
 FINGERPRINT_FIELDS = ("size", "mtimeNs", "ctimeNs", "device", "inode", "mode")
+
+
+@dataclass(frozen=True)
+class FilenameRename:
+  source_path: bytes
+  target_path: bytes
+  source_relative: bytes
+  target_relative: bytes
+
+
+def _escaped_filesystem_path(path: bytes) -> str:
+  return os.fsdecode(path).encode("utf-8", errors="backslashreplace").decode("utf-8")
+
+
+def _normalized_component(raw: bytes) -> bytes:
+  try:
+    raw.decode("utf-8", errors="strict")
+    return raw
+  except UnicodeDecodeError:
+    pass
+  try:
+    decoded = raw.decode("gb18030", errors="strict")
+  except UnicodeDecodeError as exc:
+    raise StorageError(
+      "invalid_filename_encoding",
+      f"filename bytes are neither valid UTF-8 nor GB18030: {raw.hex()}",
+    ) from exc
+  return unicodedata.normalize("NFC", decoded).encode("utf-8")
+
+
+def plan_workspace_filename_normalization(workspace_path: Path) -> list[FilenameRename]:
+  """Plan lossless GB18030-to-UTF-8 renames without following symlinks."""
+  root = os.fsencode(workspace_path)
+  if not os.path.isdir(root):
+    raise StorageError("workspace_missing", "workspace directory is unavailable")
+  actions: list[FilenameRename] = []
+
+  def visit(directory: bytes, source_parent: tuple[bytes, ...], target_parent: tuple[bytes, ...]) -> None:
+    entries = list(os.scandir(directory))
+    targets: dict[bytes, bytes] = {}
+    normalized = []
+    for entry in entries:
+      raw_name = entry.name
+      target_name = _normalized_component(raw_name)
+      prior = targets.get(target_name)
+      if prior is not None and prior != raw_name:
+        target_relative = b"/".join((*target_parent, target_name))
+        raise StorageError(
+          "filename_encoding_collision",
+          f"filename normalization would overwrite an existing path: {_escaped_filesystem_path(target_relative)}",
+        )
+      targets[target_name] = raw_name
+      normalized.append((entry, raw_name, target_name))
+
+    for entry, raw_name, target_name in normalized:
+      source_relative = b"/".join((*source_parent, raw_name))
+      target_relative = b"/".join((*target_parent, target_name))
+      if raw_name != target_name:
+        actions.append(FilenameRename(
+          source_path=os.path.join(directory, raw_name),
+          target_path=os.path.join(directory, target_name),
+          source_relative=source_relative,
+          target_relative=target_relative,
+        ))
+      if entry.is_dir(follow_symlinks=False):
+        visit(entry.path, (*source_parent, raw_name), (*target_parent, target_name))
+
+  visit(root, (), ())
+  return actions
+
+
+def normalize_workspace_filenames(workspace_path: Path, *, apply: bool = True) -> dict:
+  actions = plan_workspace_filename_normalization(workspace_path)
+  changes = [
+    {
+      "source": _escaped_filesystem_path(action.source_relative),
+      "sourceBytes": action.source_relative.hex(),
+      "target": action.target_relative.decode("utf-8"),
+    }
+    for action in actions
+  ]
+  if not apply:
+    return {"applied": False, "renameCount": len(actions), "changes": changes}
+
+  applied: list[FilenameRename] = []
+  try:
+    for action in sorted(actions, key=lambda item: item.source_relative.count(b"/"), reverse=True):
+      if os.path.lexists(action.target_path):
+        raise StorageError(
+          "filename_encoding_collision",
+          f"filename normalization target appeared during repair: {_escaped_filesystem_path(action.target_relative)}",
+        )
+      os.rename(action.source_path, action.target_path)
+      applied.append(action)
+  except Exception as exc:
+    rollback_error = None
+    for action in reversed(applied):
+      try:
+        if os.path.lexists(action.target_path) and not os.path.lexists(action.source_path):
+          os.rename(action.target_path, action.source_path)
+      except OSError as rollback_exc:
+        rollback_error = rollback_exc
+    if isinstance(exc, StorageError):
+      raise
+    detail = f"filename normalization failed: {exc}"
+    if rollback_error is not None:
+      detail += f"; rollback failed: {rollback_error}"
+    raise StorageError("filename_normalization_failed", detail) from exc
+  return {"applied": True, "renameCount": len(actions), "changes": changes}
 
 
 def stat_fields(stat) -> dict:
@@ -42,7 +154,7 @@ def trusted_baseline(entry: dict | None, observed: dict | None) -> bool:
 def _atomic_json(path: Path, payload: dict) -> None:
   path.parent.mkdir(parents=True, exist_ok=True)
   temporary = path.with_suffix(path.suffix + ".tmp")
-  temporary.write_text(json.dumps(payload, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+  temporary.write_text(json.dumps(payload, ensure_ascii=True, separators=(",", ":")), encoding="utf-8")
   temporary.replace(path)
 
 
@@ -83,6 +195,7 @@ def read_json_ref(root: Path, reference: str) -> dict:
 
 
 def capture_pre_run(root: Path, workspace_path: Path, run: dict) -> str | None:
+  normalize_workspace_filenames(workspace_path)
   baseline_ref = str(run.get("checkpointBaseRef") or "")
   if not baseline_ref:
     return None
@@ -139,6 +252,7 @@ def _hash_stable_file(path: Path, blob_dir: Path) -> tuple[dict, bool]:
 
 
 def scan_delta(root: Path, workspace_path: Path, blob_dir: Path, run: dict) -> dict | None:
+  normalize_workspace_filenames(workspace_path)
   baseline_ref = str(run.get("checkpointBaseRef") or "")
   pre_ref = str(run.get("checkpointPreRef") or "")
   if not baseline_ref or not pre_ref:

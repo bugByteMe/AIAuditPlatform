@@ -68,7 +68,7 @@ class WorkerState:
   def save_runs(self) -> None:
     self.state_dir.mkdir(parents=True, exist_ok=True)
     tmp = self.runs_path.with_suffix(".tmp")
-    tmp.write_text(json.dumps(self.runs, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    tmp.write_text(json.dumps(self.runs, ensure_ascii=True, indent=2, sort_keys=True), encoding="utf-8")
     tmp.replace(self.runs_path)
 
   def event_path(self, run_id: str) -> Path:
@@ -80,7 +80,7 @@ class WorkerState:
       stored = {**event, "id": len(rows) + 1}
       rows.append(stored)
       with self.event_path(run_id).open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(stored, ensure_ascii=False, sort_keys=True) + "\n")
+        handle.write(json.dumps(stored, ensure_ascii=True, sort_keys=True) + "\n")
       self.condition.notify_all()
       return stored
 
@@ -387,7 +387,7 @@ class WorkerHandler(BaseHTTPRequestHandler):
     return json.loads(self.rfile.read(length) or b"{}")
 
   def write_json(self, payload: dict, status: HTTPStatus = HTTPStatus.OK) -> None:
-    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    body = json.dumps(payload, ensure_ascii=True).encode("utf-8")
     self.send_response(status)
     self.send_header("Content-Type", "application/json; charset=utf-8")
     self.send_header("Content-Length", str(len(body)))
