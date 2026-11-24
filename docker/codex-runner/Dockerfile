@@ -20,6 +20,7 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
   && apt-get install -y --no-install-recommends \
     bash \
     ca-certificates \
+    chromium \
     git \
     libreoffice \
     ocrmypdf \
@@ -53,7 +54,7 @@ RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
     python-pptx \
     reportlab
 
-RUN npm install -g "@openai/codex@${CODEX_VERSION}" --registry="${NPM_REGISTRY}" \
+RUN npm install -g "@openai/codex@${CODEX_VERSION}" docx --registry="${NPM_REGISTRY}" \
   && useradd --create-home --shell /bin/bash codex \
   && mkdir -p /workspace /home/codex/.codex \
   && chown -R codex:codex /workspace /home/codex
@@ -62,5 +63,6 @@ USER codex
 WORKDIR /workspace
 
 ENV CODEX_HOME=/home/codex/.codex
+ENV NODE_PATH=/usr/local/lib/node_modules
 
 CMD ["codex", "--help"]

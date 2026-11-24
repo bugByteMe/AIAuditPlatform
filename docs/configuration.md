@@ -211,6 +211,7 @@ Invalid, duplicate, or unresolved definitions prevent startup.
 }
 ```
 - The bundled Codex runner image includes OCRmyPDF and Tesseract language data for Simplified Chinese (`chi_sim`) and Traditional Chinese (`chi_tra`) PDF OCR.
+- The runner also includes Chromium (`/usr/bin/chromium`) and the globally installed npm `docx` package. Workspace CommonJS scripts can use `require('docx')` through the image's `NODE_PATH=/usr/local/lib/node_modules`. Native ESM scripts can use `createRequire(import.meta.url)` from `node:module` to load `docx`, or import its explicit installed entrypoint; native ESM imports do not resolve packages through `NODE_PATH`.
 - `container_uid`, `container_gid`, `run_timeout_seconds`, `run_network`, `run_cpus`, and `run_memory` configure container execution.
 - `process_wait_timeout_seconds`, `docker_stop_grace_seconds`, `docker_stop_timeout_seconds`, and `scheduler_poll_seconds` configure process shutdown and scheduling timing.
 - `run_cpus` and `run_memory` are also the reservation requested by every run. A worker is eligible only when both resources are available.
