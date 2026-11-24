@@ -7,6 +7,7 @@ from pathlib import Path
 from chat_common import RUNNING_STATES, TERMINAL_STATES
 from capabilities import CapabilityCatalog
 from chat_execution import ChatExecutionMixin
+from chat_input import ChatInputMixin
 from chat_sessions import ChatSessionMixin
 from chat_store import ChatStore
 from codex_runner import CodexRunner, DockerCodexRunner, RunnerError, safe_segment, toml_string
@@ -15,7 +16,7 @@ from config import SETTINGS, parse_memory_bytes
 from workspace_store import WorkspaceStore
 
 
-class ChatRuntime(ChatSessionMixin, ChatExecutionMixin):
+class ChatRuntime(ChatInputMixin, ChatSessionMixin, ChatExecutionMixin):
   def __init__(
     self,
     store: WorkspaceStore,
@@ -58,5 +59,7 @@ class ChatRuntime(ChatSessionMixin, ChatExecutionMixin):
     self.shutdown = False
     self.store.set_chat_session_provider(self.public_workspace_sessions)
     self.recover_persisted_runs()
+    self.reconcile_input_requests()
+    self.start_input_delivery()
     self.scheduler = threading.Thread(target=self.scheduler_loop, name="ai-audit-chat-scheduler", daemon=True)
     self.scheduler.start()

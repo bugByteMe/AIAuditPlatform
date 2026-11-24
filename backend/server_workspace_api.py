@@ -194,7 +194,10 @@ class WorkspaceHandlerMixin:
 
   def chat_api(self, method: str, workspace_id: str, action: str, tail: str, query: str, subtail: str = "") -> None:
     user = self.require_user()
-    if method == "GET" and action == "collaborating-workspaces" and not tail:
+    if action == "input-requests":
+      from server_input_api import handle_input_api
+      handle_input_api(self, CHAT_RUNTIME, method, workspace_id, tail, query, user)
+    elif method == "GET" and action == "collaborating-workspaces" and not tail:
       self.write_json({
         "workspaces": WORKSPACE_STORE.collaborating_workspace_candidates(workspace_id, user),
       })

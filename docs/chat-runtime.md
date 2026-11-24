@@ -285,3 +285,12 @@ The chat header shows available/total CPU and memory for the assigned worker. Wh
 The resource labels explicitly identify available capacity. Aggregate capacity is returned with workspace catalog/detail responses so a workspace with no chat sessions still shows current CPU and memory availability. Queued sessions report how many earlier queued jobs remain; heartbeat reconciliation refreshes both the queue count and resource availability. Send is disabled while a session is queued, starting, running, or stopping, and Stop is disabled once stopping has begun.
 
 Docker is not required for unit tests. Tests use a fake runner so lifecycle, lock, budget, and event behavior can be validated on machines where Docker is unavailable or broken.
+
+## Interactive user input
+
+Codex runs expose the built-in `user_input_tool` MCP tool. Questions and answers
+are persisted in the corresponding chat and delivered through a run-scoped
+mailbox. Waiting preserves the active container, workspace locking, and worker
+reservation while pausing execution-timeout accounting. See
+[interactive-user-input.md](interactive-user-input.md) for APIs, lifecycle,
+content limits, and deployment requirements.

@@ -34,6 +34,7 @@ export function mergeSessionEvents(session, events, cursors) {
           ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
           : -1;
       const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId, {
+        ...(event.inputRequest ? { inputRequest: event.inputRequest } : {}),
         compactTurn: Boolean(event.compactTurn),
         turnUserEventId: Number(event.turnUserEventId) || 0,
         hiddenCount: Math.max(0, Number(event.hiddenCount) || 0),
@@ -65,6 +66,7 @@ export function mergeHistoricalEvents(session, events) {
           ? session.events.findIndex((item) => item[0] === event.type && item[3] === (event.runId || "") && item[6] === toolCallId)
           : -1;
       const tuple = [event.type, event.message, event.message, event.runId || "", eventId, event.status || "", toolCallId, {
+        ...(event.inputRequest ? { inputRequest: event.inputRequest } : {}),
         compactTurn: Boolean(event.compactTurn),
         turnUserEventId: Number(event.turnUserEventId) || 0,
         hiddenCount: Math.max(0, Number(event.hiddenCount) || 0),

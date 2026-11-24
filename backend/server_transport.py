@@ -222,7 +222,7 @@ class BaseHandler(BaseHTTPRequestHandler):
       "workspace_locked", "workspace_changed", "path_conflict", "upload_offset_mismatch", "upload_chunk_conflict",
       "upload_commit_started", "runs_not_stopped", "protected_admin", "session_run_active",
       "concurrent_confirmation_required", "session_not_forkable",
-      "group_live_run_limit_reached",
+      "group_live_run_limit_reached", "input_conflict",
     }:
       return HTTPStatus.CONFLICT
     if exc.code in {"budget_exhausted"}:

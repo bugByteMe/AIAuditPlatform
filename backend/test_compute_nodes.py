@@ -105,6 +105,19 @@ class WorkerRegistryTest(unittest.TestCase):
     self.assertEqual(status["activeUploadCount"], 1)
     self.assertEqual(status["activeRunCount"], 0)
 
+  def test_interactive_runs_require_advertised_worker_protocol(self):
+    self.assertFalse(self.registry.compatible(2, 2_000, user_input_protocol=1))
+    self.assertIsNone(self.registry.claim("input-run", 2, 2_000, user_input_protocol=1))
+    self.registry.states["large"]["userInputProtocol"] = 1
+    self.assertTrue(self.registry.compatible(2, 2_000, user_input_protocol=1))
+    self.assertEqual(self.registry.claim("input-run", 2, 2_000, user_input_protocol=1), "large")
+
+  def test_combined_worker_protocols_must_be_on_the_same_node(self):
+    self.registry.states["small"]["collaborationMountProtocol"] = 1
+    self.registry.states["large"]["userInputProtocol"] = 1
+    self.assertFalse(self.registry.compatible(2, 2_000, collaboration_mount_protocol=1, user_input_protocol=1))
+    self.assertIsNone(self.registry.claim("input-run", 2, 2_000, collaboration_mount_protocol=1, user_input_protocol=1))
+
   def test_terminal_worker_result_carries_workspace_manifest(self):
     client = object.__new__(WorkerClient)
     client.lease_seconds = 30

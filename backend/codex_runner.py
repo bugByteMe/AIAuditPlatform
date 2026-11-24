@@ -1,20 +1,21 @@
 from __future__ import annotations
 
 import json
-import math
 import os
-import queue
 import shutil
 import subprocess
 import threading
-import time
 from pathlib import Path
 from typing import Iterable
 
+from codex_mcp_config import toml_string, toml_key, toml_value, load_mcp_servers, MCP_SERVER_FIELD_ORDER
 from config import SETTINGS, parse_memory_bytes
+from input_bridge import InputBridge
+from runner_monitor import monitor_runner
+from codex_command import CodexCommandMixin
+from user_input_schema import SERVER_NAME, TOOL_TIMEOUT
 
-class RunnerError(RuntimeError):
-  pass
+from runner_errors import RunnerError
 
 class CodexRunner:
   def start(self, run: dict, workspace_path: Path) -> Iterable[dict]:
@@ -23,7 +24,7 @@ class CodexRunner:
   def stop(self, run: dict) -> None:
     raise NotImplementedError
 
-class DockerCodexRunner(CodexRunner):
+class DockerCodexRunner(CodexCommandMixin, CodexRunner):
   def __init__(self) -> None:
     self.image = SETTINGS.codex_image
     self.codex_root = SETTINGS.codex_root
@@ -41,6 +42,7 @@ class DockerCodexRunner(CodexRunner):
     self.docker_stop_timeout_seconds = SETTINGS.docker_stop_timeout_seconds
     self.processes: dict[str, subprocess.Popen] = {}
     self.lock = threading.Lock()
+    self.input_bridges = {}
 
   def start(self, run: dict, workspace_path: Path) -> Iterable[dict]:
     codex_home = self.prepare_codex_home(run)
@@ -72,28 +74,33 @@ class DockerCodexRunner(CodexRunner):
     for collaborator in self.collaboration_mounts(run, workspace_path):
       command.extend(["-v", f"{collaborator['source']}:{collaborator['mountPath']}:ro"])
     command.extend(["-w", "/workspace"])
+    bridge = InputBridge(workspace_path.parent.parent, run["id"])
+    bridge.prepare(self.container_uid, self.container_gid)
+    command.extend(["-v", f"{bridge.path.resolve()}:/run/ai-audit-input"])
     command.extend([self.image, *self.codex_command_args(run)])
-    started = time.monotonic()
     process = subprocess.Popen(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, bufsize=1)
     with self.lock:
       self.processes[run["id"]] = process
+      self.input_bridges[run["id"]] = bridge
     if run.get("status") == "stopping":
       self.stop(run)
     try:
-      if process.stdout:
-        for line in process.stdout:
-          if time.monotonic() - started > self.timeout_seconds:
-            self.stop(run)
-            yield {"type": "error", "message": "Run timed out."}
-            break
-          yield self.parse_json_event(line)
-      returncode = process.wait(timeout=self.process_wait_timeout_seconds)
-      if returncode != 0:
-        stderr = process.stderr.read() if process.stderr else ""
-        raise RunnerError(stderr.strip() or f"Codex exited with status {returncode}")
+      yield from monitor_runner(self, process, run, workspace_path, bridge)
+    except BaseException:
+      self.stop(run)
+      raise
     finally:
       with self.lock:
         self.processes.pop(run["id"], None)
+        self.input_bridges.pop(run["id"], None)
+      shutil.rmtree(bridge.path, ignore_errors=True)
+
+  def answer_input(self, run, request_id, result):
+    with self.lock:
+      bridge = self.input_bridges.get(run["id"])
+      if not bridge:
+        raise ValueError("input bridge is no longer active")
+      bridge.respond(request_id, result)
 
   def parse_json_event(self, line: str) -> dict:
     try:
@@ -292,6 +299,12 @@ class DockerCodexRunner(CodexRunner):
       'trust_level = "trusted"',
       "",
     ]
+    config.extend([
+      f'[mcp_servers.{SERVER_NAME}]', 'command = "python3.12"',
+      'args = ["/opt/ai-audit/user_input_mcp.py"]', 'required = true',
+      f'tool_timeout_sec = {TOOL_TIMEOUT}',
+      'env = { AI_AUDIT_INPUT_DIR = "/run/ai-audit-input" }', "",
+    ])
     config.extend(self.mcp_server_config_lines(run.get("mcpServerIds") or []))
     (codex_home / "config.toml").write_text("\n".join(config), encoding="utf-8")
     os.chmod(codex_home / "config.toml", 0o600)
@@ -402,7 +415,12 @@ class DockerCodexRunner(CodexRunner):
       if selected_server_ids:
         raise RunnerError("Configured capability MCP servers are unavailable")
       return []
-    servers = load_mcp_servers(path)
+    try:
+      servers = load_mcp_servers(path)
+    except ValueError as exc:
+      raise RunnerError(str(exc)) from exc
+    if SERVER_NAME in servers:
+      raise RunnerError(f"MCP server name {SERVER_NAME} is reserved")
     selected = set(servers) if selected_server_ids is None else set(selected_server_ids)
     missing = sorted(selected - set(servers))
     if missing:
@@ -433,39 +451,6 @@ class DockerCodexRunner(CodexRunner):
         path.chmod(0o700)
       elif path.is_file():
         path.chmod(0o600)
-
-  def codex_command_args(self, run: dict) -> list[str]:
-    base = ["codex", "--ask-for-approval", "never", "--sandbox", "danger-full-access", "exec"]
-    prompt = self.codex_prompt(run)
-    if run.get("codexFork"):
-      return [
-        *base,
-        "fork",
-        "--json",
-        "--skip-git-repo-check",
-        "-m",
-        run["model"],
-        run["codexSessionId"],
-        prompt,
-      ]
-    if run.get("codexResume"):
-      base.extend(["resume", "--json", "--skip-git-repo-check", "-m", run["model"]])
-      if run.get("codexSessionId"):
-        base.append(run["codexSessionId"])
-      else:
-        base.append("--last")
-      base.append(prompt)
-      return base
-    return [
-      *base,
-      "--json",
-      "--skip-git-repo-check",
-      "-C",
-      "/workspace",
-      "-m",
-      run["model"],
-      prompt,
-    ]
 
   def extract_codex_session_id(self, payload: dict) -> str | None:
     keys = ["session_id", "sessionId", "conversation_id", "conversationId", "thread_id", "threadId"]
@@ -499,135 +484,3 @@ class DockerCodexRunner(CodexRunner):
 def safe_segment(value: str) -> str:
   safe = "".join(char if char.isalnum() or char in {"-", "_", "."} else "_" for char in value)
   return safe.strip("._") or "default"
-
-def toml_string(value: str) -> str:
-  return value.replace("\\", "\\\\").replace('"', '\\"')
-
-
-MCP_SERVER_FIELD_ALIASES = {
-  "bearerTokenEnvVar": "bearer_token_env_var",
-  "disabledTools": "disabled_tools",
-  "enabledTools": "enabled_tools",
-  "envVars": "env_vars",
-  "envHttpHeaders": "env_http_headers",
-  "headers": "http_headers",
-  "httpHeaders": "http_headers",
-  "startupTimeoutSec": "startup_timeout_sec",
-  "toolTimeoutSec": "tool_timeout_sec",
-}
-MCP_SERVER_FIELD_ORDER = (
-  "command",
-  "args",
-  "env",
-  "env_vars",
-  "cwd",
-  "url",
-  "bearer_token_env_var",
-  "http_headers",
-  "env_http_headers",
-  "enabled",
-  "required",
-  "startup_timeout_sec",
-  "tool_timeout_sec",
-  "enabled_tools",
-  "disabled_tools",
-)
-
-
-def load_mcp_servers(path: Path) -> dict[str, dict]:
-  try:
-    payload = json.loads(path.read_text(encoding="utf-8"))
-  except (OSError, json.JSONDecodeError) as exc:
-    raise RunnerError(f"Failed to read MCP server configuration from {path}: {exc}") from exc
-  if not isinstance(payload, dict):
-    raise RunnerError(f"MCP server configuration in {path} must be a JSON object")
-  unexpected_top_level = set(payload) - {"mcpServers", "mcp_servers"}
-  if unexpected_top_level:
-    raise RunnerError(
-      f"MCP server configuration in {path} has unsupported top-level fields: {', '.join(sorted(unexpected_top_level))}"
-    )
-  if "mcpServers" in payload and "mcp_servers" in payload:
-    raise RunnerError(f"MCP server configuration in {path} must not contain both mcpServers and mcp_servers")
-  servers = payload.get("mcpServers")
-  if servers is None:
-    servers = payload.get("mcp_servers")
-  if not isinstance(servers, dict):
-    raise RunnerError(f"MCP server configuration in {path} must contain an mcpServers object")
-  return {name: normalize_mcp_server(name, raw_server, path) for name, raw_server in servers.items()}
-
-
-def normalize_mcp_server(name, raw_server, path: Path) -> dict:
-  if not isinstance(name, str) or not name.strip():
-    raise RunnerError(f"MCP server configuration in {path} contains an invalid server name")
-  if not isinstance(raw_server, dict):
-    raise RunnerError(f"MCP server {name} in {path} must be a JSON object")
-  normalized = {}
-  server_type = raw_server.get("type")
-  if server_type is not None and server_type not in {"stdio", "http"}:
-    raise RunnerError(f"MCP server {name} in {path} has unsupported type {server_type!r}")
-  for source_key, value in raw_server.items():
-    if source_key == "type":
-      continue
-    key = MCP_SERVER_FIELD_ALIASES.get(source_key, source_key)
-    if key not in MCP_SERVER_FIELD_ORDER:
-      raise RunnerError(f"MCP server {name} in {path} has unsupported field {source_key}")
-    if key in normalized:
-      raise RunnerError(f"MCP server {name} in {path} configures {key} more than once")
-    normalized[key] = value
-  has_command = isinstance(normalized.get("command"), str) and bool(normalized["command"].strip())
-  has_url = isinstance(normalized.get("url"), str) and bool(normalized["url"].strip())
-  if has_command == has_url:
-    raise RunnerError(f"MCP server {name} in {path} must configure exactly one of command or url")
-  if (server_type == "stdio" and not has_command) or (server_type == "http" and not has_url):
-    raise RunnerError(f"MCP server {name} in {path} has a type that does not match its transport")
-  validate_mcp_server_fields(name, normalized, path, has_command)
-  return normalized
-
-
-def validate_mcp_server_fields(name: str, server: dict, path: Path, has_command: bool) -> None:
-  string_fields = {"command", "cwd", "url", "bearer_token_env_var"}
-  list_fields = {"args", "env_vars", "enabled_tools", "disabled_tools"}
-  map_fields = {"env", "http_headers", "env_http_headers"}
-  for key in string_fields & set(server):
-    if not isinstance(server[key], str) or not server[key].strip():
-      raise RunnerError(f"MCP server {name} field {key} in {path} must be a non-empty string")
-  for key in list_fields & set(server):
-    if not isinstance(server[key], list) or not all(isinstance(item, str) for item in server[key]):
-      raise RunnerError(f"MCP server {name} field {key} in {path} must be an array of strings")
-  for key in map_fields & set(server):
-    if not isinstance(server[key], dict) or not all(isinstance(item, str) and isinstance(value, str) for item, value in server[key].items()):
-      raise RunnerError(f"MCP server {name} field {key} in {path} must be an object of string values")
-  for key in {"enabled", "required"} & set(server):
-    if not isinstance(server[key], bool):
-      raise RunnerError(f"MCP server {name} field {key} in {path} must be a boolean")
-  for key in {"startup_timeout_sec", "tool_timeout_sec"} & set(server):
-    value = server[key]
-    if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value) or value <= 0:
-      raise RunnerError(f"MCP server {name} field {key} in {path} must be a positive number")
-  stdio_only = {"args", "env", "env_vars", "cwd"}
-  http_only = {"bearer_token_env_var", "http_headers", "env_http_headers"}
-  invalid_transport_fields = (http_only if has_command else stdio_only) & set(server)
-  if invalid_transport_fields:
-    transport = "stdio" if has_command else "HTTP"
-    raise RunnerError(
-      f"MCP server {name} in {path} has fields unsupported by its {transport} transport: "
-      f"{', '.join(sorted(invalid_transport_fields))}"
-    )
-
-
-def toml_key(value: str) -> str:
-  return json.dumps(value, ensure_ascii=False)
-
-
-def toml_value(value) -> str:
-  if isinstance(value, str):
-    return json.dumps(value, ensure_ascii=False)
-  if isinstance(value, bool):
-    return "true" if value else "false"
-  if isinstance(value, (int, float)):
-    return str(value)
-  if isinstance(value, list):
-    return "[" + ", ".join(toml_value(item) for item in value) + "]"
-  if isinstance(value, dict):
-    return "{ " + ", ".join(f"{toml_key(str(key))} = {toml_value(item)}" for key, item in value.items()) + " }"
-  raise TypeError(f"unsupported TOML value: {type(value).__name__}")

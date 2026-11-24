@@ -122,6 +122,9 @@ class WorkerClient:
 
     return started, events()
 
+  def answer_input(self, run_id, request_id, result):
+    return self.request("POST", f"/v1/runs/{urllib.parse.quote(run_id)}/input/{urllib.parse.quote(request_id)}", result)
+
   def stop(self, run_id: str) -> dict:
     return self.request("POST", f"/v1/runs/{urllib.parse.quote(run_id)}/stop", {})
 
@@ -238,6 +241,7 @@ class WorkerRegistry:
             "activeRuns": list(health.get("activeRuns") or []),
             "checkpointProtocol": int(health.get("checkpointProtocol") or 1),
             "collaborationMountProtocol": int(health.get("collaborationMountProtocol") or 0),
+            "userInputProtocol": int(health.get("userInputProtocol") or 0),
           }
         )
     except Exception as exc:
@@ -248,10 +252,11 @@ class WorkerRegistry:
           state["healthy"] = False
         state["error"] = str(exc)
 
-  def compatible(self, cpu: float, memory_bytes: int, *, collaboration_mount_protocol: int = 0) -> bool:
+  def compatible(self, cpu: float, memory_bytes: int, *, collaboration_mount_protocol: int = 0, user_input_protocol: int = 0) -> bool:
     return any(
       float(node["cpu"]) >= cpu
       and int(node["memoryBytes"]) >= memory_bytes
+      and int(self.states.get(node_id, {}).get("userInputProtocol") or 0) >= user_input_protocol
       and (
         not collaboration_mount_protocol
         or int(self.states.get(node_id, {}).get("collaborationMountProtocol") or 0) >= collaboration_mount_protocol
@@ -264,10 +269,10 @@ class WorkerRegistry:
       return self._select_locked(cpu, memory_bytes)
 
   def claim(
-    self, run_id: str, cpu: float, memory_bytes: int, kind: str = "run", *, collaboration_mount_protocol: int = 0,
+    self, run_id: str, cpu: float, memory_bytes: int, kind: str = "run", *, collaboration_mount_protocol: int = 0, user_input_protocol: int = 0,
   ) -> str | None:
     with self.lock:
-      node_id = self._select_locked(cpu, memory_bytes, kind, collaboration_mount_protocol)
+      node_id = self._select_locked(cpu, memory_bytes, kind, collaboration_mount_protocol, user_input_protocol)
       if node_id:
         self.states[node_id]["reservations"][run_id] = {"cpu": cpu, "memoryBytes": memory_bytes, "kind": kind}
       return node_id
@@ -276,12 +281,14 @@ class WorkerRegistry:
     return self.claim(upload_id, cpu, memory_bytes, "upload")
 
   def _select_locked(
-    self, cpu: float, memory_bytes: int, kind: str = "run", collaboration_mount_protocol: int = 0,
+    self, cpu: float, memory_bytes: int, kind: str = "run", collaboration_mount_protocol: int = 0, user_input_protocol: int = 0,
   ) -> str | None:
     candidates = []
     now = time.monotonic()
     for order, (node_id, node) in enumerate(self.nodes.items()):
       state = self.states[node_id]
+      if int(state.get("userInputProtocol") or 0) < user_input_protocol:
+        continue
       if collaboration_mount_protocol and int(state.get("collaborationMountProtocol") or 0) < collaboration_mount_protocol:
         continue
       if not state.get("healthy") or now - float(state.get("lastContactMonotonic") or 0) >= self.settings.worker_unhealthy_after_seconds:

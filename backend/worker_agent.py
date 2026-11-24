@@ -15,6 +15,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from chat_runtime import DockerCodexRunner, safe_segment
+from input_bridge import InputBridge
+from user_input_schema import validate_answer
 from checkpoint_delta import (
   CHECKPOINT_PROTOCOL_VERSION, capture_pre_run, cleanup_refs, read_json_ref, scan_delta, write_result,
 )
@@ -203,6 +205,23 @@ class WorkerState:
         self.append_event(run_id, {"type": "error", "message": str(error)})
       self.save_runs()
 
+  def answer_input(self, run_id, request_id, result):
+    with self.lock:
+      run = self.require_run(run_id)
+      if run["status"] != "running":
+        raise ValueError("run is not accepting input")
+      request = next((event["inputRequest"] for event in self.events.get(run_id, [])
+                      if event.get("type") == "user_input_requested" and event["inputRequest"]["id"] == request_id), None)
+      if not request:
+        raise ValueError("input request not found")
+      validated = {"requestId": request_id, **validate_answer(request["question"], {
+        key: value for key, value in result.items() if key != "requestId"
+      })}
+      if validated != result:
+        raise ValueError("invalid input response")
+      InputBridge(self.root, run_id).respond(request_id, validated)
+      return {"accepted": True}
+
   def renew_lease(self, run_id: str) -> dict:
     with self.lock:
       run = self.require_run(run_id)
@@ -291,6 +310,7 @@ class WorkerState:
       "activeRuns": sorted(active),
       "checkpointProtocol": CHECKPOINT_PROTOCOL_VERSION,
       "collaborationMountProtocol": 1,
+      "userInputProtocol": 1,
       "time": time.strftime("%Y-%m-%d %H:%M:%S"),
     }
 
@@ -359,6 +379,8 @@ class WorkerHandler(BaseHTTPRequestHandler):
           self.write_json(self.state.run_result(run_id))
         elif method == "POST" and action == "stop":
           self.write_json(self.state.stop_run(run_id))
+        elif method == "POST" and action == "input" and len(parts) == 5:
+          self.write_json(self.state.answer_input(run_id, parts[4], self.read_json()))
         elif method == "POST" and action == "lease":
           self.write_json(self.state.renew_lease(run_id))
         elif method == "DELETE" and not action:

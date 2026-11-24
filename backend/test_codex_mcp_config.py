@@ -73,7 +73,11 @@ class CodexMcpConfigTest(unittest.TestCase):
 
     run["mcpServerIds"] = []
     empty_config = tomllib.loads((runner.prepare_codex_home(run) / "config.toml").read_text(encoding="utf-8"))
-    self.assertNotIn("mcp_servers", empty_config)
+    builtin = empty_config["mcp_servers"]["ai_audit_input"]
+    self.assertEqual(builtin["tool_timeout_sec"], 2147483647)
+    self.assertEqual(builtin["args"], ["/opt/ai-audit/user_input_mcp.py"])
+    self.assertTrue(builtin["required"])
+    self.assertEqual(set(empty_config["mcp_servers"]), {"ai_audit_input"})
 
   def test_runner_rejects_invalid_mcp_server_json(self) -> None:
     runner = DockerCodexRunner()

@@ -79,3 +79,14 @@ test("compact turn metadata survives history merging for lazy expansion", () => 
     hiddenCount: 4,
   });
 });
+
+
+test("interactive request data survives live and historical merging", () => {
+  const session = { id: "input-session", events: [] };
+  const inputRequest = { id: "request-1", status: "pending", question: { type: "text", title: "Which year?" } };
+  mergeSessionEvents(session, [{ id: 2, type: "user_input_requested", message: "Which year?", inputRequest }], {});
+  assert.deepEqual(session.events[0][7].inputRequest, inputRequest);
+  const resolved = { ...inputRequest, status: "answered", result: { value: "2026" } };
+  mergeHistoricalEvents(session, [{ id: 3, type: "user_input_resolved", message: "Answered", inputRequest: resolved }]);
+  assert.deepEqual(session.events[1][7].inputRequest, resolved);
+});

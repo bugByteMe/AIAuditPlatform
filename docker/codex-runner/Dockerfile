@@ -41,6 +41,7 @@ RUN python3.12 -m pip install --no-cache-dir --upgrade pip \
     docx2txt \
     lxml \
     'markitdown[pptx]' \
+    'mcp>=1,<2' \
     numpy \
     openpyxl \
     pandas \
@@ -58,6 +59,8 @@ RUN npm install -g "@openai/codex@${CODEX_VERSION}" docx --registry="${NPM_REGIS
   && useradd --create-home --shell /bin/bash codex \
   && mkdir -p /workspace /home/codex/.codex \
   && chown -R codex:codex /workspace /home/codex
+
+COPY backend/user_input_mcp.py backend/user_input_schema.py /opt/ai-audit/
 
 USER codex
 WORKDIR /workspace

@@ -1,4 +1,5 @@
 import { t } from "./i18n.js";
+import { syncInputRequests, inputRequestSignature, renderInputRequest, bindUserInput, captureInputFocus, restoreInputFocus } from "./userInput.js";
 import { markdownToHtml } from "./chatMarkdown.js";
 import { applyChatModelSettings } from "./chatModelSettings.js";
 import { adminGroupMatches } from "./adminSearch.js";
@@ -507,7 +508,7 @@ function renderChatResources(resources = {}) {
   document.querySelector("#chat-memory-meter").style.width = `${memoryTotal ? Math.max(0, Math.min(100, (memoryAvailable / memoryTotal) * 100)) : 0}%`;
 }
 
-export function renderEvents() {
+export function renderEvents(force = false) {
   const stream = document.querySelector("#event-stream");
   if (pendingPanel("#event-stream", state.workspacesLoading, state.workspaceLoadError)) {
     renderedEventSessionId = "";
@@ -521,15 +522,24 @@ export function renderEvents() {
     renderedEventSignature = "";
     return;
   }
+  const inputRequests = syncInputRequests(session, currentWorkspace().id, renderEvents);
   const signature = JSON.stringify([
-    state.lang, session.id, session.status, session.events, session.historyLoaded,
+    inputRequestSignature(session.id), state.user?.username, state.lang, session.id, session.status, session.events, session.historyLoaded,
     session.historyHasMore, session.historyLoading, session.historyLoadError,
     [...state.expandedChatTurns], [...state.loadedChatTurns], [...state.loadingChatTurns], [...state.chatTurnLoadErrors],
   ]);
-  if (renderedEventSessionId === session.id && renderedEventSignature === signature) return;
+  if (!force && renderedEventSessionId === session.id && renderedEventSignature === signature) return;
   const switchingSession = renderedEventSessionId !== session.id;
   const scrollPosition = switchingSession ? null : captureEventScroll(stream);
-  const renderEvent = ([type, zh, en, , eventId, status]) => {
+  const latestInputEvents = new Map();
+  session.events.forEach((event) => {
+    if (event[7]?.inputRequest) latestInputEvents.set(event[7].inputRequest.id, Number(event[4]));
+  });
+  const renderEvent = ([type, zh, en, , eventId, status, , meta]) => {
+      if (meta?.inputRequest) {
+        if (latestInputEvents.get(meta.inputRequest.id) !== Number(eventId)) return "";
+        return `<article class="event event-user-input" data-event-id="${Number(eventId)}">${renderInputRequest(meta.inputRequest, state.user, state.lang, ACTIVE_CHAT_STATES.has(session.status) && session.status !== "stopping")}</article>`;
+      }
       const message = state.lang === "zh" ? zh : en;
       const flattened = String(message).replace(/\s+/g, " ").trim();
       const body =
@@ -583,7 +593,8 @@ export function renderEvents() {
     const responses = expanded && loaded ? group.responses.map(renderEvent).join("") : renderEvent(displayEvent);
     return `${divider}${user}<section class="chat-turn-group">${toggle}${detailStatus}${responses}</section>`;
   }).join("");
-  const thinking = ACTIVE_CHAT_STATES.has(session.status)
+  const waitingForInput = inputRequests.some((request) => request.status === "pending");
+  const thinking = ACTIVE_CHAT_STATES.has(session.status) && !waitingForInput
     ? `<article class="event event-running-dots" role="status" aria-label="${escapeHtml(t("chat.thinking"))}"><span class="event-type">${escapeHtml(t("chat.thinking"))}</span><span class="running-dots" aria-hidden="true"><span></span><span></span><span></span></span></article>`
     : "";
   const historyStatus = session.historyLoading
@@ -593,7 +604,12 @@ export function renderEvents() {
       : session.historyLoaded && !session.historyHasMore && session.events.length
         ? `<div class="chat-history-boundary">${escapeHtml(t("chat.historyStart"))}</div>`
         : "";
-  stream.innerHTML = historyStatus + events + thinking;
+  const missingInputs = inputRequests.filter((request) => (request.status === "pending" || request.runId === session.latestRunId) && !latestInputEvents.has(request.id))
+    .map((request) => renderInputRequest(request, state.user, state.lang, session.status === "running")).join("");
+  const inputFocus = captureInputFocus(stream);
+  stream.innerHTML = historyStatus + events + missingInputs + thinking;
+  bindUserInput(stream, renderEvents);
+  restoreInputFocus(stream, inputFocus);
   stream.querySelectorAll(".event-fold").forEach((fold) => {
     const summary = fold.querySelector("summary");
     const collapsible = fold.dataset.multiline === "true" || summary.scrollWidth > summary.clientWidth;

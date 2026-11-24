@@ -8,11 +8,12 @@ from chat_common import RUNNING_STATES, TERMINAL_STATES
 from checkpoint_delta import capture_pre_run, cleanup_refs, scan_delta
 from codex_runner import RunnerError, safe_segment
 from compute_nodes import WorkerUnavailable
+from chat_resources import ChatResourceMixin
 from config import SETTINGS
 from workspace_store import StorageError, now_string
 
 
-class ChatExecutionMixin:
+class ChatExecutionMixin(ChatResourceMixin):
   def events(
     self, workspace_id: str, session_id: str, after: int, user: dict, *,
     before: int | None = None, limit: int = 500, latest: bool = False,
@@ -70,6 +71,7 @@ class ChatExecutionMixin:
           float(run["requestedCpu"]),
           int(run["requestedMemoryBytes"]),
           collaboration_mount_protocol=1 if run.get("collaboratingWorkspaces") else 0,
+          user_input_protocol=1,
         )
         if not node_id:
           self.queue.put(run_id)
@@ -212,12 +214,15 @@ class ChatExecutionMixin:
       cleanup_refs(self.store.root, cleanup_run.get("checkpointBaseRef"), cleanup_run.get("checkpointPreRef"))
 
   def record_runner_event(self, run_id: str, event: dict, *, container: str = "") -> dict:
+    if event.get("type") == "user_input_requested":
+      self.validate_input_event(event)
     source_event_id = event.get("_workerEventId")
     event_type = str(event.get("type") or "progress")
     message = str(event.get("message") or event_type)
     stored_event = {"type": event_type, "message": message}
     for source_key, target_key in [
       ("raw", "raw"), ("status", "status"), ("toolCallId", "toolCallId"),
+      ("inputRequest", "inputRequest"),
       ("tokens", "tokens"), ("inputTokens", "inputTokens"),
       ("cachedInputTokens", "cachedInputTokens"), ("outputTokens", "outputTokens"),
       ("codexSessionId", "codexSessionId"),
@@ -286,6 +291,8 @@ class ChatExecutionMixin:
     if not session:
       return
     status = str(run["status"])
+    for event in self.chat_store.input_requests.cancel_run(run["id"]):
+      self.notify_input_event(run["sessionId"], event)
     session["status"] = status
     session["updated"] = run["updated"]
     if status in {"completed", "stopped"}:
@@ -356,13 +363,14 @@ class ChatExecutionMixin:
         key=lambda item: (str(item.get("created") or ""), str(item.get("id") or "")),
       )
       queued_positions = {str(run.get("id") or ""): index for index, run in enumerate(queued)}
+    pending_counts = self.chat_store.input_requests.pending_counts(session_ids)
     return [
       self.enrich_public_session(
         self.chat_store.public_session_payload(stored_by_id[session_id]),
         runs_by_id.get(str(stored_by_id[session_id].get("latestRunId") or "")),
         queued_positions,
         default_resources,
-        worker_resources,
+        worker_resources, pending_counts,
       )
       for session_id in session_ids
       if session_id in stored_by_id
@@ -375,7 +383,11 @@ class ChatExecutionMixin:
     queued_positions: dict[str, int] | None = None,
     default_resources: dict | None = None,
     worker_resources: dict[str, dict | None] | None = None,
+    pending_counts: dict | None = None,
   ) -> dict:
+    counts = pending_counts if pending_counts is not None else self.chat_store.input_requests.pending_counts([session["id"]])
+    session["pendingInputCount"] = counts.get(session["id"], 0)
+    session["waitingForInput"] = bool(session["pendingInputCount"])
     creator = str(session.get("createdBy") or "")
     account = self.users.get(creator) or {}
     session["createdByDisplayName"] = str(account.get("displayName") or "").strip()
@@ -418,36 +430,6 @@ class ChatExecutionMixin:
         queued_positions = {str(item.get("id") or ""): index for index, item in enumerate(queued)}
       session["queueAhead"] = queued_positions.get(str(run.get("id") or ""), 0)
     return session
-
-  def resource_status(self) -> dict:
-    return self.worker_registry.aggregate_status() if self.worker_registry else self.local_resource_status()
-
-  def local_resource_status(self) -> dict:
-    active = len(self.active_runs)
-    return {
-      "id": "local-docker",
-      "healthy": True,
-      "cpuTotal": self.requested_cpu * self.capacity,
-      "cpuUsed": self.requested_cpu * active,
-      "cpuAvailable": self.requested_cpu * max(0, self.capacity - active),
-      "memoryTotalBytes": self.requested_memory_bytes * self.capacity,
-      "memoryUsedBytes": self.requested_memory_bytes * active,
-      "memoryAvailableBytes": self.requested_memory_bytes * max(0, self.capacity - active),
-      "activeRunCount": active,
-    }
-
-  def worker_status(self) -> list[dict]:
-    if self.worker_registry:
-      return self.worker_registry.status()
-    active = len(self.active_runs)
-    return [{
-      **self.local_resource_status(),
-      "ip": "127.0.0.1",
-      "port": None,
-      "activeRunIds": sorted(self.active_runs),
-      "lastContact": time.strftime("%Y-%m-%d %H:%M:%S"),
-      "error": "",
-    }]
 
   def session_title(self, prompt: str) -> str:
     compact = " ".join(prompt.split())

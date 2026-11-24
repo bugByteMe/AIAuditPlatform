@@ -301,6 +301,11 @@ class ChatSessionMixin:
           "no_collaboration_capable_worker",
           "no configured compute node supports collaborating workspace mounts for this run",
         )
+      if self.worker_registry and not self.worker_registry.compatible(
+        self.requested_cpu, self.requested_memory_bytes, user_input_protocol=1,
+        collaboration_mount_protocol=1 if collaborating_workspaces else 0,
+      ):
+        raise StorageError("no_compatible_worker", "no configured worker supports interactive input")
       inherited_model = str((previous_run or {}).get("model") or "gpt-5.6-sol")
       inherited_reasoning = str((previous_run or {}).get("reasoning") or "high")
       timestamp = now_string()
@@ -405,6 +410,8 @@ class ChatSessionMixin:
       self.stop_requested.add(run_id)
       self.append_event(run["sessionId"], "stopping", "Stop requested. Creating a resumable checkpoint.", run_id)
       self.chat_store.save_run(run)
+      for event in self.chat_store.input_requests.cancel_run(run_id):
+        self.notify_input_event(run["sessionId"], event)
       if was_queued:
         checkpoint_run = dict(run)
         try:

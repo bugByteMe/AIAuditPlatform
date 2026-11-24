@@ -1,0 +1,2 @@
+class RunnerError(RuntimeError):
+  pass

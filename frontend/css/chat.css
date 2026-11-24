@@ -1183,3 +1183,13 @@ select {
 .fancytree-host .fancytree-edit-input { min-width: 140px; height: 28px; border-radius: var(--radius-control); }
 .fancytree-drag-helper { position: absolute; z-index: 10000; padding: 5px 8px; border-radius: var(--radius-control); background: #fff; box-shadow: var(--shadow-soft); }
 .fancytree-drop-marker { position: absolute; z-index: 10001; width: 4px; height: 4px; background: var(--primary); }
+
+.user-input-card { display: grid; gap: 12px; padding: 16px; border: 1px solid var(--border, #ddd); border-radius: 12px; }
+.user-input-card h4, .user-input-card p { margin: 0; }
+.user-input-card fieldset { display: grid; gap: 10px; border: 0; padding: 0; margin: 0; min-width: 0; }
+.user-input-card label { display: flex; gap: 8px; align-items: baseline; overflow-wrap: anywhere; }
+.user-input-card textarea { width: 100%; min-height: 100px; resize: vertical; box-sizing: border-box; }
+.user-input-images { display: flex; flex-wrap: wrap; gap: 10px; }
+.user-input-images img { max-width: 100%; max-height: 360px; object-fit: contain; }
+.user-input-actions { display: flex; gap: 8px; }
+.user-input-error { color: var(--danger, #b42318); }
