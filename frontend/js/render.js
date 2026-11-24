@@ -605,7 +605,7 @@ export function renderEvents(force = false) {
         ? `<div class="chat-history-boundary">${escapeHtml(t("chat.historyStart"))}</div>`
         : "";
   const missingInputs = inputRequests.filter((request) => (request.status === "pending" || request.runId === session.latestRunId) && !latestInputEvents.has(request.id))
-    .map((request) => renderInputRequest(request, state.user, state.lang, session.status === "running")).join("");
+    .map((request) => `<article class="event event-user-input">${renderInputRequest(request, state.user, state.lang, session.status === "running")}</article>`).join("");
   const inputFocus = captureInputFocus(stream);
   stream.innerHTML = historyStatus + events + missingInputs + thinking;
   bindUserInput(stream, renderEvents);

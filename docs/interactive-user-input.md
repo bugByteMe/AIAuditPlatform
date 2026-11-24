@@ -64,6 +64,8 @@ question. User image uploads and grouped questions are not supported.
   tuples carry it in optional metadata at index 7. Existing event tuple shapes
   remain unchanged for other events. Sessions expose `pendingInputCount` and
   `waitingForInput` without adding a new run lifecycle status.
+  The browser explicitly subscribes to both named SSE event types so cards and
+  resolved answers update without reloading the page.
 - Stop and terminal finalization cancel unanswered requests. Browser reloads do
   not interrupt execution. Existing remote-run recovery and worker lease rules
   apply after control-plane restart. Local-run interruption or worker restart

@@ -149,7 +149,7 @@ export function createChatStream(context) {
       }
     };
     activeChatStream.onmessage = handleEvent;
-    ["user", "queued", "starting", "running", "stopping", "assistant", "command", "websearch", "tool", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
+    ["user", "queued", "starting", "running", "stopping", "assistant", "command", "websearch", "tool", "user_input_requested", "user_input_resolved", "usage", "progress", "error", "completed", "stopped", "failed"].forEach((type) => {
       activeChatStream.addEventListener(type, handleEvent);
     });
     activeChatStream.addEventListener("heartbeat", (event) => {

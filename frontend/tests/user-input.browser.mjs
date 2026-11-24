@@ -11,8 +11,20 @@ const root = fileURLToPath(new URL("../", import.meta.url));
 let request;
 let submissions;
 let rejectNext = false;
+const streams = new Set();
 const server = createServer(async (req, res) => {
   const url = new URL(req.url, "http://localhost");
+  if (url.pathname.endsWith("/chat/stream")) {
+    res.writeHead(200, { "Content-Type": "text/event-stream", "Cache-Control": "no-store" });
+    res.write(": connected\n\n");
+    streams.add(res);
+    res.on("close", () => streams.delete(res));
+    return;
+  }
+  if (url.pathname.endsWith("/chat/events")) {
+    res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ events: [], sessionStatus: "running" }));
+    return;
+  }
   if (url.pathname.includes("/input-requests")) {
     if (req.method === "POST") {
       const chunks = [];
@@ -29,12 +41,12 @@ const server = createServer(async (req, res) => {
     } else if (url.searchParams.has("image")) {
       res.writeHead(200, { "Content-Type": "image/png" }).end(Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aU1sAAAAASUVORK5CYII=", "base64"));
     } else {
-      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ requests: [request] }));
+      res.writeHead(200, { "Content-Type": "application/json" }).end(JSON.stringify({ requests: request ? [request] : [] }));
     }
     return;
   }
   if (url.pathname === "/") {
-    res.writeHead(200, { "Content-Type": "text/html" }).end('<main id="event-stream"></main>');
+    res.writeHead(200, { "Content-Type": "text/html" }).end('<link rel="stylesheet" href="/styles.css"><main id="event-stream" class="event-stream"></main>');
     return;
   }
   try {
@@ -126,4 +138,82 @@ test("multi-select and skip submit structured results", async () => {
     await page.getByRole("status").filter({ hasText: "Skipped" }).waitFor();
     assert.deepEqual(submissions[0], { status: "skipped" });
   } finally { await page.close(); }
+});
+
+test("new requests and resolutions arrive through named SSE events without refreshing", async () => {
+  request = null;
+  const page = await browser.newPage();
+  try {
+    await page.goto(`http://127.0.0.1:${server.address().port}/`);
+    await Promise.all([
+      page.waitForResponse((response) => response.url().includes("/input-requests")),
+      initialize(page),
+    ]);
+    await page.evaluate(async () => {
+      const { state } = await import("/js/state.js");
+      const events = await import("/js/chatEvents.js");
+      const { api, authenticatedApiUrl } = await import("/js/api.js");
+      const { renderEvents } = await import("/js/render.js");
+      const { createChatStream } = await import("/js/appChatStream.js");
+      window.inputStream = createChatStream({
+        state, ...events, api, authenticatedApiUrl, renderDynamic: () => renderEvents(),
+        safeCurrentWorkspace: () => state.workspaces[0], refreshWorkspaceById: async () => {},
+        refreshCurrentUser: async () => {},
+      });
+      window.inputStream.startChatStreamForSession("w", "s");
+    });
+    const deadline = Date.now() + 5000;
+    while (!streams.size && Date.now() < deadline) await new Promise((done) => setTimeout(done, 20));
+    assert.equal(streams.size, 1);
+    request = { id: "b".repeat(32), runId: "run_1", sessionId: "s", workspaceId: "w", initiator: "owner",
+      status: "pending", question: { type: "yes_no", title: "Live question" }, images: [] };
+    const send = (id, type) => {
+      const event = { id, type, runId: "run_1", message: request.question.title, inputRequest: request };
+      for (const stream of streams) stream.write(`id: ${id}\nevent: ${type}\ndata: ${JSON.stringify(event)}\n\n`);
+    };
+    send(1, "user_input_requested");
+    await page.getByRole("heading", { name: "Live question" }).waitFor({ timeout: 2000 });
+    assert.equal(await page.getByRole("button", { name: "Submit", exact: true }).isEnabled(), true);
+    request = { ...request, status: "answered", result: { requestId: request.id, status: "answered", value: false } };
+    send(2, "user_input_resolved");
+    await page.getByRole("status").filter({ hasText: "Answered" }).waitFor({ timeout: 2000 });
+    assert.equal(await page.getByRole("button", { name: "Submit", exact: true }).count(), 0);
+    assert.equal(await page.evaluate(async () => (await import("/js/state.js")).state.chatLastEventIds.s), 2);
+  } finally {
+    await page.evaluate(() => window.inputStream?.stopChatStream()).catch(() => {});
+    await page.close();
+  }
+});
+
+test("restored and streamed cards use the available width with production CSS", async () => {
+  for (const width of [1280, 390]) {
+    const page = await open({ type: "multiple_choice", title: "交互问题", text: "请扫描二维码并选择已经完成的操作。".repeat(8),
+      multiple: false, options: [{ id: "done", label: "已确认登录" }, { id: "refresh", label: "刷新二维码" }] });
+    try {
+      await page.setViewportSize({ width, height: 900 });
+      await page.evaluate(async () => { (await import("/js/state.js")).state.lang = "zh"; (await import("/js/render.js")).renderEvents(); });
+      const checkLayout = async () => {
+        const bounds = await page.locator(".user-input-card").evaluate((card) => {
+          const rect = card.getBoundingClientRect();
+          const image = card.querySelector("img").getBoundingClientRect();
+          const button = card.querySelector("button");
+          return { width: rect.width, right: rect.right, imageRight: image.right, viewport: innerWidth,
+            overflow: card.scrollWidth > card.clientWidth, buttonHeight: button.getBoundingClientRect().height,
+            lineHeight: parseFloat(getComputedStyle(button).lineHeight) };
+        });
+        assert.ok(bounds.width >= (width < 600 ? 300 : 500), JSON.stringify(bounds));
+        assert.ok(bounds.right <= bounds.viewport && bounds.imageRight <= bounds.right, JSON.stringify(bounds));
+        assert.equal(bounds.overflow, false);
+        assert.ok(bounds.buttonHeight < bounds.lineHeight * 2 + 24, JSON.stringify(bounds));
+      };
+      await checkLayout();
+      // The same request arrives as a history/live event rather than list hydration.
+      await page.evaluate(async (inputRequest) => {
+        const { state } = await import("/js/state.js");
+        state.workspaces[0].sessions[0].events.push(["user_input_requested", "Question", "Question", "run_1", 1, "", "", { inputRequest }]);
+        (await import("/js/render.js")).renderEvents();
+      }, request);
+      await checkLayout();
+    } finally { await page.close(); }
+  }
 });
