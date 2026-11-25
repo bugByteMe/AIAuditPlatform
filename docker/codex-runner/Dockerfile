@@ -21,6 +21,8 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     bash \
     ca-certificates \
     chromium \
+    fontconfig \
+    fonts-noto-cjk \
     git \
     libreoffice \
     ocrmypdf \
@@ -30,6 +32,7 @@ RUN sed -i 's#http://deb.debian.org/debian#http://mirrors.cloud.aliyuncs.com/deb
     tesseract-ocr \
     tesseract-ocr-chi-sim \
     tesseract-ocr-chi-tra \
+  && fc-cache -f \
   && apt-get clean \
   && rm -rf /var/lib/apt/lists/*
 
